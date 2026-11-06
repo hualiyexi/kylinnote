@@ -2,7 +2,6 @@
 #include <QCommandLineParser>
 #include <QMessageBox>
 #include <QSettings>
-#include <QTemporaryDir>
 #include <QTimer>
 #include <cstdio>
 #include "Common.h"
@@ -31,11 +30,14 @@ int main(int argc, char* argv[]) {
     parser.addOption(
         {QStringLiteral("smoke-test"), QStringLiteral("使用临时数据启动并在2秒后退出，供安装包自检")});
     parser.process(app);
-    QTemporaryDir smokeData;
     if (parser.isSet(QStringLiteral("data-dir")))
         qputenv("KYLINNOTE_DATA_DIR", QDir(parser.value(QStringLiteral("data-dir"))).absolutePath().toUtf8());
-    else if (parser.isSet(QStringLiteral("smoke-test")))
-        qputenv("KYLINNOTE_DATA_DIR", smokeData.path().toUtf8());
+    else if (parser.isSet(QStringLiteral("smoke-test"))) {
+        // 不写系统 Temp：受限的构建/测试账户也必须能验证应用初始化。
+        const QString smokeDir = QDir::current().absoluteFilePath(QStringLiteral("kylinnote-smoke-data"));
+        QDir().mkpath(smokeDir);
+        qputenv("KYLINNOTE_DATA_DIR", smokeDir.toUtf8());
+    }
     if (!qEnvironmentVariable("KYLINNOTE_DATA_DIR").isEmpty()) {
         // 独立调试目录同时隔离界面偏好，测试不修改真实用户配置。
         QSettings::setPath(
@@ -66,8 +68,13 @@ int main(int argc, char* argv[]) {
                                   error + QStringLiteral("\n请检查数据目录权限后重试。原有数据不会被覆盖。"));
         return 1;
     }
-    if (parser.isSet(QStringLiteral("smoke-test")))
-        QTimer::singleShot(2000, &app, &QCoreApplication::quit);
+    if (parser.isSet(QStringLiteral("smoke-test"))) {
+        QTimer::singleShot(2000, &app, [&app]() {
+            std::fprintf(stdout, "KylinNote smoke-test: initialization and SQLite succeeded.\n");
+            std::fflush(stdout);
+            app.exit(0);
+        });
+    }
     const int result = app.exec();
     application.shutdown();
     guard.release();

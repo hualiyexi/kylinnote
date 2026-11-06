@@ -45,7 +45,12 @@ bool TaskFilter::matches(const Task& task, const QDateTime& now) const {
                        task.tags.join(QLatin1Char(' '));
     for (const auto& item : task.checklist)
         haystack += QLatin1Char('\n') + item.text;
-    for (const QString& term : search.split(QLatin1Char(' '), QString::SkipEmptyParts))
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    const auto skipEmpty = Qt::SkipEmptyParts;
+#else
+    const auto skipEmpty = QString::SkipEmptyParts;
+#endif
+    for (const QString& term : search.split(QLatin1Char(' '), skipEmpty))
         if (!haystack.contains(term, Qt::CaseInsensitive))
             return false;
     return true;

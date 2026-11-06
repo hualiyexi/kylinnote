@@ -103,14 +103,15 @@ try {
             Copy-Item -LiteralPath $SourceLicense -Destination (Join-Path $StageDir "Qt-$LicenseFile.txt")
         }
     }
-    $DeployConfiguration = '--release'
-    if ($Configuration -eq 'Debug') { $DeployConfiguration = '--debug' }
-    Invoke-Checked $WinDeployQt @($DeployConfiguration, '--compiler-runtime', '--force',
-        '--libdir', $StageDir, '--plugindir', $StageDir,
-        '--no-translations', '--sql', '--svg', '--network', '--dir', $StageDir, $App,
-        '--qmake', (Join-Path $QtRoot 'bin/qmake.exe'))
+    # Qt 5.15.2 qttools force-release mode can incorrectly filter MinGW plugins.
+    # Use its default auto detection, never --debug, then assert release DLLs
+    # against the matching Qt installation by exact SHA256.
+    # --no-patchqt keeps Qt5Core.dll byte-identical to the upstream release.
+    Invoke-Checked $WinDeployQt @('--compiler-runtime', '--force', '--no-patchqt',
+        '--verbose', '2', '--no-translations', '--svg', '--network',
+        '--dir', $StageDir, $App)
     # Explicitly require the features that windeployqt's dependency scan can miss.
-    foreach ($Plugin in @('platforms/qwindows.dll', 'sqldrivers/qsqlite.dll',
+    foreach ($Plugin in @('platforms/qwindows.dll', 'platforms/qoffscreen.dll', 'sqldrivers/qsqlite.dll',
             'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll')) {
         $PluginPath = $Plugin
         if ($Configuration -eq 'Debug') { $PluginPath = $Plugin -replace '\.dll$', 'd.dll' }
@@ -128,8 +129,16 @@ try {
     foreach ($Required in @("Qt5Core$Suffix.dll", "Qt5Gui$Suffix.dll", "Qt5Widgets$Suffix.dll",
             "Qt5Sql$Suffix.dll", "Qt5Network$Suffix.dll", "Qt5Svg$Suffix.dll",
             'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll')) {
-        if (-not (Test-Path -LiteralPath (Join-Path $StageDir $Required) -PathType Leaf)) {
+        $DeployedLibrary = Join-Path $StageDir $Required
+        if (-not (Test-Path -LiteralPath $DeployedLibrary -PathType Leaf)) {
             throw "Portable deployment is missing $Required"
+        }
+        if ($Required.StartsWith('Qt5')) {
+            $Expected = Join-Path $QtRoot "bin/$Required"
+            if ((Get-FileHash -LiteralPath $Expected -Algorithm SHA256).Hash -ne
+                (Get-FileHash -LiteralPath $DeployedLibrary -Algorithm SHA256).Hash) {
+                throw "$Required is not byte-identical to the configured Qt release"
+            }
         }
     }
 
@@ -140,20 +149,15 @@ try {
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $StageDir 'platforms'
     $env:QT_QPA_PLATFORM = 'windows'
     $env:KYLINNOTE_DATA_DIR = Join-Path $BuildDir ("smoke-" + [guid]::NewGuid().ToString('N'))
-    $SmokeOptions = @{
-        FilePath = $App
-        ArgumentList = @('--smoke-test', '--data-dir', ('"' + $env:KYLINNOTE_DATA_DIR + '"'))
-        PassThru = $true
-        RedirectStandardOutput = Join-Path $BuildDir 'smoke.stdout.log'
-        RedirectStandardError = Join-Path $BuildDir 'smoke.stderr.log'
+    # The console-subsystem GUI exposes a reliable exit code to the host.
+    # Avoid Start-Process waiting for a GUI application and losing its status.
+    $SmokeLog = Join-Path $BuildDir 'smoke.stdout.log'
+    & $App --smoke-test --data-dir "$env:KYLINNOTE_DATA_DIR" > $SmokeLog 2>&1
+    $SmokeExit = $LASTEXITCODE
+    if ($SmokeExit -ne 0) {
+        Get-Content -LiteralPath (Join-Path $BuildDir 'smoke.stdout.log') -ErrorAction SilentlyContinue
+        throw "Deployed app smoke failed: exit $SmokeExit"
     }
-    $SmokeProcess = Start-Process @SmokeOptions
-    if (-not $SmokeProcess.WaitForExit(20000)) {
-        $SmokeProcess.Kill()
-        throw 'Deployed app --smoke-test did not exit within 20 seconds'
-    }
-    $SmokeProcess.Refresh()
-    if ($SmokeProcess.ExitCode -ne 0) { throw "Deployed app smoke failed: exit $($SmokeProcess.ExitCode)" }
     if (-not (Test-Path -LiteralPath (Join-Path $env:KYLINNOTE_DATA_DIR 'notes.db'))) {
         throw 'Deployed app did not initialize its SQLite database'
     }

@@ -133,7 +133,9 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(WIN32)
-    add_executable(kylinnote WIN32 src/main.cpp)
+    # 保留控制台子系统：双击仍显示原生 GUI，不额外创建黑窗口；
+    # 命令行/CI 能准确接收 --smoke-test 的 stdout/stderr 与退出码。
+    add_executable(kylinnote src/main.cpp)
 else()
     add_executable(kylinnote src/main.cpp)
 endif()

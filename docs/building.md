@@ -21,7 +21,7 @@ $env:APPDATA = "$PWD/.tools/appdata"
     tools_mingw qt.tools.win64_mingw810 -O .tools/Qt
 ```
 
-工具路径：
+工具路径（本机已实际安装并验证）：
 
 | 工具 | 仓库相对路径 |
 | --- | --- |
@@ -31,6 +31,8 @@ $env:APPDATA = "$PWD/.tools/appdata"
 | Qt 5.15.2 | `.tools/Qt/5.15.2/mingw81_64` |
 | MinGW 8.1 | `.tools/Qt/Tools/mingw810_64` |
 | windeployqt | `.tools/Qt/5.15.2/mingw81_64/bin/windeployqt.exe` |
+
+`packaging/build-windows.ps1` 以 **UTF-8 BOM** 保存；PowerShell 5.1 对无 BOM 的 UTF-8 中文注释可能按 ANSI 误解析。脚本内把 `TEMP/TMP` 定向到构建目录（本机默认临时目录不可写），并在 `finally` 恢复 `PATH/TEMP/TMP/QT_PLUGIN_PATH/QT_QPA_PLATFORM_PLUGIN_PATH/QT_QPA_PLATFORM/KYLINNOTE_DATA_DIR`，不写入用户级或机器级环境变量。本机 PowerShell 执行策略禁止直接运行未签名脚本时，用下面命令的进程级 `Bypass`（不修改策略设置）。
 
 开发构建、运行 CTest、部署并生成便携 ZIP：
 
