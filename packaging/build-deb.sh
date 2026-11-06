@@ -168,7 +168,7 @@ if [[ "$BUNDLE_QT" == ON ]]; then
 
     # These are preinstalled/base graphic dependencies on the target, never Qt.
     # The clean runtime test installs this explicit list BEFORE going offline.
-    DEPENDS='libc6 (>= 2.31), libstdc++6, libgcc-s1, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-glx0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-render0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1, libfontconfig1, libfreetype6, libglib2.0-0, libdbus-1-3, zlib1g'
+    DEPENDS='libc6 (>= 2.31), libstdc++6, libgcc-s1, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-glx0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-render0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xinput0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1, libfontconfig1, libfreetype6, libglib2.0-0, libdbus-1-3, zlib1g'
 else
     BIN="$STAGING$INSTALL_PREFIX/bin/kylinnote"
     verify_architecture "$BIN"
@@ -200,6 +200,7 @@ while IFS= read -r -d '' elf; do
     [[ -z "$glibcxx" ]] || printf '%s\n' "$glibcxx" >> "$GLIBCXX_VERSIONS"
     printf '%s: GLIBC=%s GLIBCXX=%s\n' "${elf#"$STAGING"}" "${glibc:-none}" "${glibcxx:-none}" >> "$ABI_LINES"
 done < <(find "$STAGING$INSTALL_PREFIX" -type f -print0)
+printf 'Per-object symbol versions: %s\n' "$ABI_LINES"
 MAX_GLIBC="$(sort -Vu "$GLIBC_VERSIONS" | tail -n1)"
 MAX_GLIBCXX="$(sort -Vu "$GLIBCXX_VERSIONS" | tail -n1)"
 [[ -n "$MAX_GLIBC" ]] || die 'Could not determine the executable GLIBC requirement'

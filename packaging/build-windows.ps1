@@ -75,6 +75,11 @@ if (Test-Path -LiteralPath $StageDir) {
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 
 $OriginalPath = $env:PATH
+$OriginalTemp = $env:TEMP
+$OriginalTmp = $env:TMP
+$env:TEMP = Join-Path $BuildDir 'tmp'
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
 $OriginalPluginPath = $env:QT_PLUGIN_PATH
 $OriginalPlatformPluginPath = $env:QT_QPA_PLATFORM_PLUGIN_PATH
 $OriginalDataDir = $env:KYLINNOTE_DATA_DIR
@@ -101,7 +106,9 @@ try {
     $DeployConfiguration = '--release'
     if ($Configuration -eq 'Debug') { $DeployConfiguration = '--debug' }
     Invoke-Checked $WinDeployQt @($DeployConfiguration, '--compiler-runtime', '--force',
-        '--no-translations', '--sql', '--svg', '--network', '--dir', $StageDir, $App)
+        '--libdir', $StageDir, '--plugindir', $StageDir,
+        '--no-translations', '--sql', '--svg', '--network', '--dir', $StageDir, $App,
+        '--qmake', (Join-Path $QtRoot 'bin/qmake.exe'))
     # Explicitly require the features that windeployqt's dependency scan can miss.
     foreach ($Plugin in @('platforms/qwindows.dll', 'sqldrivers/qsqlite.dll',
             'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll')) {
@@ -152,6 +159,7 @@ try {
     }
     if (-not $SkipArchive) {
         $ZipFile = Join-Path $OutputDir "$PackageName.zip"
+        # -LiteralPath ensures a top-level portable folder in the archive.
         Compress-Archive -LiteralPath $StageDir -DestinationPath $ZipFile -Force
         Write-Output "Portable archive: $ZipFile"
     }
@@ -166,6 +174,8 @@ try {
     Write-Output "Deployed application: $App"
 } finally {
     $env:PATH = $OriginalPath
+    $env:TEMP = $OriginalTemp
+    $env:TMP = $OriginalTmp
     $env:QT_PLUGIN_PATH = $OriginalPluginPath
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = $OriginalPlatformPluginPath
     $env:KYLINNOTE_DATA_DIR = $OriginalDataDir
