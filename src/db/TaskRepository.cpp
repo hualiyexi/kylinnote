@@ -130,6 +130,20 @@ bool TaskRepository::readSnapshot(TaskSnapshot *out, QString *error) const
         snapshot.recurrenceLinks.append(link);
     }
     if (links.lastError().isValid()) return sqlFailure(links, error);
+    QSet<qint64> verified;
+    for (const RecurrenceLink &link : snapshot.recurrenceLinks) {
+        QSet<qint64> path;
+        qint64 id = link.sourceId;
+        while (id && !verified.contains(id)) {
+            if (path.contains(id)) return fail(error, QStringLiteral("数据库重复任务链形成循环"));
+            path.insert(id);
+            qint64 next = 0;
+            for (const RecurrenceLink &edge : snapshot.recurrenceLinks)
+                if (edge.sourceId == id) { next = edge.nextId; break; }
+            id = next;
+        }
+        verified.unite(path);
+    }
     *out = snapshot;
     if (error) error->clear();
     return true;
@@ -308,6 +322,7 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
     const auto abort = [this]() { m_database.rollback(); return false; };
     QHash<qint64, qint64> groupIds;
     QHash<qint64, qint64> taskIds;
+    QHash<qint64, StoredTask> incomingById;
     QHash<qint64, qint64> originalRevisions;
     for (TaskGroup group : incoming.groups) {
         const qint64 oldId = group.id;
@@ -322,6 +337,7 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
             fail(error, QStringLiteral("备份任务 id 重复或分组引用非法")); return abort();
         }
         originalRevisions.insert(oldId, task.revision);
+        incomingById.insert(oldId, task);
         task.task.id = 0;
         task.task.groupId = task.task.groupId ? groupIds.value(task.task.groupId) : 0;
         task.revision = 0;
@@ -330,9 +346,10 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
     }
     QSet<qint64> sources, nextIds;
     for (const RecurrenceLink &original : incoming.recurrenceLinks) {
-        if (!taskIds.contains(original.sourceId) || sources.contains(original.sourceId)
-            || original.sourceId == original.nextId
-            || (original.nextId && (!taskIds.contains(original.nextId) || nextIds.contains(original.nextId)))) {
+        if (!taskIds.contains(original.sourceId) || !incomingById.value(original.sourceId).task.completed
+            || sources.contains(original.sourceId) || original.sourceId == original.nextId
+            || (original.nextId && (!taskIds.contains(original.nextId) || nextIds.contains(original.nextId)
+                                    || original.nextRevision > originalRevisions.value(original.nextId)))) {
             fail(error, QStringLiteral("备份重复任务引用非法")); return abort();
         }
         sources.insert(original.sourceId);

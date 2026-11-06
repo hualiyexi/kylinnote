@@ -235,7 +235,7 @@ void TaskTests::taskAndGroupCrud()
     QVERIFY(first > 0 && second > first);
     Task task = store.task(first);
     task.description = QStringLiteral("**正文**");
-    task.tags = {QStringLiteral("工作"), QStringLiteral("Qt")};
+    task.tags = QStringList{QStringLiteral("工作"), QStringLiteral("Qt")};
     QVERIFY(store.saveTask(task));
     QVERIFY(store.setPinned(first, true));
     QVERIFY(store.task(first).pinned);
@@ -568,7 +568,7 @@ void TaskTests::backupUnicodeHtmlChecklistAndMerge()
     Task task = store.task(id);
     task.description = QStringLiteral("<p><b>原样 HTML</b> &amp; Unicode Ω</p>");
     task.contentFormat = ContentFormat::Html;
-    task.tags = {QStringLiteral("家庭"), QStringLiteral("标签 Ω")};
+    task.tags = QStringList{QStringLiteral("家庭"), QStringLiteral("标签 Ω")};
     ChecklistItem item;
     item.text = QStringLiteral("第一项 ☑");
     item.done = true;

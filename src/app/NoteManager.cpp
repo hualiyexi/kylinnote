@@ -75,7 +75,7 @@ void NoteManager::handleSave(NoteWidget* window) {
         window->setSaveFailed(true);
 }
 NoteWidget* NoteManager::createNote() {
-    const qint64 id = m_store->createTask(QStringLiteral("新待办"));
+    const qint64 id = m_store->createTask(QStringLiteral("新建桌面便签"));
     if (!id)
         return nullptr;
     Task task = m_store->task(id);
@@ -87,7 +87,7 @@ NoteWidget* NoteManager::createNote() {
     NoteWidget* window = m_notes.value(id);
     if (window) {
         window->raiseTemporarily();
-        emit taskOpenRequested(id);
+        window->focusEditor();
     }
     return window;
 }
