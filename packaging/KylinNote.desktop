@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=KylinNote
+GenericName=Desktop Notes
+Comment=Windows 7 风格桌面便笺
+Exec=kylinnote
+TryExec=kylinnote
+Icon=kylinnote
+Terminal=false
+Categories=Utility;
+Keywords=note;sticky;便笺;
+StartupNotify=false

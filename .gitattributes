@@ -1,0 +1,18 @@
+# 仓库内文本统一 LF，保证在麒麟 Linux 上构建的脚本可用
+* text=auto
+
+# 这些文件必须保持 LF（Linux 下使用）
+*.sh   text eol=lf
+*.desktop text eol=lf
+*.conf text eol=lf
+*.control text eol=lf
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.txt  text eol=lf
+*.md   text eol=lf
+*.svg  text eol=lf
+
+# 二进制
+*.deb binary
+*.png binary
+*.ico binary

@@ -1,0 +1,16 @@
+# 构建产物
+build/
+*.o
+*.deb
+
+# Qt Creator / IDE
+CMakeLists.txt.user
+*.pro.user
+*.autosave
+.idea/
+.vscode/
+.vs/
+
+# 系统文件
+Thumbs.db
+.DS_Store
