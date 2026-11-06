@@ -71,6 +71,7 @@ bool TaskRepository::readSnapshot(TaskSnapshot *out, QString *error) const
             "tags,checklist,color,geometry,z_order,layer,revision,recurrence_anchor_day FROM tasks ORDER BY id")))
         return sqlFailure(query, error);
     QSet<qint64> taskIds;
+    QSet<qint64> completedIds;
     QHash<qint64, qint64> revisions;
     while (query.next()) {
         StoredTask stored;
@@ -106,11 +107,13 @@ bool TaskRepository::readSnapshot(TaskSnapshot *out, QString *error) const
             || (task.groupId != 0 && !groupIds.contains(task.groupId)) || task.completed != task.completedAt.isValid())
             return fail(error, QStringLiteral("数据库任务引用/版本/完成状态损坏"));
         taskIds.insert(task.id);
+        if (task.completed) completedIds.insert(task.id);
         revisions.insert(task.id, stored.revision);
         snapshot.tasks.append(stored);
     }
     if (query.lastError().isValid()) return sqlFailure(query, error);
     QSqlQuery links(m_database);
+    QSet<qint64> targets;
     if (!links.exec(QStringLiteral("SELECT source_id,next_id,next_revision FROM task_recurrence_links ORDER BY source_id")))
         return sqlFailure(links, error);
     while (links.next()) {
@@ -118,10 +121,12 @@ bool TaskRepository::readSnapshot(TaskSnapshot *out, QString *error) const
         link.sourceId = links.value(0).toLongLong();
         link.nextId = links.value(1).isNull() ? 0 : links.value(1).toLongLong();
         link.nextRevision = links.value(2).toLongLong();
-        if (!taskIds.contains(link.sourceId) || (link.nextId && !taskIds.contains(link.nextId))
+        if (!taskIds.contains(link.sourceId) || !completedIds.contains(link.sourceId)
+            || (link.nextId && (!taskIds.contains(link.nextId) || targets.contains(link.nextId)))
             || link.sourceId == link.nextId || link.nextRevision <= 0
             || (link.nextId && link.nextRevision > revisions.value(link.nextId)))
             return fail(error, QStringLiteral("重复任务生成凭证损坏"));
+        if (link.nextId) targets.insert(link.nextId);
         snapshot.recurrenceLinks.append(link);
     }
     if (links.lastError().isValid()) return sqlFailure(links, error);
@@ -303,7 +308,7 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
     const auto abort = [this]() { m_database.rollback(); return false; };
     QHash<qint64, qint64> groupIds;
     QHash<qint64, qint64> taskIds;
-    QHash<qint64, qint64> revisions;
+    QHash<qint64, qint64> originalRevisions;
     for (TaskGroup group : incoming.groups) {
         const qint64 oldId = group.id;
         if (oldId <= 0 || groupIds.contains(oldId)) { fail(error, QStringLiteral("备份分组 id 重复或非法")); return abort(); }
@@ -316,12 +321,12 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
         if (oldId <= 0 || taskIds.contains(oldId) || (task.task.groupId && !groupIds.contains(task.task.groupId))) {
             fail(error, QStringLiteral("备份任务 id 重复或分组引用非法")); return abort();
         }
+        originalRevisions.insert(oldId, task.revision);
         task.task.id = 0;
         task.task.groupId = task.task.groupId ? groupIds.value(task.task.groupId) : 0;
         task.revision = 0;
         if (!saveTask(&task, error)) return abort();
         taskIds.insert(oldId, task.task.id);
-        revisions.insert(oldId, task.revision);
     }
     QSet<qint64> sources, nextIds;
     for (const RecurrenceLink &original : incoming.recurrenceLinks) {
@@ -335,15 +340,9 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
         RecurrenceLink link;
         link.sourceId = taskIds.value(original.sourceId);
         link.nextId = original.nextId ? taskIds.value(original.nextId) : 0;
-        // 从备份里保留“实例已被修改”的区别；新库 revision 从 1 开始，
-        // 不能把原始的高 revision 直接拷贝过去。0/负值由导入全面校验拒绝。
-        const bool untouched = original.nextId && [&incoming, &original]() {
-            for (const StoredTask &task : incoming.tasks)
-                if (task.task.id == original.nextId) return task.revision == original.nextRevision;
-            return false;
-        }();
-        // 若 child 已改过，把导入 child 的 revision 提升到 2，让凭证(1)继续禁止撤销。
-        if (link.nextId && !untouched) {
+        // 在原备份的同一 revision 空间比较是否编辑过，再把这层关系映射到
+        // 新行的 revision 空间（1=未动，2=已动）。保持撤销保护，不拷贝旧 id。
+        if (original.nextId && originalRevisions.value(original.nextId) != original.nextRevision) {
             QSqlQuery mark(m_database);
             mark.prepare(QStringLiteral("UPDATE tasks SET revision=2 WHERE id=?"));
             mark.addBindValue(link.nextId);
