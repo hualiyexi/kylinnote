@@ -29,7 +29,9 @@ try {
     $App = Join-Path $InstallDir 'kylinnote.exe'
     if (-not (Test-Path -LiteralPath $App)) { throw 'Installed application missing' }
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-    & $App --smoke-test --data-dir $DataDir
+    $PowerShell = Join-Path $PSHome 'powershell.exe'
+    & $PowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'windows/Smoke.ps1') `
+        -Application $App -DataDir $DataDir -WorkDir $InstallDir
     if ($LASTEXITCODE -ne 0) { throw "Installed application failed: $LASTEXITCODE" }
     if (-not (Test-Path -LiteralPath (Join-Path $DataDir 'notes.db'))) { throw 'Installed application did not create SQLite database' }
     $Uninstaller = Get-ChildItem -LiteralPath $InstallDir -Filter 'unins*.exe' | Select-Object -First 1

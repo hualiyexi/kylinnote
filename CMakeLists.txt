@@ -35,6 +35,7 @@ set(KYLINNOTE_CORE_SOURCES
     src/Common.cpp
     src/db/Database.cpp
     src/app/Settings.cpp
+    src/app/AttachmentStore.cpp
     src/app/SingleInstanceGuard.cpp
     src/platform/Autostart.cpp
     src/platform/InstanceChannel.cpp
@@ -67,6 +68,8 @@ set(KYLINNOTE_UI_SOURCES
     src/ui/TitleBar.cpp
     src/ui/ResizeGrip.cpp
     src/ui/ColorTheme.cpp
+    src/ui/NoteChecklist.cpp
+    src/ui/AttachmentWidget.cpp
 )
 foreach(source IN ITEMS
         src/ui/AppStyle.cpp
@@ -133,9 +136,8 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(WIN32)
-    # 保留控制台子系统：双击仍显示原生 GUI，不额外创建黑窗口；
-    # 命令行/CI 能准确接收 --smoke-test 的 stdout/stderr 与退出码。
-    add_executable(kylinnote src/main.cpp)
+    # 正式应用绝不创建控制台窗口。打包脚本用独立启动器检查 --smoke-test 退出码。
+    add_executable(kylinnote WIN32 src/main.cpp)
 else()
     add_executable(kylinnote src/main.cpp)
 endif()

@@ -17,6 +17,12 @@ pip-*/
 *.pyc
 __pycache__/
 
+# 本机正式数据、参考图片与临时测试目录（不纳入发布源码）
+data/
+滴答清单前端图片/
+/tmp*/
+kylinnote-smoke-data/
+
 # Qt Creator / IDE
 CMakeLists.txt.user
 *.pro.user

@@ -149,15 +149,13 @@ try {
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $StageDir 'platforms'
     $env:QT_QPA_PLATFORM = 'windows'
     $env:KYLINNOTE_DATA_DIR = Join-Path $BuildDir ("smoke-" + [guid]::NewGuid().ToString('N'))
-    # The console-subsystem GUI exposes a reliable exit code to the host.
-    # Avoid Start-Process waiting for a GUI application and losing its status.
-    $SmokeLog = Join-Path $BuildDir 'smoke.stdout.log'
-    & $App --smoke-test --data-dir "$env:KYLINNOTE_DATA_DIR" > $SmokeLog 2>&1
-    $SmokeExit = $LASTEXITCODE
-    if ($SmokeExit -ne 0) {
-        Get-Content -LiteralPath (Join-Path $BuildDir 'smoke.stdout.log') -ErrorAction SilentlyContinue
-        throw "Deployed app smoke failed: exit $SmokeExit"
-    }
+    # A GUI-subsystem application never creates a black console window.
+    # The build-only launcher waits for the real process exit code.
+    $PowerShell = Join-Path $PSHome 'powershell.exe'
+    & $PowerShell -NoProfile -ExecutionPolicy Bypass -File `
+        (Join-Path $ProjectDir 'packaging/windows/Smoke.ps1') -Application $App `
+        -DataDir "$env:KYLINNOTE_DATA_DIR" -WorkDir $BuildDir
+    if ($LASTEXITCODE -ne 0) { throw "GUI smoke helper failed: $LASTEXITCODE" }
     if (-not (Test-Path -LiteralPath (Join-Path $env:KYLINNOTE_DATA_DIR 'notes.db'))) {
         throw 'Deployed app did not initialize its SQLite database'
     }
