@@ -1,5 +1,7 @@
 # KylinNote
 
+[![build-deb](https://github.com/hualiyexi/kylinnote/actions/workflows/build.yml/badge.svg)](https://github.com/hualiyexi/kylinnote/actions/workflows/build.yml)
+
 面向**银河麒麟 V10 SP1 ARM64** 的 Windows 7 风格桌面便笺。纯单机、无网络、无 AI 依赖。
 
 - 无边框便签窗口：标题条拖动、右下角拖拽缩放、默认**贴在桌面**（`F12` 循环层位：贴在桌面 → 普通 → 始终置顶）
@@ -59,6 +61,27 @@ kylinnote/
 | 运行时库 | `libqt5core5a libqt5gui5 libqt5widgets5 libqt5sql5 libqt5sql5-sqlite libqt5dbus5` |
 
 ## 3. 构建
+
+### 3.0 云端构建（Windows 开发机推荐，无需任何 Linux 环境）
+
+在 Windows 上开发时，push 到 GitHub 即可自动产出 arm64 安装包：
+
+1. `git push` 后进入仓库 **Actions** 页（或打 `v*` 标签发版），流水线在
+   GitHub 原生 arm64 runner 上的 **Ubuntu 20.04 arm64 容器**（与麒麟 V10 SP1
+   同基线：glibc 2.31 + Qt 5.12）里完成编译与打包
+2. 产物有两个：`kylinnote_<版本>_arm64.deb`（常规包，依赖目标机系统 Qt）
+   和 `kylinnote_<版本>_arm64_bundle.deb`（自包含离线包，Qt 随包携带，
+   内网机 `dpkg -i` 即用），在 Actions 运行页的 Artifacts 下载；
+   打 `v*` 标签会同时发到 Releases
+3. 流水线自带冒烟测试：干净容器安装常规包、校验 arm64 架构与 bundle 包
+   依赖闭合
+
+本地复现（有 Docker 的机器）：
+
+```bash
+docker run --platform linux/arm64 -v "$(pwd)":/src -w /src ubuntu:20.04 \
+    bash packaging/ci-build.sh
+```
 
 ### 3.1 安装构建依赖
 

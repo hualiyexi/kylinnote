@@ -1,0 +1,62 @@
+name: build-deb
+
+# push 到 main 或手动触发时：编译并产出两个 arm64 deb（常规包 + bundle 离线包）
+# 打 v* 标签时：额外创建 GitHub Release 并附上 deb
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-arm64:
+    # GitHub 原生 arm64 runner（公开仓库免费），比 QEMU 模拟快得多
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 容器内构建（Ubuntu 20.04 arm64 ≈ 麒麟 V10 SP1 基线）
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/src -w /src \
+            ubuntu:20.04 \
+            bash packaging/ci-build.sh
+
+      - name: 冒烟测试：干净容器安装常规包并校验
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/src -w /src \
+            ubuntu:20.04 \
+            bash -c '
+              set -e
+              apt-get update -qq || (sed -i "s|ports.ubuntu.com/ubuntu-ports|old-releases.ubuntu.com/ubuntu-ports|g; s|archive.ubuntu.com/ubuntu|old-releases.ubuntu.com/ubuntu|g; s|security.ubuntu.com/ubuntu|old-releases.ubuntu.com/ubuntu|g" /etc/apt/sources.list && apt-get update -qq)
+              echo "== 安装常规包：Depends 若写错（包名在基线源中不存在）此步即失败 =="
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./kylinnote_*_arm64.deb
+              dpkg -s kylinnote | grep -E "^(Package|Version|Architecture|Status)"
+              test -x /usr/bin/kylinnote && echo "常规包: /usr/bin/kylinnote 就位"
+              echo "== bundle 包结构校验：Qt 库与 xcb 平台插件必须随包携带 =="
+              dpkg-deb -c kylinnote_*_arm64_bundle.deb | grep -q "libQt5Core.so.5" && echo "bundle: Qt 库随包 OK"
+              dpkg-deb -c kylinnote_*_arm64_bundle.deb | grep -q "plugins/platforms/libqxcb.so" && echo "bundle: xcb 平台插件随包 OK"
+              dpkg-deb -I kylinnote_*_arm64_bundle.deb | grep "^ Depends" || true
+            '
+
+      - name: 整理产物
+        run: |
+          mkdir -p dist
+          cp kylinnote_*_arm64*.deb dist/
+          ls -lh dist/
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: kylinnote-deb-arm64
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: 发布 Release（打 v* 标签时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+          generate_release_notes: true
