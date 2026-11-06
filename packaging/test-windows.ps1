@@ -29,7 +29,7 @@ try {
     $App = Join-Path $InstallDir 'kylinnote.exe'
     if (-not (Test-Path -LiteralPath $App)) { throw 'Installed application missing' }
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-    $PowerShell = Join-Path $PSHome 'powershell.exe'
+    $PowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     & $PowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'windows/Smoke.ps1') `
         -Application $App -DataDir $DataDir -WorkDir $InstallDir
     if ($LASTEXITCODE -ne 0) { throw "Installed application failed: $LASTEXITCODE" }

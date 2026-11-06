@@ -151,7 +151,7 @@ try {
     $env:KYLINNOTE_DATA_DIR = Join-Path $BuildDir ("smoke-" + [guid]::NewGuid().ToString('N'))
     # A GUI-subsystem application never creates a black console window.
     # The build-only launcher waits for the real process exit code.
-    $PowerShell = Join-Path $PSHome 'powershell.exe'
+    $PowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     & $PowerShell -NoProfile -ExecutionPolicy Bypass -File `
         (Join-Path $ProjectDir 'packaging/windows/Smoke.ps1') -Application $App `
         -DataDir "$env:KYLINNOTE_DATA_DIR" -WorkDir $BuildDir

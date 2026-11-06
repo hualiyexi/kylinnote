@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QVariant>
 
 #include "../app/AttachmentStore.h"
 #include "../app/TaskStore.h"
@@ -53,17 +54,17 @@ AttachmentWidget::AttachmentWidget(TaskStore* store, QWidget* parent) : QWidget(
     auto* header = new QHBoxLayout(m_header);
     header->setContentsMargins(0, 0, 0, 0);
     auto* title = new QLabel(QStringLiteral("图片与附件"), m_header);
-    title->setProperty("section", true);
+    title->setProperty("section", QVariant(true));
     header->addWidget(title);
     header->addStretch();
     m_add = new QPushButton(QStringLiteral("添加图片或附件"), m_header);
     m_add->setObjectName(QStringLiteral("AddAttachment"));
-    m_add->setProperty("quiet", true);
+    m_add->setProperty("quiet", QVariant(true));
     m_add->setToolTip(QStringLiteral("复制到本机任务目录，单个文件不超过 2 MB"));
     header->addWidget(m_add);
     root->addWidget(m_header);
     m_empty = new QLabel(QStringLiteral("添加参考图片或相关材料，文件会保存在本机。"), this);
-    m_empty->setProperty("muted", true);
+    m_empty->setProperty("muted", QVariant(true));
     m_empty->setWordWrap(true);
     root->addWidget(m_empty);
     auto* rowsHost = new QWidget(this);
@@ -147,7 +148,7 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     } else {
         preview->setText(QFileInfo(attachment.originalName).suffix().toUpper().left(4));
     }
-    preview->setProperty("fileAttachment", !attachment.isImage);
+    preview->setProperty("fileAttachment", QVariant(!attachment.isImage));
     layout->addWidget(preview);
 
     auto* text = new QVBoxLayout;
@@ -156,15 +157,15 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     name->setTextInteractionFlags(Qt::TextSelectableByMouse);
     text->addWidget(name);
     auto* detail = new QLabel(readableSize(attachment.size), row);
-    detail->setProperty("muted", true);
+    detail->setProperty("muted", QVariant(true));
     text->addWidget(detail);
     layout->addLayout(text, 1);
 
     auto* open = new QPushButton(QStringLiteral("打开"), row);
-    open->setProperty("quiet", true);
+    open->setProperty("quiet", QVariant(true));
     layout->addWidget(open);
     auto* remove = new QPushButton(QStringLiteral("移除"), row);
-    remove->setProperty("quiet", true);
+    remove->setProperty("quiet", QVariant(true));
     remove->setVisible(!m_readOnly && !m_compact);
     layout->addWidget(remove);
     if (m_compact) {
