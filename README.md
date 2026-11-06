@@ -18,6 +18,14 @@
 - **数据维护**：本地 SQLite、自动保存、回收站恢复、JSON 备份导出和合并导入。保存失败保留当前编辑内容并明确提示。
 - **按需自启**：在“备份与设置”中开启或关闭登录自启；默认不强制修改系统自启项。
 
+## 界面预览
+
+真实 Windows 桌面渲染，不是网页原型：
+
+![聚合待办面板](docs/screenshots/windows-task-panel.png)
+
+![任务桌面便签](docs/screenshots/windows-desktop-note.png)
+
 ## 下载与安装
 
 每次 push 到 `main` 会触发 [GitHub Actions](https://github.com/hualiyexi/kylinnote/actions)。两个平台的构建产物分别下载；`v*` 标签会在两边验证成功后附到 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
@@ -77,14 +85,6 @@ Windows 上编辑后 `git push` 即可运行双平台 CI。原生 UI 测试由 Q
 - [数据模型、迁移与备份](docs/data-model.md)
 - [界面设计约定](docs/ui-design.md)
 - [第三方来源与许可](THIRD_PARTY.md)
-
-## 界面预览
-
-真实 Windows 桌面渲染，不是网页原型：
-
-![聚合待办面板](docs/screenshots/windows-task-panel.png)
-
-![任务桌面便签](docs/screenshots/windows-desktop-note.png)
 
 ## 旧版本升级
 

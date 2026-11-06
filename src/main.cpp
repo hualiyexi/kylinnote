@@ -2,6 +2,7 @@
 #include <QCommandLineParser>
 #include <QMessageBox>
 #include <QSettings>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <cstdio>
 #include "Common.h"
@@ -33,10 +34,20 @@ int main(int argc, char* argv[]) {
     if (parser.isSet(QStringLiteral("data-dir")))
         qputenv("KYLINNOTE_DATA_DIR", QDir(parser.value(QStringLiteral("data-dir"))).absolutePath().toUtf8());
     else if (parser.isSet(QStringLiteral("smoke-test"))) {
-        // 不写系统 Temp：受限的构建/测试账户也必须能验证应用初始化。
-        const QString smokeDir = QDir::current().absoluteFilePath(QStringLiteral("kylinnote-smoke-data"));
-        QDir().mkpath(smokeDir);
-        qputenv("KYLINNOTE_DATA_DIR", smokeDir.toUtf8());
+        // 每次独立目录，避免重复自检被上一个实例的锁或数据库影响。
+        const QString smokeDir = QDir::current().absoluteFilePath(QStringLiteral("smoke-data"));
+        if (!QDir().mkpath(smokeDir)) {
+            std::fprintf(stderr, "Cannot create smoke-test data directory.\n");
+            return 1;
+        }
+        QTemporaryDir smokeData(smokeDir + QStringLiteral("/run-XXXXXX"));
+        if (smokeData.isValid())
+            qputenv("KYLINNOTE_DATA_DIR", smokeData.path().toUtf8());
+        smokeData.setAutoRemove(false);
+        if (smokeData.path().isEmpty() || !QDir(smokeData.path()).exists()) {
+            std::fprintf(stderr, "Cannot create smoke-test data directory.\n");
+            return 1;
+        }
     }
     if (!qEnvironmentVariable("KYLINNOTE_DATA_DIR").isEmpty()) {
         // 独立调试目录同时隔离界面偏好，测试不修改真实用户配置。
