@@ -1,5 +1,6 @@
 #include "TaskStore.h"
 
+#include "../domain/AttachmentCodec.h"
 #include "../domain/TaskCodec.h"
 
 #include <QFile>
@@ -14,25 +15,23 @@
 namespace kn {
 namespace {
 const char *const kBackupFormat = "KylinNote.Tasks";
-const int kBackupVersion = 1;
-const qint64 kMaximumBackupBytes = 64 * 1024 * 1024;
+const int kLegacyBackupVersion = 1;    // 旧版纯 JSON，无附件
+const int kBackupMetadataVersion = 2;  // 容器内 JSON 元数据，含 attachments 数组
+const qint64 kMaximumBackupBytes = 64 * 1024 * 1024;        // 旧 JSON 上限
+const qint64 kMaximumContainerBytes = 256 * 1024 * 1024;    // 含附件容器上限
 
 QDateTime plannedAt(const Task &task)
 {
     return task.dueAt.isValid() ? task.dueAt : task.startAt;
 }
 
-bool parseBackup(const QByteArray &bytes, TaskSnapshot *out, QString *error)
+bool parseBackupRoot(const QJsonObject &root, qint64 expectedVersion, TaskSnapshot *out, QString *error)
 {
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject())
-        return taskcodec::fail(error, QStringLiteral("备份 JSON 无效: ") + parseError.errorString());
-    const QJsonObject root = document.object();
     qint64 version = 0;
     if (!root.value(QStringLiteral("format")).isString()
         || root.value(QStringLiteral("format")).toString() != QLatin1String(kBackupFormat)
-        || !taskcodec::readInteger(root.value(QStringLiteral("version")), kBackupVersion, kBackupVersion, &version))
+        || !taskcodec::readInteger(root.value(QStringLiteral("version")), expectedVersion, expectedVersion,
+                                   &version))
         return taskcodec::fail(error, QStringLiteral("不支持的备份格式或版本"));
     if (!root.value(QStringLiteral("groups")).isArray() || !root.value(QStringLiteral("tasks")).isArray()
         || !root.value(QStringLiteral("recurrenceLinks")).isArray())
@@ -104,6 +103,89 @@ bool parseBackup(const QByteArray &bytes, TaskSnapshot *out, QString *error)
     *out = snapshot;
     return true;
 }
+
+bool parseLegacyBackup(const QByteArray &bytes, TaskSnapshot *out, QString *error)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+        return taskcodec::fail(error, QStringLiteral("备份 JSON 无效: ") + parseError.errorString());
+    return parseBackupRoot(document.object(), kLegacyBackupVersion, out, error);
+}
+
+// 容器专用：校验 attachments 元数据与内容帧一一对应，全部通过后才允许写文件/合并。
+bool parseContainerAttachments(const QJsonObject &root, const QVector<attachmentcodec::BackupFrame> &frames,
+                               TaskSnapshot *snapshot, QString *error)
+{
+    if (!root.value(QStringLiteral("attachments")).isArray())
+        return taskcodec::fail(error, QStringLiteral("备份缺少 attachments 数组"));
+    const QJsonArray array = root.value(QStringLiteral("attachments")).toArray();
+    if (array.size() > attachmentcodec::kMaximumBackupAttachments)
+        return taskcodec::fail(error, QStringLiteral("备份附件数量超过上限"));
+    if (frames.size() != array.size())
+        return taskcodec::fail(error, QStringLiteral("附件内容帧与元数据数量不一致"));
+    QHash<QString, QByteArray> contentById;
+    for (const attachmentcodec::BackupFrame &frame : frames) contentById.insert(frame.id, frame.content);
+
+    QSet<qint64> taskIds;
+    for (const StoredTask &task : snapshot->tasks) taskIds.insert(task.task.id);
+    QSet<QString> ids, paths;
+    for (const QJsonValue &value : array) {
+        if (!value.isObject()) return taskcodec::fail(error, QStringLiteral("附件元数据必须是对象"));
+        Attachment attachment;
+        if (!attachmentcodec::fromJson(value.toObject(), &attachment, error)) return false;
+        if (ids.contains(attachment.id) || paths.contains(attachment.relativePath))
+            return taskcodec::fail(error, QStringLiteral("备份附件 id 或存储路径重复"));
+        if (!taskIds.contains(attachment.taskId))
+            return taskcodec::fail(error, QStringLiteral("备份附件引用了不存在的任务"));
+        const auto content = contentById.constFind(attachment.id);
+        if (content == contentById.constEnd())
+            return taskcodec::fail(error, QStringLiteral("备份缺少附件内容帧: ") + attachment.id);
+        if (content.value().size() != attachment.size)
+            return taskcodec::fail(error, QStringLiteral("附件内容大小与元数据不一致"));
+        ids.insert(attachment.id);
+        paths.insert(attachment.relativePath);
+        snapshot->attachments.append(attachment);
+    }
+    return true;
+}
+
+QJsonObject backupMetadataJson(const TaskSnapshot &snapshot)
+{
+    QJsonObject root;
+    root.insert(QStringLiteral("format"), QString::fromLatin1(kBackupFormat));
+    root.insert(QStringLiteral("version"), kBackupMetadataVersion);
+    QJsonArray groups;
+    for (const TaskGroup &group : snapshot.groups) {
+        QJsonObject object;
+        object.insert(QStringLiteral("id"), QString::number(group.id));
+        object.insert(QStringLiteral("name"), group.name);
+        groups.append(object);
+    }
+    QJsonArray tasks;
+    for (const StoredTask &task : snapshot.tasks) {
+        QJsonObject object = taskcodec::toJson(task.task);
+        object.insert(QStringLiteral("revision"), QString::number(task.revision));
+        object.insert(QStringLiteral("recurrenceAnchorDay"), task.recurrenceAnchorDay);
+        tasks.append(object);
+    }
+    QJsonArray links;
+    for (const RecurrenceLink &link : snapshot.recurrenceLinks) {
+        QJsonObject object;
+        object.insert(QStringLiteral("sourceId"), QString::number(link.sourceId));
+        object.insert(QStringLiteral("nextId"), QString::number(link.nextId));
+        object.insert(QStringLiteral("nextRevision"), QString::number(link.nextRevision));
+        links.append(object);
+    }
+    QJsonArray attachments;
+    for (const Attachment &attachment : snapshot.attachments)
+        attachments.append(attachmentcodec::toJson(attachment));
+    root.insert(QStringLiteral("groups"), groups);
+    root.insert(QStringLiteral("tasks"), tasks);
+    root.insert(QStringLiteral("recurrenceLinks"), links);
+    root.insert(QStringLiteral("attachments"), attachments);
+    return root;
+}
 }
 
 TaskStore::TaskStore(const QSqlDatabase &database, QObject *parent)
@@ -124,6 +206,7 @@ bool TaskStore::ensureLoaded()
 
 bool TaskStore::load(QString *error)
 {
+    if (!m_attachmentStore) m_attachmentStore.reset(new AttachmentStore(dataDirPath()));
     TaskSnapshot snapshot;
     QString failure;
     if (!m_repository.load(&snapshot, &failure)) return fail(failure, error);
@@ -158,6 +241,13 @@ const RecurrenceLink *TaskStore::linkFor(qint64 sourceId) const
     return nullptr;
 }
 
+const Attachment *TaskStore::findAttachment(const QString &attachmentId) const
+{
+    for (const Attachment &attachment : m_snapshot.attachments)
+        if (attachment.id == attachmentId) return &attachment;
+    return nullptr;
+}
+
 bool TaskStore::hasGroup(qint64 id) const
 {
     if (id == 0) return true;
@@ -171,6 +261,22 @@ Task TaskStore::task(qint64 id) const
     return stored ? stored->task : Task();
 }
 
+QVector<Attachment> TaskStore::attachments(qint64 taskId) const
+{
+    QVector<Attachment> result;
+    for (const Attachment &attachment : m_snapshot.attachments)
+        if (attachment.taskId == taskId) result.append(attachment);
+    return result;
+}
+
+int TaskStore::nextAttachmentSortOrder(qint64 taskId) const
+{
+    int order = 0;
+    for (const Attachment &attachment : m_snapshot.attachments)
+        if (attachment.taskId == taskId) order = qMax(order, attachment.sortOrder + 1);
+    return order;
+}
+
 bool TaskStore::commit(TaskChanges *changes, bool reset)
 {
     TaskSnapshot snapshot;
@@ -180,6 +286,13 @@ bool TaskStore::commit(TaskChanges *changes, bool reset)
     for (qint64 groupId : changes->groupRemovals)
         for (const StoredTask &stored : m_snapshot.tasks)
             if (stored.task.groupId == groupId) changedIds.insert(stored.task.id);
+    // 记录提交成功后需要物理清理的附件文件：被永久删除任务的附件 + 显式移除的附件。
+    QStringList cleanupPaths;
+    for (const StoredTask &removed : changes->removals)
+        for (const Attachment &attachment : m_snapshot.attachments)
+            if (attachment.taskId == removed.task.id) cleanupPaths.append(attachment.relativePath);
+    for (const Attachment &attachment : changes->attachmentRemovals)
+        cleanupPaths.append(attachment.relativePath);
     if (!m_repository.apply(changes, &snapshot, &failure)) return fail(failure);
     for (const StoredTask &saved : changes->saves) changedIds.insert(saved.task.id);
     m_snapshot = snapshot;
@@ -188,6 +301,17 @@ bool TaskStore::commit(TaskChanges *changes, bool reset)
     if (groupChanges) emit groupsChanged();
     for (qint64 id : changedIds) emit taskChanged(id);
     if (reset || !changes->removals.isEmpty() || changes->generationSourceId || groupChanges) emit tasksReset();
+    // 先 DB 成功后清理；清理失败仅保留孤儿文件，不回滚、不丢任务。
+    if (m_attachmentStore) {
+        QStringList orphans;
+        for (const QString &relativePath : cleanupPaths) {
+            QString cleanupError;
+            if (!m_attachmentStore->removeFile(relativePath, &cleanupError)) orphans.append(relativePath);
+        }
+        if (!orphans.isEmpty())
+            emit errorOccurred(QStringLiteral("附件文件清理失败，已保留孤儿文件: ")
+                               + orphans.join(QStringLiteral(", ")));
+    }
     return true;
 }
 
@@ -261,6 +385,7 @@ bool TaskStore::prepareSave(Task value, TaskChanges *changes)
             StoredTask generated;
             generated.task = next;
             generated.recurrenceAnchorDay = stored.recurrenceAnchorDay;
+            // 新实例不强求自动复制附件；原任务的附件保持不变。
             changes->generationSourceId = value.id; // 新建已完成重复任务没有来源 id，见 saveTask 的限制
             changes->generatedTaskIndex = changes->saves.size();
             changes->saves.append(generated);
@@ -338,6 +463,7 @@ bool TaskStore::deletePermanently(qint64 id)
     if (!stored->task.deleted) return fail(QStringLiteral("请先把任务移到回收站"));
     TaskChanges changes;
     changes.removals.append(*stored);
+    // 附件元数据随 ON DELETE CASCADE 删除，物理文件由 commit 在 DB 成功后清理。
     return commit(&changes, true);
 }
 
@@ -373,6 +499,64 @@ bool TaskStore::deleteGroup(qint64 id)
     return commit(&changes, true);
 }
 
+Attachment TaskStore::importAttachment(qint64 taskId, const QString &sourcePath)
+{
+    if (!ensureLoaded()) return Attachment();
+    if (!find(taskId)) { fail(QStringLiteral("任务不存在")); return Attachment(); }
+    if (!m_attachmentStore) { fail(QStringLiteral("附件存储未初始化")); return Attachment(); }
+    QString failure;
+    Attachment attachment =
+        m_attachmentStore->importFile(taskId, sourcePath, nextAttachmentSortOrder(taskId), &failure);
+    if (attachment.id.isEmpty()) { fail(failure); return Attachment(); }
+    TaskChanges changes;
+    changes.attachmentSaves.append(attachment);
+    if (!commit(&changes)) {
+        QString ignored;
+        // DB 未接收元数据时清理已复制的文件，避免产生未登记内容。
+        m_attachmentStore->removeFile(attachment.relativePath, &ignored);
+        return Attachment();
+    }
+    m_lastError.clear();
+    emit attachmentsChanged(taskId);
+    return attachment;
+}
+
+bool TaskStore::removeAttachment(qint64 taskId, const QString &attachmentId)
+{
+    if (!ensureLoaded()) return false;
+    const Attachment *attachment = findAttachment(attachmentId);
+    if (!attachment || attachment->taskId != taskId) return fail(QStringLiteral("附件不存在"));
+    TaskChanges changes;
+    changes.attachmentRemovals.append(*attachment);
+    if (!commit(&changes)) return false;
+    emit attachmentsChanged(taskId);
+    return true;
+}
+
+bool TaskStore::openAttachment(const QString &attachmentId)
+{
+    if (!ensureLoaded()) return false;
+    const Attachment *attachment = findAttachment(attachmentId);
+    if (!attachment) return fail(QStringLiteral("附件不存在"));
+    if (!m_attachmentStore) return fail(QStringLiteral("附件存储未初始化"));
+    QString failure;
+    if (!m_attachmentStore->openWithDefaultProgram(*attachment, &failure)) return fail(failure);
+    m_lastError.clear();
+    return true;
+}
+
+bool TaskStore::copyAttachmentTo(const QString &attachmentId, const QString &destinationPath)
+{
+    if (!ensureLoaded()) return false;
+    const Attachment *attachment = findAttachment(attachmentId);
+    if (!attachment) return fail(QStringLiteral("附件不存在"));
+    if (!m_attachmentStore) return fail(QStringLiteral("附件存储未初始化"));
+    QString failure;
+    if (!m_attachmentStore->copyTo(*attachment, destinationPath, &failure)) return fail(failure);
+    m_lastError.clear();
+    return true;
+}
+
 bool TaskStore::markReminderNotified(qint64 id, const QDateTime &expectedReminder, const QDateTime &now)
 {
     if (!ensureLoaded()) return false;
@@ -391,41 +575,29 @@ bool TaskStore::markReminderNotified(qint64 id, const QDateTime &expectedReminde
 bool TaskStore::exportBackup(const QString &path)
 {
     if (!ensureLoaded()) return false;
-    QJsonObject root;
-    root.insert(QStringLiteral("format"), QString::fromLatin1(kBackupFormat));
-    root.insert(QStringLiteral("version"), kBackupVersion);
-    QJsonArray groups;
-    for (const TaskGroup &group : m_snapshot.groups) {
-        QJsonObject object;
-        object.insert(QStringLiteral("id"), QString::number(group.id));
-        object.insert(QStringLiteral("name"), group.name);
-        groups.append(object);
+    QVector<attachmentcodec::BackupFrame> frames;
+    qint64 totalBytes = 0;
+    for (const Attachment &attachment : m_snapshot.attachments) {
+        if (!m_attachmentStore) return fail(QStringLiteral("附件存储未初始化"));
+        QByteArray content;
+        QString failure;
+        if (!m_attachmentStore->readContent(attachment, &content, &failure))
+            return fail(QStringLiteral("导出附件失败: ") + failure);
+        attachmentcodec::BackupFrame frame;
+        frame.id = attachment.id;
+        frame.content = content;
+        totalBytes += content.size();
+        frames.append(frame);
     }
-    QJsonArray tasks;
-    for (const StoredTask &task : m_snapshot.tasks) {
-        QJsonObject object = taskcodec::toJson(task.task);
-        object.insert(QStringLiteral("revision"), QString::number(task.revision));
-        object.insert(QStringLiteral("recurrenceAnchorDay"), task.recurrenceAnchorDay);
-        tasks.append(object);
-    }
-    QJsonArray links;
-    for (const RecurrenceLink &link : m_snapshot.recurrenceLinks) {
-        QJsonObject object;
-        object.insert(QStringLiteral("sourceId"), QString::number(link.sourceId));
-        object.insert(QStringLiteral("nextId"), QString::number(link.nextId));
-        object.insert(QStringLiteral("nextRevision"), QString::number(link.nextRevision));
-        links.append(object);
-    }
-    root.insert(QStringLiteral("groups"), groups);
-    root.insert(QStringLiteral("tasks"), tasks);
-    root.insert(QStringLiteral("recurrenceLinks"), links);
-    const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    const QByteArray metadata = QJsonDocument(backupMetadataJson(m_snapshot)).toJson(QJsonDocument::Compact);
+    if (totalBytes + metadata.size() > kMaximumContainerBytes)
+        return fail(QStringLiteral("备份超过 256 MiB 限制"));
     QSaveFile file(path);
     // 默认不回退直接覆盖，确保失败时既有备份仍完整。
     file.setDirectWriteFallback(false);
     if (!file.open(QIODevice::WriteOnly)) return fail(QStringLiteral("创建备份失败: ") + file.errorString());
-    if (file.write(bytes) != bytes.size()) {
-        const QString failure = file.errorString();
+    QString failure;
+    if (!attachmentcodec::writeBackupContainer(&file, metadata, frames, &failure)) {
         file.cancelWriting();
         return fail(QStringLiteral("写入备份失败: ") + failure);
     }
@@ -439,15 +611,67 @@ bool TaskStore::importBackup(const QString &path)
     if (!ensureLoaded()) return false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return fail(QStringLiteral("打开备份失败: ") + file.errorString());
-    if (file.size() > kMaximumBackupBytes) return fail(QStringLiteral("备份超过 64 MiB 限制"));
-    const QByteArray bytes = file.read(kMaximumBackupBytes + 1);
+    if (file.size() > kMaximumContainerBytes) return fail(QStringLiteral("备份超过 256 MiB 限制"));
+    const QByteArray bytes = file.read(kMaximumContainerBytes + 1);
     if (file.error() != QFile::NoError) return fail(QStringLiteral("读取备份失败: ") + file.errorString());
-    if (bytes.size() > kMaximumBackupBytes) return fail(QStringLiteral("备份超过 64 MiB 限制"));
+    if (bytes.size() > kMaximumContainerBytes) return fail(QStringLiteral("备份超过 256 MiB 限制"));
     TaskSnapshot incoming;
     QString failure;
-    if (!parseBackup(bytes, &incoming, &failure)) return fail(failure);
+    QVector<attachmentcodec::BackupFrame> frames;
+    const bool container = attachmentcodec::isBackupContainer(bytes);
+    if (container) {
+        QByteArray metadataBytes;
+        if (!attachmentcodec::readBackupContainer(bytes, &metadataBytes, &frames, &failure))
+            return fail(failure);
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(metadataBytes, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject())
+            return fail(QStringLiteral("备份元数据 JSON 无效: ") + parseError.errorString());
+        const QJsonObject root = document.object();
+        if (!parseBackupRoot(root, kBackupMetadataVersion, &incoming, &failure)) return fail(failure);
+        if (!parseContainerAttachments(root, frames, &incoming, &failure)) return fail(failure);
+    } else {
+        if (bytes.size() > kMaximumBackupBytes) return fail(QStringLiteral("备份超过 64 MiB 限制"));
+        if (!parseLegacyBackup(bytes, &incoming, &failure)) return fail(failure);
+    }
+
+    // 附件使用全新 id/存储名，保证同一备份可重复导入且不与现有文件冲突。
+    // 先写文件再合并元数据；任一步失败都清理本次写入的文件，不留下未登记内容。
+    QVector<Attachment> staged;
+    if (container && !incoming.attachments.isEmpty()) {
+        if (!m_attachmentStore) return fail(QStringLiteral("附件存储未初始化"));
+        QHash<QString, QByteArray> contentById;
+        for (const attachmentcodec::BackupFrame &frame : frames) contentById.insert(frame.id, frame.content);
+        QSet<QString> usedIds;
+        for (Attachment &attachment : incoming.attachments) {
+            const QString extension = attachmentcodec::safeAttachmentExtension(
+                attachment.relativePath.section(QLatin1Char('_'), 1));
+            QString newId;
+            do {
+                newId = attachmentcodec::newAttachmentId();
+            } while (usedIds.contains(newId) || findAttachment(newId));
+            usedIds.insert(newId);
+            const QByteArray content = contentById.value(attachment.id);
+            attachment.id = newId;
+            attachment.relativePath = attachmentcodec::attachmentRelativePath(newId, extension);
+            if (!m_attachmentStore->writeFile(attachment.relativePath, content, &failure)) {
+                for (const Attachment &written : staged) {
+                    QString ignored;
+                    m_attachmentStore->removeFile(written.relativePath, &ignored);
+                }
+                return fail(failure);
+            }
+            staged.append(attachment);
+        }
+    }
     TaskSnapshot merged;
-    if (!m_repository.merge(incoming, &merged, &failure)) return fail(failure);
+    if (!m_repository.merge(incoming, &merged, &failure)) {
+        for (const Attachment &written : staged) {
+            QString ignored;
+            m_attachmentStore->removeFile(written.relativePath, &ignored);
+        }
+        return fail(failure);
+    }
     m_snapshot = merged;
     m_lastError.clear();
     emit groupsChanged();

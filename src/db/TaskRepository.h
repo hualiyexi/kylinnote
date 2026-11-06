@@ -1,6 +1,7 @@
 #ifndef KYLINNOTE_TASKREPOSITORY_H
 #define KYLINNOTE_TASKREPOSITORY_H
 
+#include "../domain/Attachment.h"
 #include "../domain/Task.h"
 
 #include <QSqlDatabase>
@@ -25,6 +26,7 @@ struct TaskSnapshot {
     QVector<StoredTask> tasks;
     QVector<TaskGroup> groups;
     QVector<RecurrenceLink> recurrenceLinks;
+    QVector<Attachment> attachments; // 附件元数据；文件内容由 AttachmentStore 管理
 };
 
 struct TaskChanges {
@@ -33,6 +35,8 @@ struct TaskChanges {
     QVector<TaskGroup> groupSaves;   // id=0 插入，否则重命名
     QVector<qint64> groupRemovals;   // 自动把所有关联任务（包括回收站）移到未分组
     QVector<qint64> removeLinks;     // 安全撤销完成时撤回生成凭证
+    QVector<Attachment> attachmentSaves;    // 仅新增附件元数据；文件须由调用者先复制到位
+    QVector<Attachment> attachmentRemovals; // 按 id+taskId 删除元数据；物理清理在提交成功后进行
     qint64 generationSourceId = 0;
     int generatedTaskIndex = -1;     // saves 中新实例的位置；同一来源至多有一个凭证
 };
@@ -47,6 +51,7 @@ public:
     bool load(TaskSnapshot *out, QString *error = nullptr) const;
     bool apply(TaskChanges *changes, TaskSnapshot *after, QString *error = nullptr);
     // 完整校验后的备份合并：组和任务都分配新 id，映射内部引用并保留重复生成凭证。
+    // incoming.attachments 使用调用者预生成的新附件 id/relativePath，taskId 在此映射到新任务。
     bool merge(const TaskSnapshot &incoming, TaskSnapshot *after, QString *error = nullptr);
 
 private:
@@ -56,6 +61,7 @@ private:
     bool removeTask(const StoredTask &task, QString *error);
     bool removeGroup(qint64 id, QString *error);
     bool insertLink(const RecurrenceLink &link, QString *error);
+    bool insertAttachment(const Attachment &attachment, QString *error);
     bool ready(QString *error) const;
 
     QSqlDatabase m_database;

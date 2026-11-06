@@ -9,7 +9,7 @@
 
 namespace kn {
 namespace {
-const int kSchemaVersion = 2;
+const int kSchemaVersion = 3;
 
 const char *const kNotesSchema =
     "CREATE TABLE IF NOT EXISTS notes ("
@@ -49,6 +49,22 @@ const char *const kV2Schema[] = {
     "CREATE INDEX idx_tasks_group ON tasks(group_id)",
     "CREATE INDEX idx_tasks_reminder ON tasks(deleted,completed,reminder_at)",
     "CREATE INDEX idx_tasks_deleted ON tasks(deleted)"
+};
+
+// v3 仅新增附件元数据表，不改动 v1/v2 的任何表与数据。
+// size 上限与 attachmentcodec::kMaximumAttachmentBytes（2 MiB）保持一致。
+const char *const kV3Schema[] = {
+    "CREATE TABLE attachments ("
+    "id TEXT PRIMARY KEY,"
+    "task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
+    "original_name TEXT NOT NULL,"
+    "relative_path TEXT NOT NULL UNIQUE,"
+    "mime TEXT NOT NULL,"
+    "size INTEGER NOT NULL CHECK(size > 0 AND size <= 2097152),"
+    "is_image INTEGER NOT NULL CHECK(is_image IN (0,1)),"
+    "created_at TEXT NOT NULL,"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order >= 0))",
+    "CREATE INDEX idx_attachments_task ON attachments(task_id,sort_order)"
 };
 }
 
@@ -234,6 +250,11 @@ bool Database::migrate(int from, int to, QString *error)
                 ok = false;
                 failure = notes.lastError().text();
             }
+        }
+    }
+    if (ok && from < 3) {
+        for (const char *sql : kV3Schema) {
+            if (!(ok = execute(QLatin1String(sql)))) break;
         }
     }
     if (ok) ok = execute(QStringLiteral("PRAGMA user_version = %1").arg(to));

@@ -1,5 +1,6 @@
 #include "TaskRepository.h"
 
+#include "../domain/AttachmentCodec.h"
 #include "../domain/TaskCodec.h"
 
 #include <QHash>
@@ -112,6 +113,32 @@ bool TaskRepository::readSnapshot(TaskSnapshot *out, QString *error) const
         snapshot.tasks.append(stored);
     }
     if (query.lastError().isValid()) return sqlFailure(query, error);
+    QSqlQuery files(m_database);
+    if (!files.exec(QStringLiteral(
+            "SELECT id,task_id,original_name,relative_path,mime,size,is_image,created_at,sort_order"
+            " FROM attachments ORDER BY task_id,sort_order,id")))
+        return sqlFailure(files, error);
+    QSet<QString> attachmentIds, attachmentPaths;
+    while (files.next()) {
+        Attachment attachment;
+        attachment.id = files.value(0).toString();
+        attachment.taskId = files.value(1).toLongLong();
+        attachment.originalName = files.value(2).toString();
+        attachment.relativePath = files.value(3).toString();
+        attachment.mime = files.value(4).toString();
+        attachment.size = files.value(5).toLongLong();
+        attachment.isImage = files.value(6).toInt() != 0;
+        if (!databaseDate(files.value(7), &attachment.createdAt, error)) return false;
+        attachment.sortOrder = files.value(8).toInt();
+        if (!attachmentcodec::validateAttachment(attachment, error)) return false;
+        if (!taskIds.contains(attachment.taskId) || attachmentIds.contains(attachment.id)
+            || attachmentPaths.contains(attachment.relativePath))
+            return fail(error, QStringLiteral("数据库附件 id/路径/任务引用损坏"));
+        attachmentIds.insert(attachment.id);
+        attachmentPaths.insert(attachment.relativePath);
+        snapshot.attachments.append(attachment);
+    }
+    if (files.lastError().isValid()) return sqlFailure(files, error);
     QSqlQuery links(m_database);
     QSet<qint64> targets;
     if (!links.exec(QStringLiteral("SELECT source_id,next_id,next_revision FROM task_recurrence_links ORDER BY source_id")))
@@ -277,6 +304,27 @@ bool TaskRepository::insertLink(const RecurrenceLink &link, QString *error)
     return query.exec() ? true : sqlFailure(query, error);
 }
 
+bool TaskRepository::insertAttachment(const Attachment &attachment, QString *error)
+{
+    if (!attachmentcodec::validateAttachment(attachment, error)) return false;
+    QSqlQuery query(m_database);
+    if (!query.prepare(QStringLiteral(
+            "INSERT INTO attachments(id,task_id,original_name,relative_path,mime,size,"
+            "is_image,created_at,sort_order) VALUES(?,?,?,?,?,?,?,?,?)")))
+        return sqlFailure(query, error);
+    query.addBindValue(attachment.id);
+    query.addBindValue(attachment.taskId);
+    query.addBindValue(attachment.originalName);
+    query.addBindValue(attachment.relativePath);
+    query.addBindValue(attachment.mime);
+    query.addBindValue(attachment.size);
+    query.addBindValue(attachment.isImage ? 1 : 0);
+    query.addBindValue(taskcodec::dateText(attachment.createdAt));
+    query.addBindValue(attachment.sortOrder);
+    // 外键保证任务存在（含同事务内新建任务）；PK/UNIQUE 冲突会使整个事务回滚。
+    return query.exec() ? true : sqlFailure(query, error);
+}
+
 bool TaskRepository::apply(TaskChanges *changes, TaskSnapshot *after, QString *error)
 {
     if (!changes || !after || !ready(error)) return false;
@@ -294,6 +342,20 @@ bool TaskRepository::apply(TaskChanges *changes, TaskSnapshot *after, QString *e
     for (TaskGroup &group : pending.groupSaves) if (!saveGroup(&group, error)) return abort();
     for (qint64 groupId : pending.groupRemovals) if (!removeGroup(groupId, error)) return abort();
     for (StoredTask &task : pending.saves) if (!saveTask(&task, error)) return abort();
+    for (const Attachment &attachment : pending.attachmentRemovals) {
+        QSqlQuery query(m_database);
+        query.prepare(QStringLiteral("DELETE FROM attachments WHERE id=? AND task_id=?"));
+        query.addBindValue(attachment.id);
+        query.addBindValue(attachment.taskId);
+        if (!query.exec()) { sqlFailure(query, error); return abort(); }
+        if (query.numRowsAffected() != 1) {
+            fail(error, QStringLiteral("附件不存在或已被其他操作修改"));
+            return abort();
+        }
+    }
+    // 附件元数据插入在任务保存之后，允许附件挂在同一事务新建的任务上。
+    for (const Attachment &attachment : pending.attachmentSaves)
+        if (!insertAttachment(attachment, error)) return abort();
     if (pending.generationSourceId) {
         if (pending.generatedTaskIndex < 0 || pending.generatedTaskIndex >= pending.saves.size()
             || changes->saves.at(pending.generatedTaskIndex).task.id != 0) {
@@ -367,6 +429,20 @@ bool TaskRepository::merge(const TaskSnapshot &incoming, TaskSnapshot *after, QS
         }
         link.nextRevision = 1;
         if (!insertLink(link, error)) return abort();
+    }
+    // 附件元数据随备份合并：taskId 映射到新任务，附件 id/存储名由调用者预先重新生成。
+    QSet<QString> attachmentIds, attachmentPaths;
+    for (const Attachment &original : incoming.attachments) {
+        if (!taskIds.contains(original.taskId) || attachmentIds.contains(original.id)
+            || attachmentPaths.contains(original.relativePath)) {
+            fail(error, QStringLiteral("备份附件 id 重复或任务引用非法"));
+            return abort();
+        }
+        Attachment row = original;
+        row.taskId = taskIds.value(original.taskId);
+        attachmentIds.insert(row.id);
+        attachmentPaths.insert(row.relativePath);
+        if (!insertAttachment(row, error)) return abort();
     }
     TaskSnapshot snapshot;
     if (!readSnapshot(&snapshot, error)) return abort();

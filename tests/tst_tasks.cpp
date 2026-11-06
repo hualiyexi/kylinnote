@@ -2,9 +2,13 @@
 #include "app/TaskStore.h"
 #include "db/Database.h"
 #include "db/TaskRepository.h"
+#include "domain/AttachmentCodec.h"
 
+#include <QBuffer>
+#include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,6 +16,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QtEndian>
 #include <QtTest>
 #include <memory>
 
@@ -88,17 +93,67 @@ bool writeJson(const QString &path, const QJsonObject &object)
     return file.write(bytes) == bytes.size();
 }
 
-QJsonObject readJson(const QString &path)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return QJsonObject();
-    return QJsonDocument::fromJson(file.readAll()).object();
-}
-
 qint64 otherTask(const TaskStore &store, qint64 excluded)
 {
     for (const Task &task : store.tasks()) if (task.id != excluded) return task.id;
     return 0;
+}
+
+QByteArray readBytes(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return QByteArray();
+    return file.readAll();
+}
+
+bool writeBytes(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    return file.write(bytes) == bytes.size();
+}
+
+QByteArray pngBytes()
+{
+    QImage image(6, 4, QImage::Format_ARGB32);
+    image.fill(Qt::blue);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    if (!buffer.open(QIODevice::WriteOnly)) return QByteArray();
+    if (!image.save(&buffer, "PNG")) return QByteArray();
+    return bytes;
+}
+
+QJsonObject readContainerMetadata(const QString &path, QVector<attachmentcodec::BackupFrame> *frames = nullptr)
+{
+    QByteArray metadata;
+    QVector<attachmentcodec::BackupFrame> parsed;
+    QString error;
+    if (!attachmentcodec::readBackupContainer(readBytes(path), &metadata, &parsed, &error)) {
+        qWarning() << error;
+        return QJsonObject();
+    }
+    if (frames) *frames = parsed;
+    return QJsonDocument::fromJson(metadata).object();
+}
+
+bool writeContainer(const QString &path, const QJsonObject &root,
+                    const QVector<attachmentcodec::BackupFrame> &frames)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    QString error;
+    if (!attachmentcodec::writeBackupContainer(&file, QJsonDocument(root).toJson(QJsonDocument::Compact),
+                                               frames, &error)) {
+        qWarning() << error;
+        return false;
+    }
+    return true;
+}
+
+void setU32(QByteArray *bytes, int offset, quint32 value)
+{
+    qToBigEndian(value, reinterpret_cast<uchar *>(bytes->data() + offset));
 }
 }
 
@@ -125,11 +180,24 @@ private slots:
     void backupInvalidImportIsAtomic();
     void backupSqlFailureRollsBack();
     void backupRecurrenceUndo();
+    void attachmentMigrationFromV2();
+    void attachmentImportValidationAndCopy();
+    void attachmentPersistenceRemovalAndTaskDelete();
+    void backupContainerRoundTripWithAttachments();
+    void backupContainerRejectsUntrusted();
 
 private:
     bool open();
     QString dbPath() const { return m_directory->filePath(QStringLiteral("tasks.db")); }
-    QString backupPath() const { return m_directory->filePath(QStringLiteral("备份.json")); }
+    QString backupPath() const { return m_directory->filePath(QStringLiteral("备份.knb")); }
+    QString storedAttachmentPath(const QString &relativePath) const
+    {
+        return QDir(m_directory->filePath(QStringLiteral("attachments"))).filePath(relativePath);
+    }
+    int attachmentFileCount() const
+    {
+        return QDir(m_directory->filePath(QStringLiteral("attachments"))).entryList(QDir::Files).size();
+    }
     std::unique_ptr<QTemporaryDir> m_directory;
 };
 
@@ -138,11 +206,14 @@ void TaskTests::init()
     Database::instance().close();
     m_directory.reset(new QTemporaryDir);
     QVERIFY(m_directory->isValid());
+    // 附件存储跟随 dataDirPath()；所有用例都写入各自临时目录，不污染真实数据。
+    qputenv("KYLINNOTE_DATA_DIR", m_directory->path().toUtf8());
 }
 
 void TaskTests::cleanup()
 {
     Database::instance().close();
+    qunsetenv("KYLINNOTE_DATA_DIR");
     m_directory.reset();
 }
 
@@ -180,7 +251,9 @@ void TaskTests::migrateV1PreservesSource()
         QVERIFY(!store.task(9).pinned);
         QCOMPARE(scalar(QStringLiteral("SELECT content FROM notes WHERE id=7")).toString(), QStringLiteral("<p>你好 <b>世界</b></p>"));
         QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM notes")).toInt(), 2);
-        QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 2);
+        QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 3);
+        QCOMPARE(scalar(QStringLiteral(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attachments'")).toInt(), 1);
     }
     Database::instance().close();
     QVERIFY(open());
@@ -586,9 +659,10 @@ void TaskTests::backupUnicodeHtmlChecklistAndMerge()
     task.dueAt = utc(2026, 5, 1, 17);
     QVERIFY(store.saveTask(task));
     QVERIFY(store.exportBackup(backupPath()));
-    const QJsonObject root = readJson(backupPath());
+    const QJsonObject root = readContainerMetadata(backupPath());
     QCOMPARE(root.value(QStringLiteral("format")).toString(), QStringLiteral("KylinNote.Tasks"));
-    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 1);
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 2);
+    QCOMPARE(root.value(QStringLiteral("attachments")).toArray().size(), 0);
     QVERIFY(store.importBackup(backupPath()));
     QCOMPARE(store.tasks().size(), 2);
     QCOMPARE(store.groups().size(), 2);
@@ -620,8 +694,9 @@ void TaskTests::backupInvalidImportIsAtomic()
     const qint64 group = store.createGroup(QStringLiteral("原分组"));
     const qint64 id = store.createTask(QStringLiteral("原任务"), group);
     QVERIFY(store.exportBackup(backupPath()));
-    const QJsonObject valid = readJson(backupPath());
-    const QString invalidPath = m_directory->filePath(QStringLiteral("invalid.json"));
+    QVector<attachmentcodec::BackupFrame> frames;
+    const QJsonObject valid = readContainerMetadata(backupPath(), &frames);
+    const QString invalidPath = m_directory->filePath(QStringLiteral("invalid.knb"));
     QSignalSpy changed(&store, &TaskStore::taskChanged);
     QSignalSpy reset(&store, &TaskStore::tasksReset);
     QSignalSpy groups(&store, &TaskStore::groupsChanged);
@@ -645,7 +720,7 @@ void TaskTests::backupInvalidImportIsAtomic()
         }
         tasks.append(bad);
         root.insert(QStringLiteral("tasks"), tasks);
-        QVERIFY(writeJson(invalidPath, root));
+        QVERIFY(writeContainer(invalidPath, root, frames));
         QVERIFY2(!store.importBackup(invalidPath), qPrintable(QString::number(kind)));
         QCOMPARE(store.tasks().size(), 1);
         QCOMPARE(store.groups().size(), 1);
@@ -666,14 +741,14 @@ void TaskTests::backupSqlFailureRollsBack()
     const qint64 group = store.createGroup(QStringLiteral("原分组"));
     const qint64 id = store.createTask(QStringLiteral("原任务"), group);
     QVERIFY(store.exportBackup(backupPath()));
-    QJsonObject root = readJson(backupPath());
+    QJsonObject root = readContainerMetadata(backupPath());
     QJsonArray tasks = root.value(QStringLiteral("tasks")).toArray();
     QJsonObject rejected = tasks.first().toObject();
     rejected.insert(QStringLiteral("id"), QStringLiteral("999"));
     rejected.insert(QStringLiteral("title"), QStringLiteral("reject-import"));
     tasks.append(rejected);
     root.insert(QStringLiteral("tasks"), tasks);
-    QVERIFY(writeJson(backupPath(), root));
+    QVERIFY(writeContainer(backupPath(), root, QVector<attachmentcodec::BackupFrame>()));
     QVERIFY(execute(QStringLiteral("CREATE TRIGGER reject_import BEFORE INSERT ON tasks WHEN NEW.title='reject-import' BEGIN SELECT RAISE(ABORT,'import failure'); END")));
     QSignalSpy reset(&store, &TaskStore::tasksReset);
     QVERIFY(!store.importBackup(backupPath()));
@@ -717,6 +792,328 @@ void TaskTests::backupRecurrenceUndo()
     QVERIFY(newestParent);
     QVERIFY(!store.setCompleted(newestParent, false));
     QVERIFY(store.task(newestParent).completed);
+}
+
+void TaskTests::attachmentMigrationFromV2()
+{
+    QVERIFY(open());
+    qint64 removed = 0;
+    {
+        TaskStore store(Database::instance().connection());
+        QVERIFY(store.load());
+        removed = store.createTask(QStringLiteral("将被删除"));
+        QVERIFY(store.createTask(QStringLiteral("v2 保留任务")));
+        QVERIFY(removed);
+    }
+    Database::instance().close();
+    // v3 相对 v2 仅新增 attachments 表；删除它并回退版本号即得到合法 v2 库。
+    QVERIFY(seed(dbPath(), {QStringLiteral("DROP TABLE attachments"),
+                            QStringLiteral("PRAGMA user_version=2")}));
+    QVERIFY(open());
+    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 3);
+    QCOMPARE(scalar(QStringLiteral(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attachments'")).toInt(), 1);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM tasks")).toInt(), 2);
+    const QString attachmentId = QStringLiteral("01234567-89ab-cdef-0123-456789abcdef");
+    QVERIFY(execute(QStringLiteral(
+        "INSERT INTO attachments(id,task_id,original_name,relative_path,mime,size,"
+        "is_image,created_at,sort_order)"
+        " VALUES('%1',%2,'a.txt','%1_txt','text/plain',3,0,'2024-01-01T00:00:00.000Z',0)")
+                        .arg(attachmentId).arg(removed)));
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM attachments")).toInt(), 1);
+    QVERIFY(execute(QStringLiteral("DELETE FROM tasks WHERE id=%1").arg(removed)));
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM attachments")).toInt(), 0); // ON DELETE CASCADE
+    Database::instance().close();
+    // v3 迁移失败必须整体回滚：旧任务与 user_version 保持不变，可修复后重试。
+    QVERIFY(seed(dbPath(), {QStringLiteral("DROP TABLE attachments"), QStringLiteral("PRAGMA user_version=2"),
+                            QStringLiteral("CREATE TABLE attachments(conflict TEXT)")}));
+    QString error;
+    QVERIFY(!Database::instance().openAt(dbPath(), &error));
+    QVERIFY(!error.isEmpty());
+    QVERIFY(!Database::instance().isOpen());
+    QCOMPARE(inspect(dbPath(), QStringLiteral("PRAGMA user_version")).toInt(), 2);
+    QCOMPARE(inspect(dbPath(), QStringLiteral("SELECT COUNT(*) FROM tasks")).toInt(), 1);
+    QCOMPARE(inspect(dbPath(), QStringLiteral("SELECT title FROM tasks")).toString(),
+             QStringLiteral("v2 保留任务"));
+    QVERIFY(seed(dbPath(), {QStringLiteral("DROP TABLE attachments")}));
+    QVERIFY(open());
+    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 3);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM tasks")).toInt(), 1);
+}
+
+void TaskTests::attachmentImportValidationAndCopy()
+{
+    QVERIFY(open());
+    TaskStore store(Database::instance().connection());
+    QVERIFY(store.load());
+    const qint64 id = store.createTask(QStringLiteral("附件任务"));
+    QVERIFY(id);
+    QVERIFY(store.importAttachment(id, m_directory->filePath(QStringLiteral("missing.txt"))).id.isEmpty());
+    QVERIFY(!store.lastError().isEmpty());
+    QVERIFY(store.importAttachment(id, m_directory->path()).id.isEmpty()); // 目录不是常规文件
+    QVERIFY(store.importAttachment(999999, m_directory->path()).id.isEmpty());
+    const QString emptyPath = m_directory->filePath(QStringLiteral("empty.txt"));
+    QVERIFY(writeBytes(emptyPath, QByteArray()));
+    QVERIFY(store.importAttachment(id, emptyPath).id.isEmpty());
+    const QString bigPath = m_directory->filePath(QStringLiteral("big.bin"));
+    QVERIFY(writeBytes(bigPath, QByteArray(2 * 1024 * 1024 + 1, 'x')));
+    QVERIFY(store.importAttachment(id, bigPath).id.isEmpty());
+    QVERIFY(store.attachments(id).isEmpty());
+
+    // 文档：不限制扩展名；复制而非移动；存储名不使用用户文件名。
+    const QByteArray text = QByteArray("# 你好 KylinNote\n");
+    const QString docPath = m_directory->filePath(QStringLiteral("说明.md"));
+    QVERIFY(writeBytes(docPath, text));
+    const Attachment doc = store.importAttachment(id, docPath);
+    QVERIFY2(!doc.id.isEmpty(), qPrintable(store.lastError()));
+    QCOMPARE(doc.taskId, id);
+    QCOMPARE(doc.originalName, QStringLiteral("说明.md"));
+    QVERIFY(!doc.isImage);
+    QCOMPARE(doc.mime, QStringLiteral("text/markdown"));
+    QCOMPARE(doc.size, qint64(text.size()));
+    QVERIFY(doc.createdAt.isValid());
+    QCOMPARE(doc.sortOrder, 0);
+    QVERIFY(doc.relativePath.endsWith(QStringLiteral("_md")));
+    QVERIFY(!doc.relativePath.contains(QLatin1Char('/')));
+    QVERIFY(!doc.relativePath.contains(QStringLiteral("说明")));
+    QVERIFY(QFile::exists(docPath)); // 原文件仍在
+    QVERIFY(QFile::exists(storedAttachmentPath(doc.relativePath)));
+    QCOMPARE(readBytes(storedAttachmentPath(doc.relativePath)), text);
+
+    // 真实 PNG 即使伪装成 .txt 也必须按内容识别为图片。
+    const QByteArray png = pngBytes();
+    QVERIFY(!png.isEmpty());
+    const QString imageSource = m_directory->filePath(QStringLiteral("伪装.txt"));
+    QVERIFY(writeBytes(imageSource, png));
+    const Attachment image = store.importAttachment(id, imageSource);
+    QVERIFY2(!image.id.isEmpty(), qPrintable(store.lastError()));
+    QVERIFY(image.isImage);
+    QCOMPARE(image.mime, QStringLiteral("image/png"));
+    QVERIFY(image.relativePath.endsWith(QStringLiteral("_png")));
+    QCOMPARE(image.sortOrder, 1);
+    QCOMPARE(readBytes(storedAttachmentPath(image.relativePath)), png);
+
+    // 扩展名伪造的文本不是图片，但仍可作为普通附件导入。
+    const QString fakePath = m_directory->filePath(QStringLiteral("fake.png"));
+    QVERIFY(writeBytes(fakePath, QByteArray("not a real png")));
+    const Attachment fake = store.importAttachment(id, fakePath);
+    QVERIFY(!fake.id.isEmpty());
+    QVERIFY(!fake.isImage);
+    QCOMPARE(fake.mime, QStringLiteral("application/octet-stream"));
+    QCOMPARE(store.attachments(id).size(), 3);
+    QCOMPARE(store.attachments(id).at(0).id, doc.id);
+    QCOMPARE(store.attachments(id).at(1).id, image.id);
+
+    // 导出副本内容一致；未知 id 报错。
+    const QString exportPath = m_directory->filePath(QStringLiteral("导出副本.md"));
+    QVERIFY(store.copyAttachmentTo(doc.id, exportPath));
+    QCOMPARE(readBytes(exportPath), text);
+    QVERIFY(!store.copyAttachmentTo(QStringLiteral("missing"), exportPath));
+    QVERIFY(!store.openAttachment(QStringLiteral("missing")));
+    QVERIFY(!store.removeAttachment(id, QStringLiteral("missing")));
+    // 任务普通保存不影响附件。
+    Task task = store.task(id);
+    task.title = QStringLiteral("修改标题不删附件");
+    QVERIFY(store.saveTask(task));
+    QCOMPARE(store.attachments(id).size(), 3);
+}
+
+void TaskTests::attachmentPersistenceRemovalAndTaskDelete()
+{
+    QVERIFY(open());
+    const QByteArray first = QByteArray("first-content");
+    const QByteArray second = QByteArray("second-content");
+    const QString sourceA = m_directory->filePath(QStringLiteral("a.txt"));
+    const QString sourceB = m_directory->filePath(QStringLiteral("b.txt"));
+    QVERIFY(writeBytes(sourceA, first));
+    QVERIFY(writeBytes(sourceB, second));
+    QString removedId, keptId;
+    qint64 taskA = 0, taskB = 0;
+    {
+        TaskStore store(Database::instance().connection());
+        QVERIFY(store.load());
+        taskA = store.createTask(QStringLiteral("任务A"));
+        taskB = store.createTask(QStringLiteral("任务B"));
+        const Attachment a1 = store.importAttachment(taskA, sourceA);
+        const Attachment a2 = store.importAttachment(taskA, sourceB);
+        const Attachment b1 = store.importAttachment(taskB, sourceA);
+        QVERIFY(!a1.id.isEmpty() && !a2.id.isEmpty() && !b1.id.isEmpty());
+        removedId = a1.id;
+        keptId = a2.id;
+        QSignalSpy changed(&store, &TaskStore::attachmentsChanged);
+        QVERIFY(store.removeAttachment(taskA, removedId));
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(!QFile::exists(storedAttachmentPath(a1.relativePath)));
+        QVERIFY(QFile::exists(storedAttachmentPath(a2.relativePath)));
+        QVERIFY(!store.removeAttachment(taskB, keptId)); // 附件不属于任务B
+        QCOMPARE(store.attachments(taskA).size(), 1);
+        QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM attachments")).toInt(), 2);
+    }
+    {
+        // 重启后附件元数据完整持久化。
+        TaskStore store(Database::instance().connection());
+        QVERIFY(store.load());
+        QCOMPARE(store.attachments(taskA).size(), 1);
+        QCOMPARE(store.attachments(taskB).size(), 1);
+        const Attachment persisted = store.attachments(taskA).first();
+        QCOMPARE(persisted.id, keptId);
+        QCOMPARE(persisted.originalName, QStringLiteral("b.txt"));
+        QCOMPARE(persisted.mime, QStringLiteral("text/plain"));
+        QCOMPARE(persisted.size, qint64(second.size()));
+        QVERIFY(!persisted.isImage);
+        QCOMPARE(persisted.sortOrder, 1);
+        QVERIFY(persisted.createdAt.isValid());
+        // 回收站保留附件；永久删除级联元数据并清理文件。
+        QVERIFY(store.trashTask(taskA));
+        QCOMPARE(store.attachments(taskA).size(), 1);
+        QVERIFY(store.deletePermanently(taskA));
+        QCOMPARE(store.attachments(taskA).size(), 0);
+        QCOMPARE(store.task(taskA).id, qint64(0));
+        QVERIFY(!QFile::exists(storedAttachmentPath(persisted.relativePath)));
+        QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM attachments")).toInt(), 1);
+        // 清理失败时保留孤儿文件且任务仍被删除。
+        const Attachment orphan = store.attachments(taskB).first();
+        const QString orphanPath = storedAttachmentPath(orphan.relativePath);
+        QVERIFY(QFile::remove(orphanPath));
+        QVERIFY(QDir().mkpath(orphanPath)); // 同名目录使 QFile::remove 失败
+        QVERIFY(store.trashTask(taskB));
+        QVERIFY(store.deletePermanently(taskB));
+        QCOMPARE(store.task(taskB).id, qint64(0));
+        QVERIFY(QDir(orphanPath).exists());
+        QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM attachments")).toInt(), 0);
+    }
+}
+
+void TaskTests::backupContainerRoundTripWithAttachments()
+{
+    QVERIFY(open());
+    TaskStore store(Database::instance().connection());
+    QVERIFY(store.load());
+    const qint64 group = store.createGroup(QStringLiteral("附件分组"));
+    const qint64 id = store.createTask(QStringLiteral("带附件任务"), group);
+    const QByteArray text = QByteArray("文档内容 Ω\n");
+    const QByteArray png = pngBytes();
+    QVERIFY(!png.isEmpty());
+    const QString docSource = m_directory->filePath(QStringLiteral("资料.md"));
+    const QString imageSource = m_directory->filePath(QStringLiteral("图片.png"));
+    QVERIFY(writeBytes(docSource, text));
+    QVERIFY(writeBytes(imageSource, png));
+    const Attachment doc = store.importAttachment(id, docSource);
+    const Attachment image = store.importAttachment(id, imageSource);
+    QVERIFY(!doc.id.isEmpty() && !image.id.isEmpty());
+    QVERIFY(store.exportBackup(backupPath()));
+
+    const QByteArray bytes = readBytes(backupPath());
+    QVERIFY(attachmentcodec::isBackupContainer(bytes));
+    QVector<attachmentcodec::BackupFrame> frames;
+    const QJsonObject root = readContainerMetadata(backupPath(), &frames);
+    QCOMPARE(root.value(QStringLiteral("format")).toString(), QStringLiteral("KylinNote.Tasks"));
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 2);
+    QCOMPARE(root.value(QStringLiteral("attachments")).toArray().size(), 2);
+    QCOMPARE(frames.size(), 2);
+
+    QVERIFY2(store.importBackup(backupPath()), qPrintable(store.lastError()));
+    QCOMPARE(store.tasks().size(), 2);
+    const qint64 imported = otherTask(store, id);
+    QVERIFY(imported);
+    const QVector<Attachment> copies = store.attachments(imported);
+    QCOMPARE(copies.size(), 2);
+    QCOMPARE(store.attachments(id).size(), 2); // 原任务附件不变
+    for (const Attachment &copy : copies) {
+        QVERIFY(copy.id != doc.id && copy.id != image.id);
+        const bool isDoc = copy.originalName == QStringLiteral("资料.md");
+        QCOMPARE(copy.originalName, isDoc ? doc.originalName : image.originalName);
+        QCOMPARE(copy.isImage, !isDoc);
+        QCOMPARE(copy.mime, isDoc ? doc.mime : image.mime);
+        QCOMPARE(copy.sortOrder, isDoc ? doc.sortOrder : image.sortOrder);
+        QCOMPARE(copy.size, isDoc ? doc.size : image.size);
+        QVERIFY(copy.createdAt.isValid());
+        QCOMPARE(readBytes(storedAttachmentPath(copy.relativePath)), isDoc ? text : png);
+    }
+    // 同一备份可重复导入：附件重新分配 id，不发生冲突。
+    QVERIFY(store.importBackup(backupPath()));
+    QCOMPARE(store.tasks().size(), 3);
+
+    // 旧版纯 JSON（version 1，无附件）仍可导入。
+    QJsonObject legacy = root;
+    legacy.remove(QStringLiteral("attachments"));
+    legacy.insert(QStringLiteral("version"), 1);
+    const QString legacyPath = m_directory->filePath(QStringLiteral("legacy.json"));
+    QVERIFY(writeJson(legacyPath, legacy));
+    QVERIFY2(store.importBackup(legacyPath), qPrintable(store.lastError()));
+    QCOMPARE(store.tasks().size(), 4);
+
+    TaskStore reloaded(Database::instance().connection());
+    QVERIFY(reloaded.load());
+    QCOMPARE(reloaded.attachments(imported).size(), 2);
+}
+
+void TaskTests::backupContainerRejectsUntrusted()
+{
+    QVERIFY(open());
+    TaskStore store(Database::instance().connection());
+    QVERIFY(store.load());
+    const qint64 id = store.createTask(QStringLiteral("原任务"));
+    const QString source = m_directory->filePath(QStringLiteral("a.txt"));
+    QVERIFY(writeBytes(source, QByteArray("attachment-bytes")));
+    QVERIFY(!store.importAttachment(id, source).id.isEmpty());
+    QVERIFY(store.exportBackup(backupPath()));
+    const QByteArray validBytes = readBytes(backupPath());
+    QVector<attachmentcodec::BackupFrame> frames;
+    const QJsonObject valid = readContainerMetadata(backupPath(), &frames);
+    QCOMPARE(frames.size(), 1);
+    const QString invalidPath = m_directory->filePath(QStringLiteral("untrusted.knb"));
+    const int filesBefore = attachmentFileCount();
+    QSignalSpy reset(&store, &TaskStore::tasksReset);
+    for (int kind = 0; kind < 19; ++kind) {
+        QByteArray bad;
+        QJsonObject root = valid;
+        QVector<attachmentcodec::BackupFrame> badFrames = frames;
+        QJsonArray array = root.value(QStringLiteral("attachments")).toArray();
+        QJsonObject attachment = array.first().toObject();
+        bool useWriter = true;
+        switch (kind) {
+        case 0: bad = validBytes; bad[0] = 'X'; useWriter = false; break; // magic 损坏
+        case 1: bad = validBytes; setU32(&bad, 4, 9); useWriter = false; break; // 容器版本过新
+        case 2: bad = validBytes.left(validBytes.size() - 3); useWriter = false; break; // 截断
+        case 3: bad = validBytes + QByteArray("junk"); useWriter = false; break; // 尾随数据
+        case 4: root.insert(QStringLiteral("version"), 3); break; // 元数据版本非法
+        case 5: root.remove(QStringLiteral("attachments")); break;
+        case 6: attachment.insert(QStringLiteral("relativePath"), QStringLiteral("../evil.bin")); break;
+        case 7: attachment.insert(QStringLiteral("relativePath"), QStringLiteral("sub/dir.bin")); break;
+        case 8: attachment.insert(QStringLiteral("id"), QStringLiteral("not-a-uuid")); break;
+        case 9: array.append(array.first()); break; // 重复附件 id
+        case 10: attachment.insert(QStringLiteral("taskId"), QStringLiteral("999999")); break;
+        case 11: {
+            const int declared = attachment.value(QStringLiteral("size")).toInt();
+            attachment.insert(QStringLiteral("size"), declared + 1); // 帧大小与元数据不一致
+            break;
+        }
+        case 12: attachment.insert(QStringLiteral("size"), 2 * 1024 * 1024 + 1); break;
+        case 13: badFrames.clear(); break; // 缺少内容帧
+        case 14: badFrames[0].id = attachmentcodec::newAttachmentId(); break; // 未知内容帧 id
+        case 15: badFrames.append(badFrames.first()); break; // 重复内容帧 id
+        case 16: attachment.insert(QStringLiteral("createdAt"), QStringLiteral("2026-01-01")); break; // 缺时区
+        case 17: badFrames[0].content = QByteArray(2 * 1024 * 1024 + 1, 'x'); break; // 超大附件帧
+        case 18: badFrames[0].content.clear(); break; // 空附件帧
+        }
+        if (kind == 9) root.insert(QStringLiteral("attachments"), array);
+        if (kind == 6 || kind == 7 || kind == 8 || kind == 10 || kind == 11 || kind == 12 || kind == 16)
+            root.insert(QStringLiteral("attachments"), QJsonArray{attachment});
+        if (useWriter) QVERIFY(writeContainer(invalidPath, root, badFrames));
+        else QVERIFY(writeBytes(invalidPath, bad));
+        QVERIFY2(!store.importBackup(invalidPath), qPrintable(QStringLiteral("kind=%1").arg(kind)));
+        QVERIFY(!store.lastError().isEmpty());
+        QCOMPARE(store.tasks().size(), 1);
+        QCOMPARE(store.attachments(id).size(), 1);
+        QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM tasks")).toInt(), 1);
+        QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM attachments")).toInt(), 1);
+        QCOMPARE(attachmentFileCount(), filesBefore); // 校验失败不得写入任何文件
+    }
+    QCOMPARE(reset.count(), 0);
+    // 合法备份仍可导入，确认拒绝逻辑没有误伤。
+    QVERIFY(store.importBackup(backupPath()));
+    QCOMPARE(store.tasks().size(), 2);
 }
 
 int main(int argc, char **argv)
