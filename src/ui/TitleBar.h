@@ -10,32 +10,32 @@ class QMouseEvent;
 
 namespace kn {
 
-// 无边框窗口的标题条：拖动区 + 颜色切换 + 关闭（软删）
-class TitleBar : public QWidget
-{
+// 无边框窗口拖动条；关闭仅取消桌面投影，不删除任务。
+class TitleBar : public QWidget {
     Q_OBJECT
 public:
-    explicit TitleBar(QWidget *parent = nullptr);
+    explicit TitleBar(QWidget* parent = nullptr);
 
     void setColorIndicator(NoteColor color);
 
 signals:
     void closeClicked();
     void colorClicked();
+    void openClicked();
 
 protected:
-    void mousePressEvent(QMouseEvent *event) override;
-    void mouseMoveEvent(QMouseEvent *event) override;
-    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
-    QToolButton *m_colorButton = nullptr;
-    QToolButton *m_closeButton = nullptr;
+    QToolButton* m_colorButton = nullptr;
+    QToolButton* m_closeButton = nullptr;
     QPoint m_dragStartGlobal;
     QPoint m_dragStartWindowPos;
     bool m_dragging = false;
 };
 
-} // namespace kn
+}  // namespace kn
 
-#endif // KYLINNOTE_TITLEBAR_H
+#endif  // KYLINNOTE_TITLEBAR_H

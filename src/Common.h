@@ -64,20 +64,6 @@ inline NoteLayer nextLayer(NoteLayer l)
 // 层级的人类可读名称，用于托盘提示
 QString layerLabel(NoteLayer layer);
 
-// notes 表一行记录的内存镜像
-struct NoteRecord {
-    qint64    id        = 0;
-    // 用空串初始化而非默认构造：QString() 是 null，会被 QSqlQuery 绑成 SQL NULL
-    QString   title     = QStringLiteral("");   // 首行纯文本，随内容刷新
-    QString   content   = QStringLiteral("");   // QTextDocument 的 HTML
-    NoteColor color     = NoteColor::Yellow;
-    QRect     geometry;         // 桌面坐标下的窗口几何
-    int       zOrder    = 0;    // 越大越靠上
-    QDateTime createdAt;
-    QDateTime updatedAt;
-    bool      deleted   = false;
-};
-
 // ---- 常量 ----
 enum {
     SaveDebounceMs = 300,       // 内容/几何变动后的防抖落库延迟
@@ -156,9 +142,6 @@ inline QRect decodeGeometry(const QString &s)
     }
     return QRect(x, y, w, h);
 }
-
-// 从 HTML 中提取首行可见文本作为标题
-QString deriveTitle(const QString &html);
 
 } // namespace kn
 

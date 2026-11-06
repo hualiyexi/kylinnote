@@ -1,70 +1,44 @@
-#ifndef KYLINNOTE_NOTEMANAGER_H
-#define KYLINNOTE_NOTEMANAGER_H
-
-#include "../Common.h"
-#include "../db/NoteDao.h"
-
-#include <QList>
+#pragma once
+#include <QMap>
 #include <QObject>
 #include <QPointer>
-#include <QTimer>
-
+#include "../domain/Task.h"
 namespace kn {
-
+class TaskStore;
 class NoteWidget;
-
-// 便签集合的调度中心：新建、软删、显示隐藏、防抖落库与失败重试
-class NoteManager : public QObject
-{
+// 仅管理桌面投影；任务生命周期与持久化由 TaskStore 统一负责。
+class NoteManager : public QObject {
     Q_OBJECT
 public:
-    explicit NoteManager(QObject *parent = nullptr);
-
-    int count() const { return m_notes.size(); }
-    bool isEmpty() const { return m_notes.isEmpty(); }
-
-    // 启动时从数据库还原全部便签（含位置、尺寸、颜色、叠放顺序）
+    explicit NoteManager(TaskStore* store, QObject* parent = nullptr);
+    ~NoteManager() override;
     bool restoreAll();
-
-    NoteWidget *createNote(const QRect &geometry = QRect(),
-                           NoteColor color = NoteColor::Yellow);
-
+    NoteWidget* createNote();
     void showAll();
     void hideAll();
     void deleteActive();
-
-    // 当前便签在「贴在桌面 / 普通 / 置顶」间循环，返回切换后的层级
     NoteLayer cycleLayerForActive();
-    // 把层级套用到全部便签
     void applyLayerToAll(NoteLayer layer);
-
-    void setActive(NoteWidget *note);
-    void requestClose(NoteWidget *note);
-
-    // 退出前把内存中未落库的改动写回
     bool flushAll();
-
+    bool isEmpty() const {
+        return m_notes.isEmpty();
+    }
+    int count() const {
+        return m_notes.size();
+    }
+    NoteWidget* note(qint64 id) const {
+        return m_notes.value(id, nullptr);
+    }
+signals:
+    void taskOpenRequested(qint64 id);
 public slots:
-    void handleSave(NoteWidget *note);
-
-private slots:
-    void onRetryTimeout();
+    void handleSave(NoteWidget* note);
 
 private:
-    void registerNote(NoteWidget *note);
-    void destroyNote(NoteWidget *note);
-    void saveNote(NoteWidget *note);
-    void enqueueRetry(NoteWidget *note);
-    void raiseByZOrder();
-
-    NoteDao m_dao;
-    QList<NoteWidget *> m_notes;
+    void syncTask(qint64 id);
+    TaskStore* m_store;
+    QMap<qint64, NoteWidget*> m_notes;
     QPointer<NoteWidget> m_active;
-    QList<QPointer<NoteWidget>> m_pending;
-    QTimer m_retryTimer;
-    int m_nextZ = 1;
+    bool m_hidden = false;
 };
-
-} // namespace kn
-
-#endif // KYLINNOTE_NOTEMANAGER_H
+}  // namespace kn

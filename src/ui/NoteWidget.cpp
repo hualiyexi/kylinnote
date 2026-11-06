@@ -1,283 +1,268 @@
 #include "NoteWidget.h"
-
-#include "../app/NoteManager.h"
-#include "../app/Settings.h"
-#include "ColorTheme.h"
-#include "NoteEditor.h"
-#include "ResizeGrip.h"
-#include "TitleBar.h"
-
-#include <QEvent>
+#include <QCheckBox>
+#include <QCloseEvent>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
 #include <QMoveEvent>
-#include <QTextCursor>
-#include <QTimer>
-#include <QDebug>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QStackedWidget>
+#include <QTextEdit>
 #include <QVBoxLayout>
-
+#include "ColorTheme.h"
+#include "Markdown.h"
+#include "MarkdownEditor.h"
+#include "ResizeGrip.h"
+#include "TaskFilter.h"
+#include "TitleBar.h"
 namespace kn {
-
-NoteWidget::NoteWidget(NoteManager *manager, const NoteRecord &record, QWidget *parent)
-    : QWidget(parent),
-      m_manager(manager),
-      m_record(record)
-{
+NoteWidget::NoteWidget(const Task& task, QWidget* parent) : QWidget(parent), m_task(task) {
     setObjectName(QStringLiteral("NoteWidget"));
-    // 自定义 QWidget 需要显式开启，样式表的 background 才会被绘制
     setAttribute(Qt::WA_StyledBackground, true);
-    setAttribute(Qt::WA_DeleteOnClose, false);
     setMinimumSize(MinWidth, MinHeight);
-    setFocusPolicy(Qt::StrongFocus);
-
     buildUi();
-
-    m_editor->setHtml(m_record.content);
-    setColor(m_record.color);
-
-    if (m_record.geometry.isValid() && m_record.geometry.width() >= MinWidth
-        && m_record.geometry.height() >= MinHeight) {
-        setGeometry(m_record.geometry);
-    } else {
-        resize(DefaultWidth, DefaultHeight);
-    }
-
-    applyWindowFlags();
-
-    connect(m_editor, &QTextEdit::textChanged, this, &NoteWidget::onTextChanged);
-    connect(m_titleBar, &TitleBar::closeClicked, this, [this]() {
-        emit closeRequested(this);
-    });
-    connect(m_titleBar, &TitleBar::colorClicked, this, [this]() {
-        cycleColor();
-    });
-
     m_saveTimer.setSingleShot(true);
     m_saveTimer.setInterval(SaveDebounceMs);
-    connect(&m_saveTimer, &QTimer::timeout, this, &NoteWidget::onSaveTimeout);
+    connect(&m_saveTimer, &QTimer::timeout, this, [this]() { emit saveRequested(this); });
+    m_loading = true;
+    if (task.geometry.isValid())
+        setGeometry(task.geometry);
+    else
+        resize(DefaultWidth, DefaultHeight);
+    m_editor->setContent(task.description, task.contentFormat);
+    updateView();
+    applyWindowFlags();
+    m_loading = false;
 }
-
-void NoteWidget::buildUi()
-{
-    QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-
+void NoteWidget::buildUi() {
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(1, 1, 1, 1);
+    root->setSpacing(0);
     m_titleBar = new TitleBar(this);
-    layout->addWidget(m_titleBar);
-
-    m_editor = new NoteEditor(this);
-    layout->addWidget(m_editor, 1);
-
-    m_status = new QLabel(this);
-    m_status->setObjectName(QStringLiteral("StatusLabel"));
-    m_status->setText(QString::fromUtf8("\u25CF \u672a\u4fdd\u5b58\uff1a\u5199\u5165\u6570\u636e\u5e93\u5931\u8d25\uff0c\u5c06\u81ea\u52a8\u91cd\u8bd5"));
-    m_status->hide();
-    layout->addWidget(m_status);
-
+    root->addWidget(m_titleBar);
+    auto* titleRow = new QHBoxLayout;
+    titleRow->setContentsMargins(12, 12, 12, 2);
+    titleRow->setSpacing(9);
+    m_complete = new QCheckBox(this);
+    m_complete->setToolTip(QStringLiteral("完成任务"));
+    m_complete->setAccessibleName(QStringLiteral("完成任务"));
+    titleRow->addWidget(m_complete, 0, Qt::AlignTop);
+    m_title = new QLabel(this);
+    m_title->setTextFormat(Qt::PlainText);
+    m_title->setWordWrap(true);
+    QFont f = m_title->font();
+    f.setPointSize(12);
+    f.setBold(true);
+    m_title->setFont(f);
+    titleRow->addWidget(m_title, 1);
+    root->addLayout(titleRow);
+    m_schedule = new QLabel(this);
+    m_schedule->setObjectName(QStringLiteral("NoteSchedule"));
+    m_schedule->setWordWrap(true);
+    m_schedule->setContentsMargins(14, 4, 12, 7);
+    root->addWidget(m_schedule);
+    m_body = new QStackedWidget(this);
+    m_preview = new DocumentPreview(this);
+    m_editor = new MarkdownEditor(this);
+    m_body->addWidget(m_preview);
+    m_body->addWidget(m_editor);
+    root->addWidget(m_body, 1);
+    m_checklist = new QListWidget(this);
+    m_checklist->setMaximumHeight(100);
+    m_checklist->setObjectName(QStringLiteral("NoteChecklist"));
+    root->addWidget(m_checklist);
+    auto* footer = new QHBoxLayout;
+    footer->setContentsMargins(8, 3, 24, 6);
+    m_status = new QLabel(QStringLiteral("本机已保存"), this);
+    m_status->setObjectName(QStringLiteral("NoteStatus"));
+    footer->addWidget(m_status, 1);
+    m_editToggle = new QPushButton(QStringLiteral("编辑内容"), this);
+    footer->addWidget(m_editToggle);
+    root->addLayout(footer);
     m_grip = new ResizeGrip(this);
-    m_grip->raise();
-
-    m_titleBar->installEventFilter(this);
-    m_editor->installEventFilter(this);
-}
-
-NoteRecord NoteWidget::snapshot() const
-{
-    NoteRecord rec = m_record;
-    rec.content  = m_editor->toHtml();
-    rec.title    = deriveTitle(rec.content);
-    rec.geometry = geometry();
-    return rec;
-}
-
-void NoteWidget::applySaved(const NoteRecord &saved)
-{
-    m_record = saved;
-    m_record.geometry = geometry();
-}
-
-void NoteWidget::setColor(NoteColor color)
-{
-    m_record.color = color;
-    ColorTheme::apply(this, color);
-    m_titleBar->setColorIndicator(color);
-}
-
-void NoteWidget::cycleColor()
-{
-    setColor(ColorTheme::next(m_record.color));
-    // 颜色变更立即落库，不等待防抖
-    scheduleSave();
-}
-
-NoteLayer NoteWidget::cycleLayer()
-{
-    setLayer(nextLayer(m_layer));
-    return m_layer;
-}
-
-void NoteWidget::setLayer(NoteLayer layer)
-{
-    if (m_layer == layer) {
-        return;
-    }
-    m_layer = layer;
-    applyWindowFlags();
-    if (isVisible()) {
-        raise();
-    }
-}
-
-void NoteWidget::raiseTemporarily()
-{
-    m_tempRaised = true;
-    m_layer      = NoteLayer::Normal;   // 先浮起来让用户看到
-    applyWindowFlags();
-    show();
-    raise();
-    activateWindow();
-    focusEditor();
-}
-
-void NoteWidget::applyWindowFlags()
-{
-    m_applyingFlags = true;
-    Qt::WindowFlags flags = Qt::Tool | Qt::FramelessWindowHint;
-    switch (m_layer) {
-    case NoteLayer::OnTop:
-        flags |= Qt::WindowStaysOnTopHint;
-        break;
-    case NoteLayer::OnDesktop:
-        flags |= Qt::WindowStaysOnBottomHint;
-        break;
-    case NoteLayer::Normal:
-        break;   // 不加 hint，与其它应用窗口按焦点正常竞争
-    }
-
-    const bool wasVisible = isVisible();
-    const QRect geo = geometry();
-
-    setWindowFlags(flags);   // 会隐式隐藏窗口，需要恢复几何与可见性
-    setGeometry(geo);
-    setMinimumSize(MinWidth, MinHeight);
-
-    if (wasVisible) {
-        show();
-    }
-    m_applyingFlags = false;
-}
-
-void NoteWidget::setSaveFailed(bool failed)
-{
-    m_saveFailed = failed;
-    m_status->setVisible(failed);
-    if (failed) {
-        m_grip->raise();
-    }
-}
-
-void NoteWidget::layoutGrip()
-{
-    if (!m_grip) {
-        return;
-    }
-    m_grip->move(width() - m_grip->width(), height() - m_grip->height());
-    m_grip->raise();
-}
-
-void NoteWidget::raiseToTop()
-{
-    show();
-    raise();
-}
-
-void NoteWidget::delayedRaise(int delayMs)
-{
-    // 窗管可能晚于进程设置 _NET_WM_STATE_ABOVE，延迟补一次置顶
-    QTimer::singleShot(delayMs, this, [this]() {
-        if (isVisible()) {
-            raise();
+    connect(m_editToggle, &QPushButton::clicked, this, [this]() {
+        const bool editing = m_body->currentIndex() == 0;
+        if (!editing && !flush())
+            return;
+        m_body->setCurrentIndex(editing ? 1 : 0);
+        m_editToggle->setText(editing ? QStringLiteral("收起编辑") : QStringLiteral("编辑内容"));
+        if (editing) {
+            m_editor->setPreview(false);
+            m_editor->textEditor()->setFocus();
         }
     });
+    connect(m_editor, &MarkdownEditor::contentChanged, this, [this]() {
+        if (!m_loading) {
+            m_descriptionDirty = true;
+            scheduleSave();
+        }
+    });
+    connect(m_titleBar, &TitleBar::closeClicked, this, [this]() { emit closeRequested(this); });
+    connect(m_titleBar, &TitleBar::colorClicked, this, [this]() {
+        m_task.color = ColorTheme::next(m_task.color);
+        ColorTheme::apply(this, m_task.color);
+        m_titleBar->setColorIndicator(m_task.color);
+        scheduleSave();
+    });
+    connect(m_titleBar, &TitleBar::openClicked, this, [this]() {
+        if (flush())
+            emit taskOpenRequested(id());
+    });
+    connect(m_complete, &QCheckBox::clicked, this, [this](bool checked) {
+        if (flush())
+            emit completionRequested(id(), checked);
+        else {
+            const QSignalBlocker blocker(m_complete);
+            m_complete->setChecked(m_task.completed);
+        }
+    });
+    connect(m_checklist, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
+        if (!m_loading)
+            emit checklistToggled(id(), m_checklist->row(item), item->checkState() == Qt::Checked);
+    });
 }
-
-void NoteWidget::focusEditor()
-{
+void NoteWidget::updateView() {
+    const QSignalBlocker blocker(m_complete);
+    m_complete->setChecked(m_task.completed);
+    m_title->setText(m_task.title);
+    QString schedule = scheduleLabel(m_task);
+    if (m_task.reminderAt.isValid())
+        schedule += QStringLiteral("\n提醒 ") +
+                    m_task.reminderAt.toLocalTime().toString(QStringLiteral("M月d日 HH:mm"));
+    m_schedule->setText(schedule);
+    m_preview->setHtml(
+        m_task.description.isEmpty()
+            ? QStringLiteral("<p style=\"color:#64748B\">点击“编辑内容”，为这件事记下说明。</p>")
+            : Markdown::displayHtml(m_task));
+    ColorTheme::apply(this, m_task.color);
+    m_titleBar->setColorIndicator(m_task.color);
+    const QSignalBlocker listBlock(m_checklist);
+    m_checklist->clear();
+    for (const auto& check : m_task.checklist) {
+        auto* item = new QListWidgetItem(check.text, m_checklist);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(check.done ? Qt::Checked : Qt::Unchecked);
+    }
+    m_checklist->setVisible(!m_task.checklist.isEmpty());
+    setWindowTitle(m_task.title + QStringLiteral(" — KylinNote"));
+}
+void NoteWidget::applyTask(const Task& task) {
+    const bool changedLayer = m_task.layer != task.layer;
+    m_loading = true;
+    const QString pendingDescription = m_descriptionDirty ? m_editor->content() : QString();
+    m_task = task;
+    if (!m_descriptionDirty && m_editor->content() != task.description)
+        m_editor->setContent(task.description, task.contentFormat);
+    if (m_descriptionDirty)
+        m_task.description = pendingDescription;
+    updateView();
+    if (changedLayer)
+        applyWindowFlags();
+    m_loading = false;
+}
+Task NoteWidget::snapshot() const {
+    Task task = m_task;
+    task.geometry = geometry();
+    if (m_descriptionDirty) {
+        task.description = m_editor->content();
+        task.contentFormat = ContentFormat::Markdown;
+    }
+    return task;
+}
+void NoteWidget::applySaved(const Task& task) {
+    m_descriptionDirty = false;
+    m_pending = false;
+    applyTask(task);
+    setSaveFailed(false);
+}
+void NoteWidget::setSaveFailed(bool failed) {
+    m_saveFailed = failed;
+    m_status->setText(failed ? QStringLiteral("保存失败，内容仍在，请重试") : QStringLiteral("本机已保存"));
+    if (failed) {
+        m_status->setStyleSheet(QStringLiteral("color:#A73530;"));
+        m_saveTimer.start(SaveRetryMs);
+    } else
+        m_status->setStyleSheet(QString());
+}
+bool NoteWidget::flush() {
+    m_saveTimer.stop();
+    if (m_pending)
+        emit saveRequested(this);
+    return !m_saveFailed;
+}
+void NoteWidget::scheduleSave() {
+    if (!m_loading) {
+        m_pending = true;
+        m_status->setText(QStringLiteral("正在保存…"));
+        m_saveTimer.start(SaveDebounceMs);
+    }
+}
+void NoteWidget::setLayer(NoteLayer layer) {
+    m_task.layer = layer;
+    applyWindowFlags();
+    scheduleSave();
+}
+NoteLayer NoteWidget::cycleLayer() {
+    setLayer(nextLayer(m_task.layer));
+    return m_task.layer;
+}
+void NoteWidget::applyWindowFlags() {
+    m_applyingFlags = true;
+    const bool visible = isVisible();
+    const QRect rect = geometry();
+    Qt::WindowFlags flags = Qt::Tool | Qt::FramelessWindowHint;
+    if (!m_temporary) {
+        if (m_task.layer == NoteLayer::OnTop)
+            flags |= Qt::WindowStaysOnTopHint;
+        else if (m_task.layer == NoteLayer::OnDesktop)
+            flags |= Qt::WindowStaysOnBottomHint;
+    }
+    setWindowFlags(flags);
+    setGeometry(rect);
+    if (visible)
+        show();
+    m_applyingFlags = false;
+}
+void NoteWidget::raiseTemporarily() {
+    m_temporary = true;
+    applyWindowFlags();
     show();
     raise();
     activateWindow();
-    if (m_editor) {
-        m_editor->setFocus();
-        QTextCursor cursor = m_editor->textCursor();
-        cursor.movePosition(QTextCursor::End);
-        m_editor->setTextCursor(cursor);
-    }
 }
-
-void NoteWidget::updateGeometryRecord()
-{
-    m_record.geometry = geometry();
+void NoteWidget::focusEditor() {
+    raiseTemporarily();
+    m_body->setCurrentIndex(1);
+    m_editToggle->setText(QStringLiteral("收起编辑"));
+    m_editor->textEditor()->setFocus();
 }
-
-void NoteWidget::scheduleSave()
-{
-    m_saveTimer.start();   // 已运行时等同重启计时，实现防抖
-}
-
-void NoteWidget::onTextChanged()
-{
-    scheduleSave();
-}
-
-void NoteWidget::onSaveTimeout()
-{
-    emit saveRequested(this);
-}
-
-void NoteWidget::moveEvent(QMoveEvent *event)
-{
-    updateGeometryRecord();
-    scheduleSave();
+void NoteWidget::moveEvent(QMoveEvent* event) {
     QWidget::moveEvent(event);
-}
-
-void NoteWidget::resizeEvent(QResizeEvent *event)
-{
-    QWidget::resizeEvent(event);
-    updateGeometryRecord();
-    layoutGrip();
     scheduleSave();
 }
-
-void NoteWidget::changeEvent(QEvent *event)
-{
-    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
-        emit activated(this);
+void NoteWidget::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (m_grip) {
+        m_grip->move(width() - m_grip->width(), height() - m_grip->height());
+        m_grip->raise();
     }
-    // 新建便签临时置前后，一旦失焦就沉回用户设定的默认层级
-    if (event->type() == QEvent::WindowDeactivate && m_tempRaised
-        && !m_applyingFlags) {
-        m_tempRaised = false;
-        m_layer      = Settings::instance().defaultLayer();
-        applyWindowFlags();
+    scheduleSave();
+}
+void NoteWidget::closeEvent(QCloseEvent* event) {
+    event->ignore();
+    emit closeRequested(this);
+}
+void NoteWidget::changeEvent(QEvent* event) {
+    if (event->type() == QEvent::ActivationChange && isActiveWindow())
+        emit activated(this);
+    if (event->type() == QEvent::WindowDeactivate && !m_applyingFlags) {
+        flush();
+        if (m_temporary) {
+            m_temporary = false;
+            applyWindowFlags();
+        }
     }
     QWidget::changeEvent(event);
 }
-
-bool NoteWidget::eventFilter(QObject *watched, QEvent *event)
-{
-    if (watched == m_editor || watched == m_titleBar) {
-        switch (event->type()) {
-        case QEvent::MouseButtonPress:
-        case QEvent::FocusIn:
-        case QEvent::KeyPress:
-            emit activated(this);
-            break;
-        default:
-            break;
-        }
-    }
-    return QWidget::eventFilter(watched, event);
-}
-
-} // namespace kn
+}  // namespace kn

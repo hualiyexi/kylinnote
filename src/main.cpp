@@ -1,56 +1,75 @@
+#include <QApplication>
+#include <QCommandLineParser>
+#include <QMessageBox>
+#include <QSettings>
+#include <QTemporaryDir>
+#include <QTimer>
+#include <cstdio>
 #include "Common.h"
-#include "app/DbusAdapter.h"
 #include "app/KylinNoteApp.h"
 #include "app/SingleInstanceGuard.h"
+#include "app/TrayController.h"
+#include "platform/InstanceChannel.h"
+#include "ui/AppStyle.h"
 
-#include <QApplication>
-#include <QFont>
-#include <QGuiApplication>
-#include <QMessageBox>
-#include <cstdio>
-
-int main(int argc, char *argv[])
-{
+int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationName(QStringLiteral("kylinnote"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.0.0"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(KYLINNOTE_VERSION));
     QCoreApplication::setOrganizationName(QStringLiteral("kylinnote"));
-    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, true);
-    // 关闭最后一个窗口不退出：全部便签隐藏后仍需保留托盘入口
-    QApplication::setQuitOnLastWindowClosed(false);
-
+    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication app(argc, argv);
-
-    QFont font(QStringLiteral("WenQuanYi Micro Hei"), kn::DefaultFontPt);
-    font.setStyleHint(QFont::SansSerif);
-    QApplication::setFont(font);
-
-    if (QGuiApplication::platformName() != QLatin1String("x11")) {
-        std::fprintf(stderr, "[kylinnote] 当前会话平台为 %s，本程序针对 X11 设计\n",
-                     qPrintable(QGuiApplication::platformName()));
+    app.setQuitOnLastWindowClosed(false);
+    QCommandLineParser parser;
+    parser.setApplicationDescription(QStringLiteral("KylinNote 本地待办与桌面便签"));
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addOption({QStringLiteral("background"), QStringLiteral("在后台启动（用于用户开启的登录自启）")});
+    parser.addOption({QStringLiteral("data-dir"),
+                      QStringLiteral("使用独立的数据目录（调试/便携运行）"),
+                      QStringLiteral("directory")});
+    parser.addOption(
+        {QStringLiteral("smoke-test"), QStringLiteral("使用临时数据启动并在2秒后退出，供安装包自检")});
+    parser.process(app);
+    QTemporaryDir smokeData;
+    if (parser.isSet(QStringLiteral("data-dir")))
+        qputenv("KYLINNOTE_DATA_DIR", QDir(parser.value(QStringLiteral("data-dir"))).absolutePath().toUtf8());
+    else if (parser.isSet(QStringLiteral("smoke-test")))
+        qputenv("KYLINNOTE_DATA_DIR", smokeData.path().toUtf8());
+    if (!qEnvironmentVariable("KYLINNOTE_DATA_DIR").isEmpty()) {
+        // 独立调试目录同时隔离界面偏好，测试不修改真实用户配置。
+        QSettings::setPath(
+            QSettings::IniFormat, QSettings::UserScope, kn::dataDirPath() + QStringLiteral("/settings"));
     }
-
-    // 单实例：先抢文件锁，抢不到就通过 D-Bus 让已运行的实例"显示全部"
+    kn::AppStyle::apply(app);
+    app.setWindowIcon(kn::TrayController::trayIcon());
     kn::SingleInstanceGuard guard(kn::lockFilePath());
-    kn::SingleInstanceGuard::Result guardResult = guard.acquire();
-    if (guardResult != kn::SingleInstanceGuard::Acquired) {
-        QString dbusError;
-        if (kn::DbusAdapter::notifyRunningInstance(&dbusError)) {
-            return 0;
-        }
-        std::fprintf(stderr, "[kylinnote] 已有实例在运行，但无法通过 D-Bus 唤醒: %s\n",
-                     qPrintable(dbusError));
+    const auto acquired = guard.acquire();
+    if (acquired == kn::SingleInstanceGuard::AlreadyRunning) {
+        QString error;
+        if (!kn::InstanceChannel::notifyRunningInstance(&error))
+            std::fprintf(stderr, "Cannot activate existing instance: %s\n", qPrintable(error));
         return 0;
     }
-
-    kn::KylinNoteApp kylinNote;
-    QString initError;
-    if (!kylinNote.init(&initError)) {
-        QMessageBox::critical(nullptr, QStringLiteral("KylinNote"), initError);
+    if (acquired != kn::SingleInstanceGuard::Acquired) {
+        std::fprintf(stderr, "Cannot create or lock data directory.\n");
         return 1;
     }
-
-    const int rc = app.exec();
-    kylinNote.shutdown();
+    kn::KylinNoteApp application;
+    QString error;
+    if (!application.init(&error, parser.isSet(QStringLiteral("background")))) {
+        if (parser.isSet(QStringLiteral("smoke-test")))
+            std::fprintf(stderr, "Startup failed: %s\n", qPrintable(error));
+        else
+            QMessageBox::critical(nullptr,
+                                  QStringLiteral("无法启动 KylinNote"),
+                                  error + QStringLiteral("\n请检查数据目录权限后重试。原有数据不会被覆盖。"));
+        return 1;
+    }
+    if (parser.isSet(QStringLiteral("smoke-test")))
+        QTimer::singleShot(2000, &app, &QCoreApplication::quit);
+    const int result = app.exec();
+    application.shutdown();
     guard.release();
-    return rc;
+    return result;
 }

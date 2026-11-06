@@ -1,26 +1,6 @@
 #include "Common.h"
 
-#include <QTextDocument>
-
 namespace kn {
-
-QString deriveTitle(const QString &html)
-{
-    QTextDocument doc;
-    doc.setHtml(html);
-    const QString plain = doc.toPlainText();
-
-    for (const QString &line : plain.split(QLatin1Char('\n'))) {
-        const QString trimmed = line.trimmed();
-        if (!trimmed.isEmpty()) {
-            // 标题只保留前 60 个字符，避免超长行撑爆数据库字段展示
-            return trimmed.left(60);
-        }
-    }
-    // 必须返回空串而非 null QString：null 会被 QSqlQuery 绑成 SQL NULL，
-    // 撞上 notes.title 的 NOT NULL 约束（DEFAULT '' 只在省略该列时生效）
-    return QStringLiteral("");
-}
 
 QString layerLabel(NoteLayer layer)
 {

@@ -5,6 +5,7 @@
 #include <QSocketNotifier>
 #include <QTimer>
 
+#ifdef KYLINNOTE_HAVE_X11
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
@@ -216,3 +217,12 @@ void GlobalHotkey::onX11Readable()
 }
 
 } // namespace kn
+#else
+namespace kn {
+GlobalHotkey::GlobalHotkey(QObject *parent):QObject(parent) {}
+GlobalHotkey::~GlobalHotkey()=default;
+bool GlobalHotkey::grab(const QKeySequence &,int) {return false;}
+void GlobalHotkey::clear() {}
+void GlobalHotkey::onX11Readable() {}
+}
+#endif

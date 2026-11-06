@@ -10,18 +10,21 @@
 
 namespace kn {
 
-TitleBar::TitleBar(QWidget *parent)
-    : QWidget(parent)
-{
+TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("TitleBar"));
     setFixedHeight(TitleBarHeight);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setCursor(Qt::ArrowCursor);
     setAttribute(Qt::WA_StyledBackground, true);
 
-    QHBoxLayout *layout = new QHBoxLayout(this);
+    QHBoxLayout* layout = new QHBoxLayout(this);
     layout->setContentsMargins(6, 0, 4, 0);
     layout->setSpacing(4);
+    auto* open = new QToolButton(this);
+    open->setText(QStringLiteral("待办详情"));
+    open->setToolTip(QStringLiteral("打开任务面板，设置分组、时间和提醒"));
+    layout->addWidget(open);
+    connect(open, &QToolButton::clicked, this, &TitleBar::openClicked);
     layout->addStretch(1);
 
     m_colorButton = new QToolButton(this);
@@ -34,9 +37,9 @@ TitleBar::TitleBar(QWidget *parent)
 
     m_closeButton = new QToolButton(this);
     m_closeButton->setObjectName(QStringLiteral("CloseButton"));
-    m_closeButton->setFixedSize(20, 20);
+    m_closeButton->setFixedSize(26, 26);
     m_closeButton->setText(QString::fromUtf8("\xC3\x97"));  // ×
-    m_closeButton->setToolTip(QStringLiteral("\u5173\u95ed\u4fbf\u7b3a"));
+    m_closeButton->setToolTip(QStringLiteral("取消贴到桌面（任务会保留在面板中）"));
     m_closeButton->setCursor(Qt::ArrowCursor);
     layout->addWidget(m_closeButton);
 
@@ -44,8 +47,7 @@ TitleBar::TitleBar(QWidget *parent)
     connect(m_closeButton, &QToolButton::clicked, this, &TitleBar::closeClicked);
 }
 
-void TitleBar::setColorIndicator(NoteColor color)
-{
+void TitleBar::setColorIndicator(NoteColor color) {
     QPixmap pixmap(14, 14);
     pixmap.fill(Qt::transparent);
 
@@ -59,13 +61,12 @@ void TitleBar::setColorIndicator(NoteColor color)
     m_colorButton->setIcon(QIcon(pixmap));
 }
 
-void TitleBar::mousePressEvent(QMouseEvent *event)
-{
+void TitleBar::mousePressEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
     }
-    QWidget *top = window();
+    QWidget* top = window();
     if (!top) {
         QWidget::mousePressEvent(event);
         return;
@@ -76,13 +77,12 @@ void TitleBar::mousePressEvent(QMouseEvent *event)
     event->accept();
 }
 
-void TitleBar::mouseMoveEvent(QMouseEvent *event)
-{
+void TitleBar::mouseMoveEvent(QMouseEvent* event) {
     if (!m_dragging) {
         QWidget::mouseMoveEvent(event);
         return;
     }
-    QWidget *top = window();
+    QWidget* top = window();
     if (!top) {
         return;
     }
@@ -91,8 +91,7 @@ void TitleBar::mouseMoveEvent(QMouseEvent *event)
     event->accept();
 }
 
-void TitleBar::mouseReleaseEvent(QMouseEvent *event)
-{
+void TitleBar::mouseReleaseEvent(QMouseEvent* event) {
     if (m_dragging && event->button() == Qt::LeftButton) {
         m_dragging = false;
         event->accept();
@@ -101,4 +100,4 @@ void TitleBar::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
-} // namespace kn
+}  // namespace kn

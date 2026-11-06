@@ -1,101 +1,76 @@
-#ifndef KYLINNOTE_NOTEWIDGET_H
-#define KYLINNOTE_NOTEWIDGET_H
-
-#include "../Common.h"
-
+#pragma once
 #include <QTimer>
 #include <QWidget>
-
+#include "../domain/Task.h"
 class QLabel;
-class QVBoxLayout;
-class QMoveEvent;
-class QResizeEvent;
-
+class QCheckBox;
+class QPushButton;
+class QListWidget;
+class QStackedWidget;
 namespace kn {
-
-class NoteManager;
 class TitleBar;
-class NoteEditor;
 class ResizeGrip;
-
-class NoteWidget : public QWidget
-{
+class MarkdownEditor;
+class DocumentPreview;
+class NoteWidget : public QWidget {
     Q_OBJECT
 public:
-    NoteWidget(NoteManager *manager, const NoteRecord &record, QWidget *parent = nullptr);
-
-    qint64 id() const { return m_record.id; }
-    const NoteRecord &record() const { return m_record; }
-    int zOrder() const { return m_record.zOrder; }
-
-    // 从界面收集当前状态（内容、几何、颜色、层级）
-    NoteRecord snapshot() const;
-    // 写库成功后回写自增 id 等字段
-    void applySaved(const NoteRecord &saved);
-
-    void setZOrder(int z) { m_record.zOrder = z; }
-    NoteColor color() const { return m_record.color; }
-    void setColor(NoteColor color);
-    void cycleColor();
-
-    // 在「贴在桌面 / 普通 / 置顶」之间循环，返回切换后的层级
-    NoteLayer cycleLayer();
-    void setLayer(NoteLayer layer);
-    NoteLayer layer() const { return m_layer; }
-    bool alwaysOnTop() const { return m_layer == NoteLayer::OnTop; }
-
+    explicit NoteWidget(const Task& task, QWidget* parent = nullptr);
+    qint64 id() const {
+        return m_task.id;
+    }
+    int zOrder() const {
+        return m_task.zOrder;
+    }
+    Task snapshot() const;
+    void applyTask(const Task& task);
+    void applySaved(const Task& task);
     void setSaveFailed(bool failed);
-    bool saveFailed() const { return m_saveFailed; }
-
-    void markDeleted(bool deleted) { m_markedDeleted = deleted; }
-    bool isMarkedDeleted() const { return m_markedDeleted; }
-
-    void raiseToTop();
-    void delayedRaise(int delayMs = 800);
-    void focusEditor();
-
-    // 新建便签时临时置前，保证"点了就有反应"；失去焦点后回到默认层级。
-    // 贴桌面模式下便签位于所有应用窗口之下，不这样做新建的便签会被挡住看不见。
+    bool saveFailed() const {
+        return m_saveFailed;
+    }
+    bool descriptionDirty() const {
+        return m_descriptionDirty;
+    }
+    void setLayer(NoteLayer layer);
+    NoteLayer layer() const {
+        return m_task.layer;
+    }
+    NoteLayer cycleLayer();
     void raiseTemporarily();
-
+    void focusEditor();
+    bool flush();
 signals:
-    void activated(NoteWidget *note);
-    void closeRequested(NoteWidget *note);
-    void saveRequested(NoteWidget *note);
+    void activated(NoteWidget* note);
+    void closeRequested(NoteWidget* note);
+    void saveRequested(NoteWidget* note);
+    void taskOpenRequested(qint64 id);
+    void completionRequested(qint64 id, bool completed);
+    void checklistToggled(qint64 id, int index, bool completed);
 
 protected:
-    void moveEvent(QMoveEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;
-    void changeEvent(QEvent *event) override;
-    bool eventFilter(QObject *watched, QEvent *event) override;
-
-private slots:
-    void onTextChanged();
-    void onSaveTimeout();
+    void moveEvent(QMoveEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     void buildUi();
-    void updateGeometryRecord();
-    void scheduleSave();
+    void updateView();
     void applyWindowFlags();
-    void layoutGrip();
-
-    NoteManager *m_manager = nullptr;
-    NoteRecord  m_record;
-
-    TitleBar    *m_titleBar = nullptr;
-    NoteEditor  *m_editor   = nullptr;
-    QLabel      *m_status   = nullptr;
-    ResizeGrip  *m_grip     = nullptr;
-
-    QTimer    m_saveTimer;
-    NoteLayer m_layer      = NoteLayer::OnDesktop;
-    bool      m_saveFailed    = false;
-    bool      m_markedDeleted = false;
-    bool      m_tempRaised    = false;
-    bool      m_applyingFlags = false;
+    void scheduleSave();
+    Task m_task;
+    TitleBar* m_titleBar = nullptr;
+    QLabel *m_title = nullptr, *m_schedule = nullptr, *m_status = nullptr;
+    QCheckBox* m_complete = nullptr;
+    QPushButton* m_editToggle = nullptr;
+    QListWidget* m_checklist = nullptr;
+    QStackedWidget* m_body = nullptr;
+    MarkdownEditor* m_editor = nullptr;
+    DocumentPreview* m_preview = nullptr;
+    ResizeGrip* m_grip = nullptr;
+    QTimer m_saveTimer;
+    bool m_loading = false, m_saveFailed = false, m_descriptionDirty = false, m_temporary = false,
+         m_applyingFlags = false, m_pending = false;
 };
-
-} // namespace kn
-
-#endif // KYLINNOTE_NOTEWIDGET_H
+}  // namespace kn

@@ -1,57 +1,37 @@
-#ifndef KYLINNOTE_KYLINNOTEAPP_H
-#define KYLINNOTE_KYLINNOTEAPP_H
-
+#pragma once
+#include <QMap>
 #include <QObject>
-#include <QTimer>
-
-class QWidget;
-
+#include <QPointer>
 namespace kn {
-
+class TaskStore;
+class ReminderScheduler;
 class NoteManager;
+class TaskPanel;
 class TrayController;
+class InstanceChannel;
+class ReminderPopup;
 class DbusAdapter;
-class GlobalHotkey;
-
-// 应用装配：数据库、自启、还原、托盘、D-Bus、全局快捷键
-class KylinNoteApp : public QObject
-{
+// 装配业务服务与各类展示窗口；平台能力通过独立适配器接入。
+class KylinNoteApp : public QObject {
     Q_OBJECT
 public:
-    explicit KylinNoteApp(QObject *parent = nullptr);
+    explicit KylinNoteApp(QObject* parent = nullptr);
     ~KylinNoteApp() override;
-
-    bool init(QString *error = nullptr);
-
+    bool init(QString* error = nullptr, bool startHidden = false);
 public slots:
     void shutdown();
 
-private slots:
-    void onScreenReadyCheck();
-    void onQuitRequested();
-    void onHotkeyActivated(int id);
-
 private:
-    void setupGlobalShortcuts();
-    void doRestore();
-    void applyLayerChange();
-
-    // 全局热键 id
-    enum { HotkeyNewNote = 1, HotkeyDeleteNote = 2, HotkeyCycleLayer = 3 };
-
-    NoteManager    *m_manager = nullptr;
-    TrayController *m_tray    = nullptr;
-    DbusAdapter    *m_dbus    = nullptr;
-    QWidget        *m_hotkeyHost = nullptr;
-    GlobalHotkey   *m_hotkeys    = nullptr;
-
-    QTimer m_readyTimer;
-    int    m_readyTries = 0;
-    bool   m_restored   = false;
-    bool   m_shutdown   = false;
-    bool   m_dbBroken   = false;
+    void requestQuit();
+    void showReminder(qint64 id);
+    TaskStore* m_store = nullptr;
+    ReminderScheduler* m_reminders = nullptr;
+    NoteManager* m_notes = nullptr;
+    TaskPanel* m_panel = nullptr;
+    TrayController* m_tray = nullptr;
+    InstanceChannel* m_channel = nullptr;
+    DbusAdapter* m_dbus = nullptr;
+    QMap<qint64, QPointer<ReminderPopup>> m_popups;
+    bool m_shutdown = false;
 };
-
-} // namespace kn
-
-#endif // KYLINNOTE_KYLINNOTEAPP_H
+}  // namespace kn

@@ -5,6 +5,7 @@
 #include <QObject>
 
 class QSocketNotifier;
+class QKeySequence;
 
 // Xlib 前向声明，避免把 X11 头文件污染到所有包含本文件的编译单元
 typedef struct _XDisplay Display;

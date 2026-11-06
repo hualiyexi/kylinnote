@@ -1,59 +1,27 @@
 #include "Settings.h"
-
 namespace kn {
-
-namespace {
-const char *kKeyConfirmDelete = "ui/confirmDelete";
-const char *kKeyHintShown     = "ui/hintShown";
-const char *kKeyDefaultLayer  = "ui/defaultLayer";
-}
-
 Settings::Settings()
-    : m_store(QSettings::IniFormat, QSettings::UserScope,
-              QStringLiteral("kylinnote"), QStringLiteral("kylinnote"))
-{
+    : m_store(QSettings::IniFormat,
+              QSettings::UserScope,
+              QStringLiteral("kylinnote"),
+              QStringLiteral("kylinnote")) {
 }
-
-Settings &Settings::instance()
-{
-    static Settings s;
-    return s;
+Settings& Settings::instance() {
+    static Settings settings;
+    return settings;
 }
-
-bool Settings::confirmDelete() const
-{
-    return m_store.value(QLatin1String(kKeyConfirmDelete), true).toBool();
+NoteLayer Settings::defaultLayer() const {
+#ifdef Q_OS_WIN
+    const NoteLayer fallback = NoteLayer::Normal;
+#else
+    const NoteLayer fallback = NoteLayer::OnDesktop;
+#endif
+    return layerFromInt(m_store.value(QStringLiteral("ui/defaultLayer"), layerToInt(fallback)).toInt());
 }
-
-void Settings::setConfirmDelete(bool enabled)
-{
-    m_store.setValue(QLatin1String(kKeyConfirmDelete), enabled);
+void Settings::setDefaultLayer(NoteLayer layer) {
+    m_store.setValue(QStringLiteral("ui/defaultLayer"), layerToInt(layer));
 }
-
-bool Settings::hintShown() const
-{
-    return m_store.value(QLatin1String(kKeyHintShown), false).toBool();
-}
-
-void Settings::setHintShown(bool shown)
-{
-    m_store.setValue(QLatin1String(kKeyHintShown), shown);
-}
-
-NoteLayer Settings::defaultLayer() const
-{
-    return layerFromInt(m_store.value(QLatin1String(kKeyDefaultLayer),
-                                      layerToInt(NoteLayer::OnDesktop)).toInt());
-}
-
-void Settings::setDefaultLayer(NoteLayer layer)
-{
-    m_store.setValue(QLatin1String(kKeyDefaultLayer), layerToInt(layer));
-}
-
-void Settings::sync()
-{
+void Settings::sync() {
     m_store.sync();
 }
-
-} // namespace kn
+}  // namespace kn
