@@ -42,7 +42,12 @@ void NoteManager::syncTask(qint64 id) {
     connect(window, &NoteWidget::activated, this, [this](NoteWidget* note) { m_active = note; });
     connect(window, &NoteWidget::saveRequested, this, &NoteManager::handleSave);
     connect(window, &NoteWidget::taskOpenRequested, this, &NoteManager::taskOpenRequested);
-    connect(window, &NoteWidget::completionRequested, m_store, &TaskStore::setCompleted);
+    connect(window, &NoteWidget::completionRequested, this, [this](qint64 id, bool completed) {
+        if (NoteWidget* window = m_notes.value(id)) {
+            if (window->flush())
+                m_store->setCompleted(id, completed);
+        }
+    });
     connect(window, &NoteWidget::closeRequested, this, [this](NoteWidget* note) {
         if (note->flush())
             m_store->setPinned(note->id(), false);

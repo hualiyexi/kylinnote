@@ -35,7 +35,7 @@ $env:APPDATA = "$PWD/.tools/appdata"
 开发构建、运行 CTest、部署并生成便携 ZIP：
 
 ```powershell
-./packaging/build-windows.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.ps1 `
     -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
     -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
     -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
@@ -55,7 +55,7 @@ $env:APPDATA = "$PWD/.tools/appdata"
 生成安装 EXE 还需 Unicode Inno Setup 6，可安装在 `.tools/InnoSetup`，然后将其完整路径传入：
 
 ```powershell
-./packaging/build-windows.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.ps1 `
     -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
     -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
     -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `

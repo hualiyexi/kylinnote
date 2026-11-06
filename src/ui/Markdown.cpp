@@ -38,6 +38,11 @@ DocumentPreview::DocumentPreview(QWidget* parent) : QTextBrowser(parent) {
     setOpenExternalLinks(false);
     setFrameShape(QFrame::NoFrame);
     document()->setDefaultStyleSheet(AppStyle::previewCss());
+    QPalette canvas = palette();
+    canvas.setColor(QPalette::Base, Qt::white);
+    canvas.setColor(QPalette::Text, QColor("#23324B"));
+    canvas.setColor(QPalette::WindowText, QColor("#23324B"));
+    setPalette(canvas);
     connect(this, &QTextBrowser::anchorClicked, this, [](const QUrl& url) {
         const QString scheme = url.scheme().toLower();
         if (scheme == QLatin1String("https") || scheme == QLatin1String("http") ||

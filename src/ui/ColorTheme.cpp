@@ -47,7 +47,7 @@ QString ColorTheme::windowStyle(NoteColor c) {
                "#TitleBar{background:%2;border-bottom:1px solid %3;}"
                "#NoteWidget QLabel{background:transparent;color:%4;}"
                "#NoteSchedule,#NoteStatus{color:%6;font-size:11px;}"
-               "#NoteWidget QTextBrowser,#NoteChecklist{background:transparent;color:%4;border:none;}"
+               "#NoteWidget QTextBrowser,#NoteChecklist{background:%1;color:%4;border:none;}"
                "#NoteWidget #DescriptionEditor{selection-background-color:%5;}"
                "#TitleBar QToolButton{background:transparent;border:none;color:%6;padding:4px "
                "6px;margin:0px;}"
