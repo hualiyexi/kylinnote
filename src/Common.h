@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QRect>
 #include <QString>
+#include <QStandardPaths>
 
 namespace kn {
 
@@ -81,23 +82,32 @@ struct NoteRecord {
 enum {
     SaveDebounceMs = 300,       // 内容/几何变动后的防抖落库延迟
     SaveRetryMs    = 5000,      // 写库失败后的重试间隔
-    MinWidth       = 160,
-    MinHeight      = 120,
-    DefaultWidth   = 250,
-    DefaultHeight  = 250,
+    MinWidth       = 280,
+    MinHeight      = 240,
+    DefaultWidth   = 340,
+    DefaultHeight  = 360,
     MinFontSize    = 8,
     MaxFontSize    = 72,
     DefaultFontPt  = 10,
-    TitleBarHeight = 28,
+    TitleBarHeight = 36,
     GripSize       = 16,
     WindowReadyRetryMs = 500,   // 窗管未就绪时的重试间隔
     WindowReadyMaxRetry = 5
 };
 
-// 数据目录 ~/.local/share/kylinnote，不存在则创建
+// Linux 保留 1.0 的数据位置；Windows 遵循本地应用数据目录。
+// 测试/便携调试可显式指定独立目录，不污染真实任务。
 inline QString dataDirPath()
 {
+    const QString overridePath = qEnvironmentVariable("KYLINNOTE_DATA_DIR");
+    if (!overridePath.isEmpty()) {
+        return QDir(overridePath).absolutePath();
+    }
+#ifdef Q_OS_WIN
+    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+#else
     return QDir::homePath() + QStringLiteral("/.local/share/kylinnote");
+#endif
 }
 
 inline QString ensureDataDir()
