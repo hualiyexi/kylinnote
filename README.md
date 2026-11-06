@@ -78,6 +78,14 @@ Windows 上编辑后 `git push` 即可运行双平台 CI。原生 UI 测试由 Q
 - [界面设计约定](docs/ui-design.md)
 - [第三方来源与许可](THIRD_PARTY.md)
 
+## 界面预览
+
+真实 Windows 桌面渲染，不是网页原型：
+
+![聚合待办面板](docs/screenshots/windows-task-panel.png)
+
+![任务桌面便签](docs/screenshots/windows-desktop-note.png)
+
 ## 旧版本升级
 
 首次打开 1.0 数据库时，程序在事务中将旧便签迁移为任务，保留文字、颜色、位置与软删状态。旧 HTML 正文转为纯文本 Markdown，不维护第二套富文本编辑器；原 `notes` 表留在数据库中供追溯。迁移失败会回滚并报告错误，未知的更高数据库版本会拒绝打开。

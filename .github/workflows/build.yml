@@ -108,6 +108,13 @@ jobs:
             -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
             -InnoSetupCompiler $iscc
 
+      - name: Install, start, uninstall and verify user data survives
+        run: |
+          $target = "$env:RUNNER_TEMP/kylinnote-install-test"
+          $data = "$env:RUNNER_TEMP/kylinnote-data-test"
+          ./packaging/test-windows.ps1 -Installer "$PWD/dist/KylinNote-1.1.0-Windows-x64-Setup.exe" `
+            -InstallDir $target -DataDir $data
+
       - name: Upload portable and installer packages
         uses: actions/upload-artifact@v7.0.2
         with:
