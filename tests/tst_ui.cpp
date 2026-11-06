@@ -182,10 +182,14 @@ private slots:
         auto* attachments = note.findChild<AttachmentWidget*>();
         QVERIFY(attachments);
         QVERIFY(attachments->isVisible());
-        QVERIFY(!note.findChild<AttachmentWidget*>()
-                     ->findChild<QLabel*>(QStringLiteral("AttachmentThumbnail"))
-                     ->pixmap(Qt::ReturnByValue)
-                     .isNull());
+        const auto* thumbnail = note.findChild<AttachmentWidget*>()
+                                    ->findChild<QLabel*>(QStringLiteral("AttachmentThumbnail"));
+        QVERIFY(thumbnail);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+        QVERIFY(!thumbnail->pixmap(Qt::ReturnByValue).isNull());
+#else
+        QVERIFY(thumbnail->pixmap() && !thumbnail->pixmap()->isNull());
+#endif
         auto* grip = note.findChild<ResizeGrip*>();
         QVERIFY(grip);
         const QPoint start = grip->mapToGlobal(QPoint(8, 8));
