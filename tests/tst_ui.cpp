@@ -2,6 +2,7 @@
 #include <QCheckBox>
 #include <QDateTimeEdit>
 #include <QDir>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListView>
 #include <QPushButton>
@@ -15,9 +16,12 @@
 #include "app/TaskStore.h"
 #include "db/Database.h"
 #include "ui/AppStyle.h"
+#include "ui/AttachmentWidget.h"
 #include "ui/Markdown.h"
 #include "ui/MarkdownEditor.h"
+#include "ui/NoteChecklist.h"
 #include "ui/NoteWidget.h"
+#include "ui/ResizeGrip.h"
 #include "ui/TaskDetailWidget.h"
 #include "ui/TaskFilter.h"
 #include "ui/TaskListModel.h"
@@ -160,6 +164,48 @@ private slots:
         QVERIFY(!m_store->task(id).deleted);
         QCOMPARE(notes.count(), 0);
     }
+    void noteResizeAndAttachmentPreview() {
+        const qint64 id = m_store->createTask(QStringLiteral("带图片的桌面便签"));
+        Task task = m_store->task(id);
+        task.description = QStringLiteral("## 参考材料\n\n可在这里查看图片与文档。");
+        task.pinned = true;
+        QVERIFY(m_store->saveTask(task));
+        const QString source = m_dir->path() + QStringLiteral("/sample.png");
+        QPixmap image(160, 90);
+        image.fill(QColor(QStringLiteral("#668BE3")));
+        QVERIFY(image.save(source));
+        QVERIFY(!m_store->importAttachment(id, source).id.isEmpty());
+        QCOMPARE(m_store->attachments(id).size(), 1);
+        NoteWidget note(m_store->task(id));
+        note.setStore(m_store.get());
+        note.show();
+        auto* attachments = note.findChild<AttachmentWidget*>();
+        QVERIFY(attachments);
+        QVERIFY(attachments->isVisible());
+        QVERIFY(!note.findChild<AttachmentWidget*>()
+                     ->findChild<QLabel*>(QStringLiteral("AttachmentThumbnail"))
+                     ->pixmap(Qt::ReturnByValue)
+                     .isNull());
+        auto* grip = note.findChild<ResizeGrip*>();
+        QVERIFY(grip);
+        const QPoint start = grip->mapToGlobal(QPoint(8, 8));
+        QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, QPoint(8, 8));
+        for (int step = 1; step <= 12; ++step) {
+            const QPoint local(8 + step * 4, 8 + step * 2);
+            QMouseEvent move(QEvent::MouseMove,
+                             local,
+                             grip->mapToGlobal(local),
+                             Qt::NoButton,
+                             Qt::LeftButton,
+                             Qt::NoModifier);
+            QApplication::sendEvent(grip, &move);
+            QCoreApplication::processEvents();
+        }
+        QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier, QPoint(56, 32));
+        QVERIFY(note.width() > DefaultWidth);
+        QVERIFY(note.grab().toImage().format() != QImage::Format_Invalid);
+    }
+
     void visualPreview() {
         const qint64 group = m_store->createGroup(QStringLiteral("工作安排"));
         const auto now = QDateTime::currentDateTime();

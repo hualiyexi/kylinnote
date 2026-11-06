@@ -13,6 +13,7 @@ class QLabel;
 namespace kn {
 class TaskStore;
 class MarkdownEditor;
+class AttachmentWidget;
 class TaskDetailWidget : public QWidget {
     Q_OBJECT
 public:
@@ -46,6 +47,7 @@ private:
     QCheckBox *m_hasStart = nullptr, *m_hasDue = nullptr, *m_hasReminder = nullptr;
     QDateTimeEdit *m_start = nullptr, *m_due = nullptr, *m_reminder = nullptr;
     MarkdownEditor* m_description = nullptr;
+    AttachmentWidget* m_attachments = nullptr;
     QListWidget* m_checklist = nullptr;
     QPushButton *m_remove = nullptr, *m_restore = nullptr;
 };

@@ -15,6 +15,7 @@
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 #include "../app/TaskStore.h"
+#include "AttachmentWidget.h"
 #include "MarkdownEditor.h"
 #include "TaskFilter.h"
 
@@ -44,13 +45,14 @@ void TaskDetailWidget::buildUi() {
     m_empty->setProperty("muted", true);
     root->addWidget(m_empty, 1);
     auto* scroll = new QScrollArea(this);
+    scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
     root->addWidget(scroll, 1);
     m_form = new QWidget(scroll);
     scroll->setWidget(m_form);
     m_form->setObjectName(QStringLiteral("TaskDetailForm"));
     auto* layout = new QVBoxLayout(m_form);
-    layout->setContentsMargins(18, 16, 18, 14);
+    layout->setContentsMargins(28, 18, 28, 18);
     layout->setSpacing(10);
     auto* top = new QHBoxLayout;
     m_completed = new QCheckBox(QStringLiteral("已完成"), m_form);
@@ -65,11 +67,18 @@ void TaskDetailWidget::buildUi() {
     m_title->setObjectName(QStringLiteral("TaskTitle"));
     m_title->setPlaceholderText(QStringLiteral("任务标题"));
     m_title->setMaxLength(500);
+    m_title->setMinimumHeight(48);
+    m_title->setStyleSheet(QStringLiteral("QLineEdit{background:transparent;border:0;padding:4px 0;}"));
     QFont heading = m_title->font();
     heading.setPointSize(14);
     heading.setBold(true);
     m_title->setFont(heading);
     layout->addWidget(m_title);
+    auto* settingsHost = new QWidget(m_form);
+    settingsHost->setObjectName(QStringLiteral("AdditionalSettings"));
+    auto* settingsLayout = new QVBoxLayout(settingsHost);
+    settingsLayout->setContentsMargins(0, 0, 0, 0);
+    settingsLayout->setSpacing(10);
     auto* classification = new QFormLayout;
     classification->setHorizontalSpacing(12);
     m_group = new QComboBox(m_form);
@@ -80,11 +89,12 @@ void TaskDetailWidget::buildUi() {
     classification->addRow(QStringLiteral("优先级"), m_priority);
     m_favorite = new QCheckBox(QStringLiteral("星标关注"), m_form);
     classification->addRow(QString(), m_favorite);
-    layout->addLayout(classification);
+    settingsLayout->addLayout(classification);
     auto* timeTitle = new QLabel(QStringLiteral("安排与提醒"), m_form);
     timeTitle->setProperty("section", true);
     layout->addWidget(timeTitle);
-    auto* time = new QFormLayout;
+    auto* time = new QVBoxLayout;
+    time->setSpacing(4);
     auto addTime = [this, time](
                        const QString& label, const QString& name, QCheckBox*& check, QDateTimeEdit*& edit) {
         check = new QCheckBox(label, m_form);
@@ -93,7 +103,11 @@ void TaskDetailWidget::buildUi() {
         edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
         edit->setCalendarPopup(true);
         edit->setObjectName(name);
-        time->addRow(check, edit);
+        auto* row = new QHBoxLayout;
+        row->setSpacing(8);
+        row->addWidget(check);
+        row->addWidget(edit, 1);
+        time->addLayout(row);
         connect(check, &QCheckBox::toggled, this, [this, edit, name](bool enabled) {
             edit->setEnabled(enabled);
             dirty(name);
@@ -108,13 +122,20 @@ void TaskDetailWidget::buildUi() {
     m_recurrence->addItem(QStringLiteral("每天"), QStringLiteral("daily"));
     m_recurrence->addItem(QStringLiteral("每周"), QStringLiteral("weekly"));
     m_recurrence->addItem(QStringLiteral("每月"), QStringLiteral("monthly"));
-    time->addRow(QStringLiteral("重复"), m_recurrence);
+    auto* recurrenceRow = new QHBoxLayout;
+    recurrenceRow->addWidget(new QLabel(QStringLiteral("重复"), m_form));
+    recurrenceRow->addWidget(m_recurrence);
+    time->addLayout(recurrenceRow);
     layout->addLayout(time);
     auto* presets = new QHBoxLayout;
     auto *atStart = new QPushButton(QStringLiteral("开始时提醒"), m_form),
          *beforeDue = new QPushButton(QStringLiteral("截止前10分钟"), m_form);
+    auto* settingsToggle = new QPushButton(QStringLiteral("更多设置"), m_form);
+    settingsToggle->setObjectName(QStringLiteral("AdditionalSettingsToggle"));
+    settingsToggle->setProperty("quiet", true);
     presets->addWidget(atStart);
     presets->addWidget(beforeDue);
+    presets->addWidget(settingsToggle);
     layout->addLayout(presets);
     connect(atStart, &QPushButton::clicked, this, [this]() {
         if (m_hasStart->isChecked()) {
@@ -142,6 +163,8 @@ void TaskDetailWidget::buildUi() {
     layout->addWidget(descriptionTitle);
     m_description = new MarkdownEditor(m_form);
     layout->addWidget(m_description);
+    m_attachments = new AttachmentWidget(m_store, m_form);
+    layout->addWidget(m_attachments);
     auto* checkTitle = new QLabel(QStringLiteral("子任务清单"), m_form);
     checkTitle->setProperty("section", true);
     layout->addWidget(checkTitle);
@@ -195,7 +218,14 @@ void TaskDetailWidget::buildUi() {
     m_layer->addItems(
         {QStringLiteral("在其他窗口下方"), QStringLiteral("普通窗口"), QStringLiteral("始终置顶")});
     appearance->addRow(QStringLiteral("便签层位"), m_layer);
-    layout->addLayout(appearance);
+    settingsLayout->addLayout(appearance);
+    layout->addWidget(settingsHost);
+    settingsHost->hide();
+    connect(settingsToggle, &QPushButton::clicked, this, [settingsHost, settingsToggle]() {
+        settingsHost->setVisible(!settingsHost->isVisible());
+        settingsToggle->setText(settingsHost->isVisible() ? QStringLiteral("收起更多设置")
+                                                          : QStringLiteral("更多设置"));
+    });
     m_status = new QLabel(m_form);
     m_status->setObjectName(QStringLiteral("DetailStatus"));
     m_status->setWordWrap(true);
@@ -290,11 +320,13 @@ void TaskDetailWidget::loadFields() {
     m_form->parentWidget()->parentWidget()->setVisible(exists);
     if (!exists) {
         m_id = 0;
+        m_attachments->setTask(0);
         m_loading = false;
         return;
     }
     m_title->setText(task.title);
     m_description->setContent(task.description, task.contentFormat);
+    m_attachments->setTask(m_id);
     m_completed->setChecked(task.completed);
     m_pinned->setChecked(task.pinned);
     m_favorite->setChecked(task.favorite);
@@ -349,6 +381,7 @@ void TaskDetailWidget::updateEnabled() {
     for (auto* button : m_form->findChildren<QPushButton*>())
         if (button != m_restore && button != m_remove)
             button->setEnabled(enabled);
+    m_attachments->setReadOnly(!enabled);
     m_restore->setVisible(!enabled);
     m_remove->setText(enabled ? QStringLiteral("移到回收站") : QStringLiteral("永久删除"));
 }
@@ -395,8 +428,13 @@ bool TaskDetailWidget::flush() {
     if (m_dirty.contains(QStringLiteral("layer")))
         task.layer = layerFromInt(m_layer->currentIndex());
     if (m_dirty.contains(QStringLiteral("tags"))) {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+        const auto splitBehavior = Qt::SkipEmptyParts;
+#else
+        const auto splitBehavior = QString::SkipEmptyParts;
+#endif
         task.tags =
-            m_tags->text().split(QRegularExpression(QStringLiteral("[,，;；]")), QString::SkipEmptyParts);
+            m_tags->text().split(QRegularExpression(QStringLiteral("[,，;；]")), splitBehavior);
         for (auto& tag : task.tags)
             tag = tag.trimmed();
         task.tags.removeDuplicates();

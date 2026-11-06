@@ -18,13 +18,15 @@ TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_StyledBackground, true);
 
     QHBoxLayout* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(6, 0, 4, 0);
+    layout->setContentsMargins(10, 3, 10, 0);
     layout->setSpacing(4);
-    auto* open = new QToolButton(this);
-    open->setText(QStringLiteral("待办详情"));
-    open->setToolTip(QStringLiteral("打开任务面板，设置分组、时间和提醒"));
-    layout->addWidget(open);
-    connect(open, &QToolButton::clicked, this, &TitleBar::openClicked);
+    m_openButton = new QToolButton(this);
+    m_openButton->setObjectName(QStringLiteral("OpenTaskButton"));
+    m_openButton->setText(QStringLiteral("···"));
+    m_openButton->setFixedSize(28, 24);
+    m_openButton->setToolTip(QStringLiteral("打开待办详情，设置时间、提醒和附件"));
+    layout->addWidget(m_openButton);
+    connect(m_openButton, &QToolButton::clicked, this, &TitleBar::openClicked);
     layout->addStretch(1);
 
     m_colorButton = new QToolButton(this);
@@ -45,6 +47,11 @@ TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
 
     connect(m_colorButton, &QToolButton::clicked, this, &TitleBar::colorClicked);
     connect(m_closeButton, &QToolButton::clicked, this, &TitleBar::closeClicked);
+}
+
+void TitleBar::setHovered(bool hovered) {
+    m_openButton->setVisible(hovered);
+    m_colorButton->setVisible(hovered);
 }
 
 void TitleBar::setColorIndicator(NoteColor color) {

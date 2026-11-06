@@ -7,6 +7,7 @@ class QLabel;
 class QLineEdit;
 class QComboBox;
 class QSplitter;
+class QStackedWidget;
 class QCloseEvent;
 namespace kn {
 class TaskStore;
@@ -43,6 +44,7 @@ private:
     QComboBox* m_sort = nullptr;
     QLabel *m_heading = nullptr, *m_count = nullptr, *m_empty = nullptr, *m_error = nullptr;
     QSplitter* m_splitter = nullptr;
+    QStackedWidget* m_listStack = nullptr;
     TaskFilter m_filter;
     qint64 m_selectedId = 0;
     bool m_resetting = false, m_rebuilding = false;

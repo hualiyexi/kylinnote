@@ -8,6 +8,10 @@ namespace kn {
 NoteManager::NoteManager(TaskStore* store, QObject* parent) : QObject(parent), m_store(store) {
     connect(store, &TaskStore::taskChanged, this, &NoteManager::syncTask);
     connect(store, &TaskStore::tasksReset, this, &NoteManager::restoreAll);
+    connect(store, &TaskStore::attachmentsChanged, this, [this](qint64 id) {
+        if (NoteWidget* note = m_notes.value(id))
+            note->refreshAttachments();
+    });
 }
 NoteManager::~NoteManager() {
     qDeleteAll(m_notes);
@@ -38,6 +42,7 @@ void NoteManager::syncTask(qint64 id) {
     Task presentation = task;
     presentation.geometry = ScreenFit::fit(task.geometry);
     window = new NoteWidget(presentation);
+    window->setStore(m_store);
     m_notes.insert(id, window);
     connect(window, &NoteWidget::activated, this, [this](NoteWidget* note) { m_active = note; });
     connect(window, &NoteWidget::saveRequested, this, &NoteManager::handleSave);

@@ -4,6 +4,7 @@
 class QTextEdit;
 class QStackedWidget;
 class QTabBar;
+class QFrame;
 namespace kn {
 class DocumentPreview;
 class MarkdownEditor : public QWidget {
@@ -19,6 +20,7 @@ public:
         return m_editor;
     }
     void setPreview(bool preview);
+    void setCompact(bool compact);
 signals:
     void contentChanged();
 
@@ -31,6 +33,7 @@ private:
     DocumentPreview* m_preview = nullptr;
     QStackedWidget* m_stack = nullptr;
     QTabBar* m_tabs = nullptr;
+    QFrame* m_toolbar = nullptr;
     ContentFormat m_format = ContentFormat::Markdown;
     bool m_loading = false;
 };

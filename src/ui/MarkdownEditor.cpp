@@ -23,7 +23,8 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(5);
-    auto* toolbar = new QFrame(this);
+    m_toolbar = new QFrame(this);
+    auto* toolbar = m_toolbar;
     toolbar->setObjectName(QStringLiteral("EditorToolbar"));
     auto* grid = new QGridLayout(toolbar);
     grid->setContentsMargins(3, 3, 3, 3);
@@ -122,6 +123,15 @@ QString MarkdownEditor::content() const {
 }
 void MarkdownEditor::setPreview(bool preview) {
     m_tabs->setCurrentIndex(preview ? 1 : 0);
+}
+void MarkdownEditor::setCompact(bool compact) {
+    m_toolbar->setVisible(!compact);
+    m_tabs->setVisible(!compact);
+    m_editor->setFrameShape(QFrame::NoFrame);
+    m_editor->setContentsMargins(0, 0, 0, 0);
+    m_editor->document()->setDocumentMargin(0);
+    m_preview->setContentsMargins(0, 0, 0, 0);
+    m_preview->document()->setDocumentMargin(0);
 }
 void MarkdownEditor::refreshPreview() {
     m_preview->setHtml(Markdown::toHtml(m_editor->toPlainText()));

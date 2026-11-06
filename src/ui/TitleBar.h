@@ -17,6 +17,7 @@ public:
     explicit TitleBar(QWidget* parent = nullptr);
 
     void setColorIndicator(NoteColor color);
+    void setHovered(bool hovered);
 
 signals:
     void closeClicked();
@@ -29,6 +30,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
+    QToolButton* m_openButton = nullptr;
     QToolButton* m_colorButton = nullptr;
     QToolButton* m_closeButton = nullptr;
     QPoint m_dragStartGlobal;

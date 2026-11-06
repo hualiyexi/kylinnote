@@ -2,9 +2,9 @@
 
 核心以 Qt 5.12 / C++14 为基线。`TaskStore`、`TaskRepository`、`Database` 和 `ReminderScheduler` 必须在其 SQLite 连接所属的同一线程使用；通常就是主线程。先打开 `Database`、创建 store 并 `load()`，最后停止 scheduler、销毁 store/连接副本，再关闭数据库。
 
-## schema 2 与旧数据
+## schema 3、附件与旧数据
 
-`Database::instance().open(QString *error = nullptr)` 保持默认入口；`openAt(path, error)` 支持临时数据库和测试。只有连接、pragma、事务迁移全部成功才让 `isOpen()` 返回 true。失败会关闭并移除连接。`user_version > 2` 在任何 schema 或 journal 修改前拒绝打开，不写回版本号。
+`Database::instance().open(QString *error = nullptr)` 保持默认入口；`openAt(path, error)` 支持临时数据库和测试。只有连接、pragma、事务迁移全部成功才让 `isOpen()` 返回 true。失败会关闭并移除连接。`user_version > 3` 在任何 schema 或 journal 修改前拒绝打开，不写回版本号。
 
 schema 2 新增 `task_groups`、`tasks` 和内部 `task_recurrence_links`。v0 首次建库和 v1 升级都在一个事务中完成。旧 `notes` 表及 HTML、标题、颜色、geometry、z_order、创建/修改时间、deleted 原始内容完整保留。导入到 tasks 时 HTML 经 `QTextDocument::toPlainText()` 转为 Markdown 纯文本（最新产品约定）；未删便签 pinned=true，已删便签 deleted=true、pinned=false。保留旧 id；缺少标题的新任务使用首行或“未命名便签”。迁移仅执行一次。
 
@@ -40,11 +40,15 @@ schema 2 新增 `task_groups`、`tasks` 和内部 `task_recurrence_links`。v0 �
 
 先持久保存再发 signal 无法保证“用户一定看到一次”：若程序恰在提交后、UI 接收前崩溃，此次提示可能未显示。当前语义优先持久去重；如需跨进程确认送达，需未来另加 outbox/ack 协议。
 
-## JSON 备份
+schema 3 新增 `attachments` 元数据表；外键在永久删除任务时级联清理，回收站仍保留附件。文件内容独立保存在 `dataDir/attachments/<UUID>_<安全扩展名>`，不直接引用用户路径，也不作为 BLOB 塞入 SQLite。导入文件复制原内容，原子写入；单文件 1 字节至 2 MiB，图片必须经 `QImageReader` 真实解码。移除/永久删除在数据库事务成功后清理文件，清理失败只保留孤儿文件，不丢任务。
 
-根包含 `format="KylinNote.Tasks"`、`version=1`、`groups`、`tasks`、`recurrenceLinks`。id 和 revision 用十进制字符串，避免 JSON double 对 64 位整数的精度丢失；日期为含显式时区的 ISO 8601 字符串或 null。含 Unicode、HTML 格式正文、标签、清单、回收站状态和桌面属性均原样往返。UI 目前只提供 Markdown 编辑；保留 Html 枚举不会增加数据库/备份维护路径。
+## 备份容器与旧 JSON
 
-导出使用 `QSaveFile`，禁用直接覆盖回退。导入限制 64 MiB，先解析并全面验证所有类型、范围、日期、唯一 id、分组引用、完成状态和无环重复链，再在一个数据库事务中合并。组和任务一律分配新 id，不覆盖原数据；同名分组也单独创建。再次导入同一备份会再次合并一份，属明确的导入语义。
+`.knb` 使用 `KNBK` 魔数、容器版本 1、JSON 元数据版本 2 和附件内容帧。元数据根包含 `format="KylinNote.Tasks"`、`groups`、`tasks`、`recurrenceLinks`、`attachments`。导入严格验证 ID、路径、MIME、大小、日期、帧长度和重复项，文件先暂存，数据库失败时清理暂存内容；重复导入分配新附件 ID 和文件名。旧版纯 JSON `version=1` 仍兼容，视为无附件备份。
+
+JSON 元数据沿用以下规则。id 和 revision 用十进制字符串，避免 JSON double 对 64 位整数的精度丢失；日期为含显式时区的 ISO 8601 字符串或 null。含 Unicode、HTML 格式正文、标签、清单、回收站状态和桌面属性均原样往返。UI 目前只提供 Markdown 编辑；保留 Html 枚举不会增加数据库/备份维护路径。
+
+导出使用 `QSaveFile`，禁用直接覆盖回退。旧 JSON 导入限制 64 MiB；带附件的备份容器限制 256 MiB，单附件仍限制 2 MiB。先解析并全面验证所有类型、范围、日期、唯一 id、分组引用、完成状态和无环重复链，再在一个数据库事务中合并。组和任务一律分配新 id，不覆盖原数据；同名分组也单独创建。再次导入同一备份会再次合并一份，属明确的导入语义。
 
 导入将新行 revision 归一化，同时保留“当前 revision 是否仍等于生成时 revision”的关系；已编辑后代仍禁止撤销，未编辑后代可安全撤回。旧版本/未来格式、数字代替布尔、错误日期或任何 SQL 失败都会保持现有缓存和数据库不变。
 

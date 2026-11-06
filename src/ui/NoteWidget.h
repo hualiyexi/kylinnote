@@ -5,12 +5,14 @@
 class QLabel;
 class QCheckBox;
 class QPushButton;
-class QListWidget;
 class QStackedWidget;
 namespace kn {
 class TitleBar;
 class ResizeGrip;
 class MarkdownEditor;
+class NoteChecklist;
+class AttachmentWidget;
+class TaskStore;
 class DocumentPreview;
 class NoteWidget : public QWidget {
     Q_OBJECT
@@ -40,6 +42,8 @@ public:
     void raiseTemporarily();
     void focusEditor();
     bool flush();
+    void setStore(TaskStore* store);
+    void refreshAttachments();
 signals:
     void activated(NoteWidget* note);
     void closeRequested(NoteWidget* note);
@@ -51,6 +55,9 @@ signals:
 protected:
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+    void enterEvent(QEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
 
@@ -64,7 +71,8 @@ private:
     QLabel *m_title = nullptr, *m_schedule = nullptr, *m_status = nullptr;
     QCheckBox* m_complete = nullptr;
     QPushButton* m_editToggle = nullptr;
-    QListWidget* m_checklist = nullptr;
+    NoteChecklist* m_checklist = nullptr;
+    AttachmentWidget* m_attachments = nullptr;
     QStackedWidget* m_body = nullptr;
     MarkdownEditor* m_editor = nullptr;
     DocumentPreview* m_preview = nullptr;
