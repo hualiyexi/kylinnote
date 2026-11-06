@@ -1,7 +1,21 @@
 # 构建产物
 build/
+build-*/
+.tools/
+dist/
 *.o
+*.obj
 *.deb
+*.zip
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.log
+CMakeUserPresets.json
+pip-*/
+*.pyc
+__pycache__/
 
 # Qt Creator / IDE
 CMakeLists.txt.user

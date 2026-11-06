@@ -1,62 +1,139 @@
-name: build-deb
+name: Build and package
 
-# push 到 main 或手动触发时：编译并产出两个 arm64 deb（常规包 + bundle 离线包）
-# 打 v* 标签时：额外创建 GitHub Release 并附上 deb
 on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
-jobs:
-  build-arm64:
-    # GitHub 原生 arm64 runner（公开仓库免费），比 QEMU 模拟快得多
-    runs-on: ubuntu-22.04-arm
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+permissions:
+  contents: read
 
-      - name: 容器内构建（Ubuntu 20.04 arm64 ≈ 麒麟 V10 SP1 基线）
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  linux-arm64:
+    name: Linux ARM64 / Qt 5.12 / glibc 2.31
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      # Current stable actions, verified to use Node 24.
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Native ARM64 build and CTest in Ubuntu 20.04
         run: |
           docker run --rm --platform linux/arm64 \
-            -v "$PWD":/src -w /src \
-            ubuntu:20.04 \
+            -v "$PWD":/src -w /src ubuntu:20.04 \
             bash packaging/ci-build.sh
 
-      - name: 冒烟测试：干净容器安装常规包并校验
+      - name: Install regular package with system Qt in a separate container
         run: |
-          docker run --rm --platform linux/arm64 \
-            -v "$PWD":/src -w /src \
-            ubuntu:20.04 \
-            bash -c '
-              set -e
-              apt-get update -qq || (sed -i "s|ports.ubuntu.com/ubuntu-ports|old-releases.ubuntu.com/ubuntu-ports|g; s|archive.ubuntu.com/ubuntu|old-releases.ubuntu.com/ubuntu|g; s|security.ubuntu.com/ubuntu|old-releases.ubuntu.com/ubuntu|g" /etc/apt/sources.list && apt-get update -qq)
-              echo "== 安装常规包：Depends 若写错（包名在基线源中不存在）此步即失败 =="
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./kylinnote_*_arm64.deb
-              dpkg -s kylinnote | grep -E "^(Package|Version|Architecture|Status)"
-              test -x /usr/bin/kylinnote && echo "常规包: /usr/bin/kylinnote 就位"
-              echo "== bundle 包结构校验：Qt 库与 xcb 平台插件必须随包携带 =="
-              dpkg-deb -c kylinnote_*_arm64_bundle.deb | grep -q "libQt5Core.so.5" && echo "bundle: Qt 库随包 OK"
-              dpkg-deb -c kylinnote_*_arm64_bundle.deb | grep -q "plugins/platforms/libqxcb.so" && echo "bundle: xcb 平台插件随包 OK"
-              dpkg-deb -I kylinnote_*_arm64_bundle.deb | grep "^ Depends" || true
-            '
+          docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src ubuntu:20.04 bash -eu -o pipefail -c '
+            export DEBIAN_FRONTEND=noninteractive
+            if ! apt-get update -o APT::Update::Error-Mode=any; then
+              sed -i -E "s|https?://(archive.ubuntu.com/ubuntu|security.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports)|http://old-releases.ubuntu.com/ubuntu|g" /etc/apt/sources.list
+              apt-get update -o APT::Update::Error-Mode=any
+            fi
+            packages=(dist/kylinnote_*_arm64.deb)
+            test "${#packages[@]}" -eq 1
+            apt-get install -y --no-install-recommends "./${packages[0]}"
+            test -x /usr/bin/kylinnote
+            test "$(dpkg-query -W -f="\${Status}" kylinnote)" = "install ok installed"
+          '
 
-      - name: 整理产物
+      - name: Prepare clean runtime image with base graphics dependencies only
         run: |
-          mkdir -p dist
-          cp kylinnote_*_arm64*.deb dist/
-          ls -lh dist/
+          bundles=(dist/kylinnote_*_arm64_bundle.deb)
+          test "${#bundles[@]}" -eq 1
+          docker run --name kylinnote-runtime-base --platform linux/arm64 \
+            -v "$PWD":/src:ro -w /src ubuntu:20.04 \
+            bash packaging/test-bundle.sh --prepare "${bundles[0]}"
+          docker commit kylinnote-runtime-base kylinnote-runtime:test
+          docker rm kylinnote-runtime-base
 
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+      - name: Offline dpkg install, every ELF dependency and real X11 app smoke
+        run: |
+          bundles=(dist/kylinnote_*_arm64_bundle.deb)
+          docker run --rm --platform linux/arm64 --network none \
+            -v "$PWD":/src:ro -w /src kylinnote-runtime:test \
+            bash packaging/test-bundle.sh "${bundles[0]}"
+
+      - name: Upload ARM64 packages
+        uses: actions/upload-artifact@v7.0.2
         with:
-          name: kylinnote-deb-arm64
+          name: kylinnote-linux-arm64
           path: dist/*.deb
           if-no-files-found: error
+          retention-days: 14
 
-      - name: 发布 Release（打 v* 标签时）
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  windows:
+    name: Windows x64 / Qt 5.15.2 / MinGW 8.1
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
         with:
-          files: dist/*.deb
-          generate_release_notes: true
+          persist-credentials: false
+
+      - name: Install pinned local build tools and Qt
+        run: |
+          python -m venv .tools/venv
+          New-Item -ItemType Directory -Force .tools/tmp,.tools/appdata | Out-Null
+          $env:TEMP = "$PWD/.tools/tmp"
+          $env:TMP = $env:TEMP
+          $env:APPDATA = "$PWD/.tools/appdata"
+          & ./.tools/venv/Scripts/python.exe -m pip install --disable-pip-version-check aqtinstall==3.3.0 cmake==3.31.10 ninja==1.13.0
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./.tools/venv/Scripts/python.exe -m aqt install-qt windows desktop 5.15.2 win64_mingw81 -O .tools/Qt --archives qtbase qtsvg qttools
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./.tools/venv/Scripts/python.exe -m aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw810 -O .tools/Qt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build, CTest, deploy, smoke, zip and current-user offline installer
+        run: |
+          $iscc = 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) { throw 'The runner image no longer contains Inno Setup 6' }
+          ./packaging/build-windows.ps1 `
+            -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
+            -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
+            -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
+            -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
+            -InnoSetupCompiler $iscc
+
+      - name: Upload portable and installer packages
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kylinnote-windows-x64
+          path: |
+            dist/*.zip
+            dist/*-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish existing version tag after both platforms pass
+    needs: [linux-arm64, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: kylinnote-*
+          merge-multiple: true
+          path: dist
+      - name: Release artifacts for this existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes

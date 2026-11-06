@@ -1,228 +1,226 @@
 #!/usr/bin/env bash
-# KylinNote deb 打包脚本（银河麒麟 V10 SP1 / arm64）
-#
-# 用法：
-#   ./packaging/build-deb.sh                      # 常规包：依赖目标机已装的 Qt 运行时
-#   ./packaging/build-deb.sh --bundle-qt          # 自包含包：Qt 库与插件随包携带，内网离线可用
-#   ./packaging/build-deb.sh --arch arm64 --version 1.0.0
-#   ./packaging/build-deb.sh --qt-prefix /opt/Qt5.12.8/gcc_64   # 指定非系统 Qt
-#   ./packaging/build-deb.sh --shlibdeps          # 用 dpkg-shlibdeps 自动推算库依赖
-#   ./packaging/build-deb.sh --no-strip           # 保留调试符号
-#
-# 产物：kylinnote_<version>_<arch>[_bundle].deb
-
+# Native Debian packaging. --arch verifies the host AND ELF architecture; it is
+# not a cross-compilation switch. System and bundle builds use separate caches.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-ARCH="$(dpkg --print-architecture 2>/dev/null || echo arm64)"
+ARCH="$(dpkg --print-architecture)"
 VERSION=""
 QT_PREFIX=""
-USE_SHLIBDEPS="no"
-BUNDLE_QT="no"
-DO_STRIP="yes"
+QMAKE=""
+BUILD_DIR=""
 INSTALL_PREFIX="/usr"
-BUILD_DIR="$PROJECT_DIR/build-deb"
+BUNDLE_QT=OFF
+DO_STRIP=yes
+USE_SHLIBDEPS=no
+JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
 
-while [[ $# -gt 0 ]]; do
+usage() {
+    printf '%s\n' \
+        'Usage: bash packaging/build-deb.sh [--bundle-qt] [--arch arm64|amd64]' \
+        '       [--version VERSION] [--qt-prefix DIR] [--qmake FILE]' \
+        '       [--build-dir DIR] [--prefix /usr] [--jobs N] [--no-strip] [--shlibdeps]'
+}
+die() { echo "ERROR: $*" >&2; exit 1; }
+while (($#)); do
     case "$1" in
-        --arch)        ARCH="$2"; shift 2 ;;
-        --version)     VERSION="$2"; shift 2 ;;
-        --qt-prefix)   QT_PREFIX="$2"; shift 2 ;;
-        --build-dir)   BUILD_DIR="$2"; shift 2 ;;
-        --prefix)      INSTALL_PREFIX="$2"; shift 2 ;;
-        --shlibdeps)   USE_SHLIBDEPS="yes"; shift ;;
-        --bundle-qt)   BUNDLE_QT="yes"; shift ;;
-        --no-strip)    DO_STRIP="no"; shift ;;
-        -h|--help)     sed -n '2,13p' "$0"; exit 0 ;;
-        *) echo "未知参数: $1" >&2; exit 2 ;;
+        --arch|--version|--qt-prefix|--qmake|--build-dir|--prefix|--jobs)
+            (($# >= 2)) || die "$1 requires a value"
+            case "$1" in
+                --arch) ARCH="$2";; --version) VERSION="$2";;
+                --qt-prefix) QT_PREFIX="$2";; --qmake) QMAKE="$2";;
+                --build-dir) BUILD_DIR="$2";; --prefix) INSTALL_PREFIX="$2";;
+                --jobs) JOBS="$2";;
+            esac
+            shift 2;;
+        --bundle-qt) BUNDLE_QT=ON; shift;;
+        --no-strip) DO_STRIP=no; shift;;
+        --shlibdeps) USE_SHLIBDEPS=yes; shift;;
+        -h|--help) usage; exit 0;;
+        *) die "Unknown argument: $1";;
     esac
 done
-
+for tool in cmake ctest dpkg-deb readelf ldd file; do
+    command -v "$tool" >/dev/null || die "Missing tool: $tool"
+done
+[[ "$ARCH" == "$(dpkg --print-architecture)" ]] || die "--arch=$ARCH does not match this native build host"
+case "$ARCH:$(uname -m)" in
+    arm64:aarch64) ELF_MACHINE='AArch64';;
+    amd64:x86_64) ELF_MACHINE='Advanced Micro Devices X86-64';;
+    *) die "Unsupported native architecture: $ARCH / $(uname -m)";;
+esac
+[[ "$INSTALL_PREFIX" == /* && "$INSTALL_PREFIX" != *..* ]] || die 'Prefix must be an absolute path without ..'
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die '--jobs must be a positive integer'
 if [[ -z "$VERSION" ]]; then
-    VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9A-Za-z.+-]*\).*/\1/p' \
-               "$PROJECT_DIR/CMakeLists.txt" | head -n1)"
+    VERSION="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9][0-9A-Za-z.+~-]*).*/\1/p' "$PROJECT_DIR/CMakeLists.txt" | head -n1)"
 fi
-if [[ -z "$VERSION" ]]; then
-    echo "无法从 CMakeLists.txt 解析版本号，请用 --version 指定" >&2
-    exit 2
-fi
+[[ "$VERSION" =~ ^[0-9][0-9A-Za-z.+~-]*$ ]] || die 'Invalid version (or no VERSION in CMakeLists.txt)'
+MODE=system
+[[ "$BUNDLE_QT" == ON ]] && MODE=bundle
+BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build-deb-$ARCH-$MODE}"
+mkdir -p "$BUILD_DIR"
+BUILD_DIR="$(cd "$BUILD_DIR" && pwd)"
+[[ "$BUILD_DIR" != / && "$BUILD_DIR" != "$PROJECT_DIR" ]] || die 'Use a separate build directory'
 
-command -v cmake >/dev/null || { echo "缺少 cmake（sudo apt install cmake）" >&2; exit 1; }
-command -v dpkg-deb >/dev/null || { echo "缺少 dpkg-deb" >&2; exit 1; }
-
+# Explicit OFF is essential: reusing an old bundle cache must not turn a normal
+# package into a half-bundle. The default cache paths are also mode-specific.
 CMAKE_ARGS=(-S "$PROJECT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
-            -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX")
-[[ -n "$QT_PREFIX" ]] && CMAKE_ARGS+=(-DCMAKE_PREFIX_PATH="$QT_PREFIX")
-[[ "$BUNDLE_QT" == "yes" ]] && CMAKE_ARGS+=(-DKYLINNOTE_BUNDLE_QT=ON)
-
-echo "==> 配置 (arch=$ARCH version=$VERSION prefix=$INSTALL_PREFIX bundle-qt=$BUNDLE_QT)"
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DKYLINNOTE_BUNDLE_QT="$BUNDLE_QT"
+    -DBUILD_TESTING=ON -DKYLINNOTE_REQUIRE_X11=ON)
+[[ -z "$QT_PREFIX" ]] || CMAKE_ARGS+=(-DCMAKE_PREFIX_PATH="$QT_PREFIX")
+echo "==> Configure $VERSION / $ARCH / $MODE"
 cmake "${CMAKE_ARGS[@]}"
-
-echo "==> 编译"
-cmake --build "$BUILD_DIR" --parallel "$(nproc 2>/dev/null || echo 2)"
+cmake --build "$BUILD_DIR" --parallel "$JOBS"
+cmake -E chdir "$BUILD_DIR" ctest --output-on-failure
 
 PKG_NAME="kylinnote_${VERSION}_${ARCH}"
-[[ "$BUNDLE_QT" == "yes" ]] && PKG_NAME="${PKG_NAME}_bundle"
-
+[[ "$BUNDLE_QT" == OFF ]] || PKG_NAME="${PKG_NAME}_bundle"
 STAGING="$BUILD_DIR/staging/$PKG_NAME"
-rm -rf "$STAGING"
-mkdir -p "$STAGING"
-
-echo "==> 安装到打包暂存目录"
+# Only remove the staging child of this verified build directory.
+[[ "$STAGING" == "$BUILD_DIR/staging/"* ]] || die 'Unsafe staging path'
+rm -rf -- "$STAGING"
+mkdir -p "$STAGING/DEBIAN"
 DESTDIR="$STAGING" cmake --install "$BUILD_DIR"
 
-echo "==> 写入 DEBIAN 控制文件"
-mkdir -p "$STAGING/DEBIAN"
 sed "s/^Version:.*/Version: $VERSION/; s/^Architecture:.*/Architecture: $ARCH/" \
-    "$PROJECT_DIR/packaging/deb/DEBIAN/control" > "$STAGING/DEBIAN/control"
+    "$SCRIPT_DIR/deb/DEBIAN/control" > "$STAGING/DEBIAN/control"
+install -m 0755 "$SCRIPT_DIR/deb/DEBIAN/postinst" "$STAGING/DEBIAN/postinst"
+install -m 0755 "$SCRIPT_DIR/deb/DEBIAN/prerm" "$STAGING/DEBIAN/prerm"
 
-install -m 0755 "$PROJECT_DIR/packaging/deb/DEBIAN/postinst" "$STAGING/DEBIAN/postinst"
-install -m 0755 "$PROJECT_DIR/packaging/deb/DEBIAN/prerm"    "$STAGING/DEBIAN/prerm"
+verify_architecture() {
+    local elf="$1" machine
+    machine="$(LC_ALL=C readelf -h "$elf" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')"
+    [[ "$machine" == "$ELF_MACHINE" ]] || die "ELF architecture mismatch: $elf ($machine, wanted $ELF_MACHINE)"
+}
+# This is a SONAME allowlist, not a pathname regular expression. Everything
+# else MUST be physically present in the bundle, even if the build host has it.
+is_system_library() {
+    case "$1" in
+        ld-linux-*.so.*|libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libutil.so.*|libstdc++.so.*|libgcc_s.so.*) return 0;;
+        libX11.so.*|libX11-xcb.so.*|libXext.so.*|libXrender.so.*|libXi.so.*|libSM.so.*|libICE.so.*|libXau.so.*|libXdmcp.so.*|libxcb.so.*|libxcb-*.so.*|libxkbcommon.so.*|libxkbcommon-x11.so.*) return 0;;
+        libGL.so.*|libGLX.so.*|libGLdispatch.so.*|libEGL.so.*|libfontconfig.so.*|libfreetype.so.*|libglib-2.0.so.*|libgobject-2.0.so.*|libgthread-2.0.so.*|libz.so.*|libdbus-1.so.*) return 0;;
+        *) return 1;;
+    esac
+}
+needed_libraries() {
+    LC_ALL=C readelf -d "$1" | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p'
+}
 
-# ---------------------------------------------------------------------------
-# 自包含模式：把 Qt 运行库与插件拷进 /usr/lib/kylinnote
-# ---------------------------------------------------------------------------
-if [[ "$BUNDLE_QT" == "yes" ]]; then
-    echo "==> 收集随包携带的 Qt 运行库与插件"
-
+if [[ "$BUNDLE_QT" == ON ]]; then
     LIBDIR="$STAGING$INSTALL_PREFIX/lib/kylinnote"
-    mkdir -p "$LIBDIR/plugins"
     BIN="$LIBDIR/kylinnote"
-
-    [[ -x "$BIN" ]] || { echo "未找到 $BIN，自包含模式需要 KYLINNOTE_BUNDLE_QT=ON 的构建产物" >&2; exit 1; }
-
-    # 以下必须由目标系统提供：C/C++ 运行时、X11 与图形栈、字体与基础库。
-    # 其余（libQt5*、libicu*、libpcre2-16、libdouble-conversion、libpng 等）随包携带。
-    EXCLUDE_RE='ld-linux|linux-vdso|libc\.so|libm\.so|libpthread\.so|libdl\.so|librt\.so|libstdc\+\+|libgcc_s|'
-    EXCLUDE_RE+='libX11\.so|libX11-xcb|libXext\.so|libXrender\.so|libXi\.so|libSM\.so|libICE\.so|libXtst|libXcursor|libXrandr|libXfixes|libXdamage|libXcomposite|'
-    EXCLUDE_RE+='libxcb\.so|libxcb-[a-z]|libxkbcommon|libxshmfence|'
-    EXCLUDE_RE+='libGL\.so|libGLX|libGLdispatch|libEGL\.so|libgbm|libglapi|libwayland-|libdrm|'
-    EXCLUDE_RE+='libXau|libXdmcp|libbsd|libffi|libresolv|libgpg-error|'
-    EXCLUDE_RE+='libfontconfig|libfreetype|libharfbuzz|libgraphite|'
-    EXCLUDE_RE+='libglib-2\.0|libgobject-2\.0|libgthread-2\.0|libgio-2\.0|libgmodule-2\.0|'
-    EXCLUDE_RE+='libz\.so|libdbus-1|libexpat|libselinux|libmount|libblkid|libuuid|'
-    EXCLUDE_RE+='libpcre\.so|libpcre2-8|libsystemd|libcap|libgcrypt|liblz4|liblzma|libbz2|libacl|libattr'
-
-    collect_libs() {
-        ldd "$1" 2>/dev/null | awk '{print $3}' | grep -E '^/' | sort -u \
-            | grep -Ev "$EXCLUDE_RE" || true
-    }
-
-    copy_libs() {
-        local lib base
-        while read -r lib; do
-            [[ -n "$lib" && -f "$lib" ]] || continue
-            base="$(basename "$lib")"
-            [[ -e "$LIBDIR/$base" ]] && continue
-            cp -L "$lib" "$LIBDIR/$base"
-        done
-    }
-
-    copy_libs <<< "$(collect_libs "$BIN")"
-
-    # Qt 插件：平台(xcb)、SQLite 驱动、图片格式、输入法
-    PLUGIN_SRC=""
-    if command -v qmake >/dev/null 2>&1; then
-        PLUGIN_SRC="$(qmake -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
+    [[ -x "$BIN" ]] || die "Bundle executable missing: $BIN"
+    verify_architecture "$BIN"
+    if [[ -z "$QMAKE" ]]; then
+        if [[ -n "$QT_PREFIX" ]]; then QMAKE="$QT_PREFIX/bin/qmake"; else QMAKE="$(command -v qmake || true)"; fi
     fi
-    if [[ -z "$PLUGIN_SRC" || ! -d "$PLUGIN_SRC" ]]; then
-        for cand in "/usr/lib/$ARCH-linux-gnu/qt5/plugins" \
-                    "/usr/lib/$(uname -m)-linux-gnu/qt5/plugins" \
-                    /usr/lib/qt5/plugins /usr/lib64/qt5/plugins; do
-            [[ -d "$cand" ]] && { PLUGIN_SRC="$cand"; break; }
-        done
-    fi
-
-    if [[ -n "$PLUGIN_SRC" && -d "$PLUGIN_SRC" ]]; then
-        echo "    插件来源: $PLUGIN_SRC"
-        for sub in platforms platforminputcontexts sqldrivers imageformats iconengines xcbglintegrations; do
-            [[ -d "$PLUGIN_SRC/$sub" ]] || continue
-            mkdir -p "$LIBDIR/plugins/$sub"
-            find "$PLUGIN_SRC/$sub" -maxdepth 1 -name '*.so' -exec cp -L {} "$LIBDIR/plugins/$sub/" \;
-        done
-    else
-        echo "    警告: 未找到 Qt 插件目录，缺少平台插件将导致程序无法启动" >&2
-    fi
-
-    # 插件自身还会引入新的 Qt 库（典型：plugins/platforms/libqxcb.so -> libQt5XcbQpa.so.5）。
-    # 注意必须全目录递归扫描：平台插件位于 plugins/platforms 下，相对 LIBDIR 是第三层，
-    # 用 maxdepth 2 会整层漏掉，导致私有 Qt 库缺失。
-    for _round in 1 2 3; do
-        before="$(find "$LIBDIR" -name '*.so*' | wc -l)"
-        while read -r so; do
-            copy_libs <<< "$(collect_libs "$so")"
-        done < <(find "$LIBDIR" -type f -name '*.so*')
-        after="$(find "$LIBDIR" -name '*.so*' | wc -l)"
-        [[ "$after" -eq "$before" ]] && break
+    [[ -x "$QMAKE" ]] || die 'qmake from the selected Qt installation is required for plugin discovery'
+    PLUGIN_SRC="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+    [[ -d "$PLUGIN_SRC" ]] || die "Qt plugin directory is missing: $PLUGIN_SRC"
+    echo "==> Qt plugins: $PLUGIN_SRC ($("$QMAKE" -query QT_VERSION))"
+    for plugin in platforms/libqxcb.so sqldrivers/libqsqlite.so imageformats/libqsvg.so iconengines/libqsvgicon.so; do
+        [[ -f "$PLUGIN_SRC/$plugin" ]] || die "Required Qt plugin missing: $plugin (install libqt5sql5-sqlite and libqt5svg5)"
+        install -D -m 0644 "$PLUGIN_SRC/$plugin" "$LIBDIR/plugins/$plugin"
     done
+    # GLX integration is loaded dynamically rather than through DT_NEEDED.
+    if [[ -f "$PLUGIN_SRC/xcbglintegrations/libqxcb-glx-integration.so" ]]; then
+        install -D -m 0644 "$PLUGIN_SRC/xcbglintegrations/libqxcb-glx-integration.so" \
+            "$LIBDIR/plugins/xcbglintegrations/libqxcb-glx-integration.so"
+    fi
 
-    # 交验依赖闭合：包内每个 ELF 的直接依赖，要么已随包携带，要么属于明确交给系统的白名单。
-    # 缺少 Qt 私有库（如 libQt5XcbQpa）时，在没装 Qt 的目标机上会加载不了平台插件；
-    # 若目标机残留了别的版本 Qt，动态链接器会回退到系统库，包内 Qt 与系统私有库
-    # 版本不一致会引起 ABI 混合——表现就是窗口能映射但完全不绘制、文字不显示。
-    echo "==> 交验随包依赖闭合"
-    closure_bad=0
-    while read -r elf; do
-        while read -r need; do
-            [[ -z "$need" ]] && continue
-            if [[ ! -e "$LIBDIR/$need" ]] && ! grep -Eq "$EXCLUDE_RE" <<< "$need"; then
-                echo "    错误: ${need} 既未随包携带、也不在系统库白名单（被 ${elf} 需要）" >&2
-                closure_bad=1
+    collect_dependencies() {
+        local elf="$1" output path soname
+        output="$(LC_ALL=C LD_LIBRARY_PATH="$LIBDIR" ldd "$elf")" || die "ldd failed: $elf"
+        [[ "$output" != *'not found'* ]] || die "Unresolved dependency on build host: $elf\n$output"
+        while IFS= read -r path; do
+            [[ -n "$path" ]] || continue
+            soname="$(basename "$path")"
+            if ! is_system_library "$soname" && [[ ! -e "$LIBDIR/$soname" ]]; then
+                cp -L -- "$path" "$LIBDIR/$soname"
             fi
-        done < <(LD_LIBRARY_PATH="$LIBDIR" ldd "$elf" 2>/dev/null | awk '/not found/{print $1}')
-    done < <(find "$LIBDIR" -type f -name '*.so*'; echo "$BIN")
-    if [[ "$closure_bad" -ne 0 ]]; then
-        echo "依赖未闭合，请修正后重打包" >&2
-        exit 1
+        done < <(printf '%s\n' "$output" | awk '/=> \// {print $3}')
+    }
+    echo '==> Collect Qt and non-system dependencies to a fixed point'
+    while :; do
+        before="$(find "$LIBDIR" -type f | wc -l)"
+        while IFS= read -r -d '' elf; do
+            readelf -h "$elf" >/dev/null 2>&1 || continue
+            verify_architecture "$elf"
+            collect_dependencies "$elf"
+        done < <(find "$LIBDIR" -type f -print0)
+        after="$(find "$LIBDIR" -type f | wc -l)"
+        [[ "$before" != "$after" ]] || break
+    done
+    for library in Core Gui Widgets Sql Network Svg XcbQpa; do
+        [[ -f "$LIBDIR/libQt5${library}.so.5" ]] || die "Required bundled Qt library missing: Qt5$library"
+    done
+    echo '==> Verify every DT_NEEDED without relying on host Qt resolution'
+    while IFS= read -r -d '' elf; do
+        readelf -h "$elf" >/dev/null 2>&1 || continue
+        verify_architecture "$elf"
+        while IFS= read -r need; do
+            [[ -f "$LIBDIR/$need" ]] || is_system_library "$need" \
+                || die "Dependency is neither bundled nor an allowed base library: $need (needed by $elf)"
+        done < <(needed_libraries "$elf")
+        if [[ "$DO_STRIP" == yes ]]; then strip --strip-unneeded "$elf"; fi
+    done < <(find "$LIBDIR" -type f -print0)
+
+    # These are preinstalled/base graphic dependencies on the target, never Qt.
+    # The clean runtime test installs this explicit list BEFORE going offline.
+    DEPENDS='libc6 (>= 2.31), libstdc++6, libgcc-s1, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-glx0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-render0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1, libfontconfig1, libfreetype6, libglib2.0-0, libdbus-1-3, zlib1g'
+else
+    BIN="$STAGING$INSTALL_PREFIX/bin/kylinnote"
+    verify_architecture "$BIN"
+    DEPENDS='libc6 (>= 2.31), libstdc++6, libgcc-s1, libqt5core5a (>= 5.12), libqt5gui5 (>= 5.12), libqt5widgets5 (>= 5.12), libqt5sql5 (>= 5.12), libqt5network5 (>= 5.12), libqt5dbus5 (>= 5.12), libqt5sql5-sqlite, libqt5svg5, libx11-6'
+    if [[ "$USE_SHLIBDEPS" == yes ]]; then
+        command -v dpkg-shlibdeps >/dev/null || die 'Install dpkg-dev for --shlibdeps'
+        mkdir -p "$BUILD_DIR/debian"
+        printf 'Source: kylinnote\nSection: utils\nPriority: optional\nMaintainer: KylinNote <kylinnote@localhost>\n\nPackage: kylinnote\nArchitecture: any\nDescription: Desktop notes and tasks\n' > "$BUILD_DIR/debian/control"
+        DEPS="$(cd "$BUILD_DIR" && dpkg-shlibdeps -O -e"$BIN")"
+        DEPENDS="${DEPS#shlibs:Depends=}, libqt5sql5-sqlite, libqt5svg5"
     fi
-    echo "    依赖闭合 OK（包内不依赖任何系统 Qt）"
-
-    if [[ "$DO_STRIP" == "yes" ]] && command -v strip >/dev/null 2>&1; then
-        echo "==> 精简符号"
-        strip --strip-unneeded "$BIN" 2>/dev/null || true
-        find "$LIBDIR" -type f -name '*.so*' -exec strip --strip-unneeded {} \; 2>/dev/null || true
-    fi
-
-    echo "    随包库文件: $(find "$LIBDIR" -name '*.so*' | wc -l) 个，目录体积 $(du -sh "$LIBDIR" | cut -f1)"
-
-    # 自包含包不依赖系统 Qt，只保留基础系统库
-    BUNDLE_DEPENDS="libc6, libstdc++6, libx11-6, libxext6, libxrender1, libxi6, libxcb1, libxkbcommon0, libfontconfig1, libfreetype6, libglib2.0-0, zlib1g"
-    sed -i "s/^Depends:.*/Depends: $BUNDLE_DEPENDS/" "$STAGING/DEBIAN/control"
-
-elif [[ "$USE_SHLIBDEPS" == "yes" ]] && command -v dpkg-shlibdeps >/dev/null; then
-    echo "==> 用 dpkg-shlibdeps 推算库依赖"
-    mkdir -p "$BUILD_DIR/debian"
-    : > "$BUILD_DIR/debian/control"
-    dpkg-shlibdeps -O -T"$BUILD_DIR/debian/substvars" \
-        -dDepends "$STAGING$INSTALL_PREFIX/bin/kylinnote" > "$BUILD_DIR/depends.txt" || true
-    DEPS="$(sed 's/^Depends=//; s/^shlibs:Depends=//' "$BUILD_DIR/depends.txt" | sed 's/[ \t]*$//')"
-    if [[ -n "$DEPS" ]]; then
-        sed -i "s/^Depends:.*/Depends: $DEPS, libqt5sql5-sqlite/" "$STAGING/DEBIAN/control"
-    fi
+    if [[ "$DO_STRIP" == yes ]]; then strip --strip-unneeded "$BIN"; fi
 fi
-
-echo "==> 生成 deb"
-# dpkg-deb 压缩时会用 TMPDIR 做临时空间，某些机器 /tmp 很小（如 10M 的 tmpfs），
-# 这里指到构建目录下，避免 "设备上没有空间"
-TMPROOT="$BUILD_DIR/tmp"
-mkdir -p "$TMPROOT"
-export TMPDIR="$TMPROOT"
-
-OUTPUT="$PROJECT_DIR/${PKG_NAME}.deb"
-rm -f "$OUTPUT"
+# Record the ACTUAL ABI requirements. Building on glibc 2.31 does not imply
+# every object needs 2.31 (and does not prove compatibility with every Kylin).
+ABI_LINES="$BUILD_DIR/abi-requirements.txt"
+GLIBC_VERSIONS="$BUILD_DIR/glibc-versions.txt"
+GLIBCXX_VERSIONS="$BUILD_DIR/glibcxx-versions.txt"
+: > "$ABI_LINES"
+: > "$GLIBC_VERSIONS"
+: > "$GLIBCXX_VERSIONS"
+while IFS= read -r -d '' elf; do
+    readelf -h "$elf" >/dev/null 2>&1 || continue
+    verify_architecture "$elf"
+    versions="$(LC_ALL=C readelf --version-info "$elf")"
+    glibc="$(printf '%s\n' "$versions" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sed 's/^GLIBC_//' | sort -Vu | tail -n1 || true)"
+    glibcxx="$(printf '%s\n' "$versions" | grep -oE 'GLIBCXX_[0-9]+(\.[0-9]+)*' | sed 's/^GLIBCXX_//' | sort -Vu | tail -n1 || true)"
+    [[ -z "$glibc" ]] || printf '%s\n' "$glibc" >> "$GLIBC_VERSIONS"
+    [[ -z "$glibcxx" ]] || printf '%s\n' "$glibcxx" >> "$GLIBCXX_VERSIONS"
+    printf '%s: GLIBC=%s GLIBCXX=%s\n' "${elf#"$STAGING"}" "${glibc:-none}" "${glibcxx:-none}" >> "$ABI_LINES"
+done < <(find "$STAGING$INSTALL_PREFIX" -type f -print0)
+MAX_GLIBC="$(sort -Vu "$GLIBC_VERSIONS" | tail -n1)"
+MAX_GLIBCXX="$(sort -Vu "$GLIBCXX_VERSIONS" | tail -n1)"
+[[ -n "$MAX_GLIBC" ]] || die 'Could not determine the executable GLIBC requirement'
+DEPENDS="$(printf '%s\n' "$DEPENDS" | sed -E "s/libc6( \\([^)]*\\))?/libc6 (>= $MAX_GLIBC)/")"
+mkdir -p "$STAGING$INSTALL_PREFIX/share/doc/kylinnote"
+{
+    printf 'KylinNote %s / %s / %s\n' "$VERSION" "$ARCH" "$MODE"
+    printf 'Build environment: %s; Qt %s\n' "$(getconf GNU_LIBC_VERSION)" "$("${QMAKE:-qmake}" -query QT_VERSION)"
+    printf 'Maximum required symbol versions: GLIBC_%s; GLIBCXX_%s\n' "$MAX_GLIBC" "${MAX_GLIBCXX:-none}"
+    printf 'Reference build: Ubuntu 20.04 / Qt 5.12. This is not a guarantee for all Kylin systems.\n'
+    printf 'System dependencies: %s\n\n' "$DEPENDS"
+    cat "$ABI_LINES"
+} > "$STAGING$INSTALL_PREFIX/share/doc/kylinnote/compatibility.txt"
+sed -i "s/^Depends:.*/Depends: $DEPENDS/" "$STAGING/DEBIAN/control"
+INSTALLED_SIZE="$(du -sk "$STAGING$INSTALL_PREFIX" | cut -f1)"
+printf 'Installed-Size: %s\n' "$INSTALLED_SIZE" >> "$STAGING/DEBIAN/control"
+# Small /tmp filesystems are common on deployment machines.
+mkdir -p "$BUILD_DIR/tmp"
+export TMPDIR="$BUILD_DIR/tmp"
+OUTPUT="$PROJECT_DIR/$PKG_NAME.deb"
 dpkg-deb --build --root-owner-group "$STAGING" "$OUTPUT"
-
-echo "==> 完成: $OUTPUT ($(du -h "$OUTPUT" | cut -f1))"
-dpkg-deb --info "$OUTPUT" | sed -n '1,14p'
-
-if [[ "$BUNDLE_QT" == "yes" ]]; then
-    cat <<'TIP'
-
-自包含包说明：
-  - Qt 运行库与插件位于 /usr/lib/kylinnote，/usr/bin/kylinnote 是负责指路的启动脚本
-  - 目标机器无需安装任何 Qt 包，dpkg -i 即可运行
-  - 请在同构机器上使用（同为 arm64 + 银河麒麟 V10 SP1 + X11 会话）
-TIP
-fi
+[[ "$(dpkg-deb -f "$OUTPUT" Architecture)" == "$ARCH" ]] || die 'Package architecture mismatch'
+echo "==> Built $OUTPUT"
+dpkg-deb --info "$OUTPUT"

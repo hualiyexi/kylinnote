@@ -11,6 +11,15 @@
 *.txt  text eol=lf
 *.md   text eol=lf
 *.svg  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.ps1  text eol=crlf
+*.iss  text eol=crlf
+*.c    text eol=lf
+packaging/deb/DEBIAN/* text eol=lf
+
+# Windows scripts are UTF-8 and handled by PowerShell 7 (pwsh).
+# Inno Setup script stays UTF-8 and is compiled by Unicode ISCC.
 
 # 二进制
 *.deb binary
