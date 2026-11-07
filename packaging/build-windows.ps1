@@ -132,6 +132,59 @@ try {
                 $D3d = Join-Path $QtRoot 'bin/d3dcompiler_47.dll'
                 Write-Host ("=== d3dcompiler_47.dll 是否随 Qt 提供: {0} ===" -f (Test-Path -LiteralPath $D3d))
             }
+            # 二分：三个最小程序分别验证 工具链 / QtCore / QtGui 初始化。
+            # gui.cpp 在构造 QGuiApplication 之前就 fflush，卡住时也能确定位置。
+            $ProbeDir = Join-Path $BuildDir 'bisect'
+            New-Item -ItemType Directory -Force -Path $ProbeDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $ProbeDir 'plain.c') -Encoding ASCII -Value @'
+#include <stdio.h>
+int main(void) { printf("plain-ok\n"); return 0; }
+'@
+            Set-Content -LiteralPath (Join-Path $ProbeDir 'core.cpp') -Encoding ASCII -Value @'
+#include <QCoreApplication>
+#include <cstdio>
+int main(int argc, char **argv) {
+    std::printf("core-before-app\n"); std::fflush(stdout);
+    QCoreApplication app(argc, argv);
+    std::printf("core-ok\n");
+    return 0;
+}
+'@
+            Set-Content -LiteralPath (Join-Path $ProbeDir 'gui.cpp') -Encoding ASCII -Value @'
+#include <QGuiApplication>
+#include <cstdio>
+int main(int argc, char **argv) {
+    std::printf("gui-before-app\n"); std::fflush(stdout);
+    QGuiApplication app(argc, argv);
+    std::printf("gui-ok\n");
+    return 0;
+}
+'@
+            $Gcc = Join-Path $CompilerRoot 'bin/gcc.exe'
+            $Gxx = Join-Path $CompilerRoot 'bin/g++.exe'
+            $QtInclude = Join-Path $QtRoot 'include'
+            $QtLib = Join-Path $QtRoot 'lib'
+            & $Gcc (Join-Path $ProbeDir 'plain.c') -o (Join-Path $ProbeDir 'plain.exe')
+            & $Gxx (Join-Path $ProbeDir 'core.cpp') -o (Join-Path $ProbeDir 'core.exe') `
+                "-I$QtInclude" "-I$QtInclude/QtCore" "-L$QtLib" -lQt5Core
+            & $Gxx (Join-Path $ProbeDir 'gui.cpp') -o (Join-Path $ProbeDir 'gui.exe') `
+                "-I$QtInclude" "-I$QtInclude/QtCore" "-I$QtInclude/QtGui" "-L$QtLib" -lQt5Gui -lQt5Core
+            foreach ($BisectName in @('plain', 'core', 'gui')) {
+                $BisectExe = Join-Path $ProbeDir "$BisectName.exe"
+                if (-not (Test-Path -LiteralPath $BisectExe)) {
+                    Write-Host ("=== bisect[{0}] 未生成 ===" -f $BisectName)
+                    continue
+                }
+                $BisectProc = Start-Process -FilePath $BisectExe -NoNewWindow -PassThru
+                if (-not $BisectProc.WaitForExit(10000)) {
+                    $BisectProc.Refresh()
+                    $Cpu = $BisectProc.TotalProcessorTime.TotalSeconds
+                    $BisectProc.Kill()
+                    Write-Host ("=== bisect[{0}] 超时，CPU {1:N2} 秒 ===" -f $BisectName, $Cpu)
+                } else {
+                    Write-Host ("=== bisect[{0}] 退出码 {1} ===" -f $BisectName, $BisectProc.ExitCode)
+                }
+            }
             $Probes = @(
                 @{ Name = 'default'; Platform = $null },
                 @{ Name = 'windows'; Platform = 'windows' }
