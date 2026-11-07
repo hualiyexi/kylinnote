@@ -284,6 +284,9 @@ int main(int argc, char **argv) {
     # Force release mode (never --debug), then assert the deployed release DLLs
     # are byte-identical to the configured Qt installation by exact SHA256.
     # --no-patchqt keeps Qt5Core.dll unmodified so that comparison is meaningful.
+    # bin/qt.conf 让 windeployqt 正确解析 Qt 前缀（见测试段的说明）。
+    Set-Content -LiteralPath (Join-Path $QtRoot 'bin/qt.conf') -Encoding ASCII `
+        -Value "[Paths]`nPrefix = ..`n"
     Invoke-Checked $WinDeployQt @('--compiler-runtime', '--force', '--no-patchqt',
         '--verbose', '2', '--no-translations', '--svg', '--network',
         '--dir', $StageDir, $App)
