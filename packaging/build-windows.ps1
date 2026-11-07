@@ -93,6 +93,13 @@ try {
         '-DKYLINNOTE_WITH_DBUS=OFF', '-DBUILD_TESTING=ON')
     Invoke-Checked $CMake @('--build', $BuildDir, '--config', $Configuration, '--parallel', "$Parallel")
     if (-not $SkipTests) {
+        # Qt 5.12.8 的官方 Windows 构建使用相对前缀：QLibraryInfo 会把插件目录
+        # 解析成"可执行文件所在目录 + 相对前缀"，而测试程序在 build/bin 下，
+        # 不在 Qt 目录里，于是找不到任何平台插件。Qt 找不到插件时会弹出
+        # "no Qt platform plugin could be initialized" 对话框并一直等待，在
+        # CI 里表现为无输出的超时。显式指定插件目录即可。
+        $env:QT_PLUGIN_PATH = Join-Path $QtRoot 'plugins'
+        $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $QtRoot 'plugins/platforms'
         # CI 里没人能点崩溃对话框：关掉 WER 的 UI，让崩溃以退出码结束而不是挂起。
         foreach ($WerRoot in @('HKCU:\Software\Microsoft\Windows\Windows Error Reporting',
                                'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting')) {
@@ -262,6 +269,8 @@ int main(int argc, char **argv) {
             throw
         } finally {
             Remove-Item Env:\QT_DEBUG_PLUGINS -ErrorAction SilentlyContinue
+            Remove-Item Env:\QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\QT_QPA_PLATFORM_PLUGIN_PATH -ErrorAction SilentlyContinue
         }
     }
     Invoke-Checked $CMake @('--install', $BuildDir, '--config', $Configuration, '--prefix', $StageDir)
