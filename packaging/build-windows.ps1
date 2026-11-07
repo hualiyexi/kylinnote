@@ -164,12 +164,37 @@ int main(int argc, char **argv) {
             $Gxx = Join-Path $CompilerRoot 'bin/g++.exe'
             $QtInclude = Join-Path $QtRoot 'include'
             $QtLib = Join-Path $QtRoot 'lib'
+            # 用 QLibrary 手动加载平台插件：失败时 errorString 会给出 Windows
+            # 加载器拒绝加载的具体原因，直接指出缺哪个 DLL 或哪里不匹配。
+            Set-Content -LiteralPath (Join-Path $ProbeDir 'plugin.cpp') -Encoding ASCII -Value @'
+#include <QCoreApplication>
+#include <QLibrary>
+#include <QLibraryInfo>
+#include <QFileInfo>
+#include <cstdio>
+int main(int argc, char **argv) {
+    QCoreApplication app(argc, argv);
+    const QString dir = QLibraryInfo::location(QLibraryInfo::PluginsPath);
+    const QString so = dir + "/platforms/qoffscreen.dll";
+    std::printf("plugins-path: %s\n", qPrintable(dir));
+    std::printf("plugin-exists: %d\n", int(QFileInfo::exists(so)));
+    std::fflush(stdout);
+    QLibrary lib(so);
+    const bool ok = lib.load();
+    std::printf("plugin-load: %d\n", int(ok));
+    std::printf("plugin-error: %s\n", qPrintable(ok ? QStringLiteral("none") : lib.errorString()));
+    std::fflush(stdout);
+    return 0;
+}
+'@
             & $Gcc (Join-Path $ProbeDir 'plain.c') -o (Join-Path $ProbeDir 'plain.exe')
             & $Gxx (Join-Path $ProbeDir 'core.cpp') -o (Join-Path $ProbeDir 'core.exe') `
                 "-I$QtInclude" "-I$QtInclude/QtCore" "-L$QtLib" -lQt5Core
+            & $Gxx (Join-Path $ProbeDir 'plugin.cpp') -o (Join-Path $ProbeDir 'plugin.exe') `
+                "-I$QtInclude" "-I$QtInclude/QtCore" "-L$QtLib" -lQt5Core
             & $Gxx (Join-Path $ProbeDir 'gui.cpp') -o (Join-Path $ProbeDir 'gui.exe') `
                 "-I$QtInclude" "-I$QtInclude/QtCore" "-I$QtInclude/QtGui" "-L$QtLib" -lQt5Gui -lQt5Core
-            foreach ($BisectName in @('plain', 'core', 'gui')) {
+            foreach ($BisectName in @('plain', 'core', 'plugin', 'gui')) {
                 $BisectExe = Join-Path $ProbeDir "$BisectName.exe"
                 if (-not (Test-Path -LiteralPath $BisectExe)) {
                     Write-Host ("=== bisect[{0}] 未生成 ===" -f $BisectName)
