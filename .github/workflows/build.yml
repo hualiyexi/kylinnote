@@ -72,7 +72,7 @@ jobs:
           retention-days: 14
 
   windows:
-    name: Windows x64 / Qt 5.15.2 / MinGW 8.1
+    name: Windows x64 / Qt 5.12.8 / MinGW 7.3
     runs-on: windows-2022
     timeout-minutes: 45
     defaults:
@@ -92,9 +92,9 @@ jobs:
           $env:APPDATA = "$PWD/.tools/appdata"
           & ./.tools/venv/Scripts/python.exe -m pip install --disable-pip-version-check aqtinstall==3.3.0 cmake==3.31.10 ninja==1.13.0
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & ./.tools/venv/Scripts/python.exe -m aqt install-qt windows desktop 5.15.2 win64_mingw81 -O .tools/Qt --archives qtbase qtsvg qttools
+          & ./.tools/venv/Scripts/python.exe -m aqt install-qt windows desktop 5.12.8 win64_mingw73 -O .tools/Qt --archives qtbase qtsvg qttools
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & ./.tools/venv/Scripts/python.exe -m aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw810 -O .tools/Qt
+          & ./.tools/venv/Scripts/python.exe -m aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw730 -O .tools/Qt
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Build, CTest, deploy, smoke, zip and current-user offline installer
@@ -104,8 +104,8 @@ jobs:
           ./packaging/build-windows.ps1 `
             -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
             -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
-            -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
-            -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
+            -QtRoot "$PWD/.tools/Qt/5.12.8/mingw73_64" `
+            -CompilerRoot "$PWD/.tools/Qt/Tools/mingw730_64" `
             -InnoSetupCompiler $iscc
 
       - name: Install, start, uninstall and verify user data survives

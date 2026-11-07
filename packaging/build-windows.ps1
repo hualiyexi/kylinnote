@@ -6,8 +6,8 @@ Example (from repository root):
   pwsh -File packaging/build-windows.ps1 `
     -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
     -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
-    -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
-    -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
+    -QtRoot "$PWD/.tools/Qt/5.12.8/mingw73_64" `
+    -CompilerRoot "$PWD/.tools/Qt/Tools/mingw730_64" `
     -InnoSetupCompiler "$PWD/.tools/InnoSetup/ISCC.exe"
 #>
 [CmdletBinding()]
@@ -103,10 +103,9 @@ try {
             Copy-Item -LiteralPath $SourceLicense -Destination (Join-Path $StageDir "Qt-$LicenseFile.txt")
         }
     }
-    # Qt 5.15.2 qttools force-release mode can incorrectly filter MinGW plugins.
-    # Use its default auto detection, never --debug, then assert release DLLs
-    # against the matching Qt installation by exact SHA256.
-    # --no-patchqt keeps Qt5Core.dll byte-identical to the upstream release.
+    # Force release mode (never --debug), then assert the deployed release DLLs
+    # are byte-identical to the configured Qt installation by exact SHA256.
+    # --no-patchqt keeps Qt5Core.dll unmodified so that comparison is meaningful.
     Invoke-Checked $WinDeployQt @('--compiler-runtime', '--force', '--no-patchqt',
         '--verbose', '2', '--no-translations', '--svg', '--network',
         '--dir', $StageDir, $App)
