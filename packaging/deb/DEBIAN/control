@@ -6,7 +6,6 @@ Architecture: arm64
 Maintainer: KylinNote Maintainer <kylinnote@localhost>
 Homepage: http://localhost/kylinnote
 Depends: libc6, libstdc++6, libgcc1, libqt5core5a, libqt5gui5, libqt5widgets5, libqt5sql5, libqt5sql5-sqlite, libqt5dbus5
-Description: Windows 7 风格的桌面便笺工具
- KylinNote 是面向银河麒麟 V10 SP1 ARM64 的桌面便笺：无边框窗口、拖动与
- 缩放、始终置顶、300ms 防抖自动保存、六色便签、系统托盘与开机自启。
- 数据保存在 ~/.local/share/kylinnote/notes.db (SQLite WAL)，纯单机运行。
+Description: KylinNote desktop notes and tasks
+ KylinNote provides desktop notes and task management with local storage.
+ It includes note editing, task organization, reminders and a system tray.

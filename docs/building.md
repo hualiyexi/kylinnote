@@ -1,6 +1,6 @@
 # 构建、测试与离线打包
 
-KylinNote 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。最低 API 基线是 Qt 5.12；Windows 开发使用 Qt 5.15.2 + MinGW 8.1 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带，无需 npm、浏览器或在线渲染服务。
+KylinNote 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。最低 API 基线是 Qt 5.12；Windows 开发使用 Qt 5.12.8 + MinGW 7.3 x64，与 Linux 构建保持同一 API 面。Markdown 解析器 MD4C 0.5.2 已随源码附带，无需 npm、浏览器或在线渲染服务。
 
 ## Windows 本地工具（全部位于仓库 .tools）
 
@@ -17,23 +17,23 @@ $env:TMP = $env:TEMP
 $env:APPDATA = "$PWD/.tools/appdata"
 & ./.tools/venv/Scripts/python.exe -m pip install --disable-pip-version-check --timeout 120 --retries 8 py7zr
 
-# Qt 归档固定到 5.15.2-0-202011130602 这一版，SHA1 与官方 .sha1 一致。
-$QtPkg  = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5152/qt.qt5.5152.win64_mingw81/'
-$ToolPkg = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/tools_mingw/qt.tools.win64_mingw810/'
+# Qt 归档固定到 5.12.8-0-202004051457 这一版，SHA1 与官方 .sha1 一致。
+$QtPkg  = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5128/qt.qt5.5128.win64_mingw73/'
+$ToolPkg = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/tools_mingw/qt.tools.win64_mingw730/'
 # schannel 证书吊销检查在这类内网/受限网络下会报 CRYPT_E_NO_REVOCATION_CHECK，需关闭。
 $Curl = @('--fail', '--location', '--retry', '5', '--retry-delay', '2',
           '--connect-timeout', '20', '--silent', '--show-error', '--ssl-no-revoke')
 $Archives = @(
-    @{ Url = $QtPkg + '5.15.2-0-202011130602qtbase-Windows-Windows_10-Mingw-Windows-Windows_10-X86_64.7z';
-       Sha1 = 'cf5936239d84a471c9f44bde6959edb7b350d106' },
-    @{ Url = $QtPkg + '5.15.2-0-202011130602qtsvg-Windows-Windows_10-Mingw-Windows-Windows_10-X86_64.7z';
-       Sha1 = '9604244c450047f259b53665528011bd3c42573a' },
-    @{ Url = $QtPkg + '5.15.2-0-202011130602qttools-Windows-Windows_10-Mingw-Windows-Windows_10-X86_64.7z';
-       Sha1 = '65c9eca0302982a0cebc1fd09f3f0a88d18c56ec' },
-    @{ Url = $QtPkg + '5.15.2-0-202011130602x86_64-8.1.0-release-posix-seh-rt_v6-rev0-runtime.7z';
-       Sha1 = '878628efed4b83f32d5a0651e9cabb2a20994a1a' },
-    @{ Url = $ToolPkg + '8.1.0-1-202004170606x86_64-8.1.0-release-posix-seh-rt_v6-rev0.7z';
-       Sha1 = 'a65a625a48d485f7f8101dfc2c0ec85c50208feb' }
+    @{ Url = $QtPkg + '5.12.8-0-202004051457qtbase-Windows-Windows_10-Mingw73-Windows-Windows_10-X86_64.7z';
+       Sha1 = '68b7ee7a700d7361042c1f59128bda960879b484' },
+    @{ Url = $QtPkg + '5.12.8-0-202004051457qtsvg-Windows-Windows_10-Mingw73-Windows-Windows_10-X86_64.7z';
+       Sha1 = '8d4dd27dbb658a56e2f598f0a055123dabe4b046' },
+    @{ Url = $QtPkg + '5.12.8-0-202004051457qttools-Windows-Windows_10-Mingw73-Windows-Windows_10-X86_64.7z';
+       Sha1 = '3c8941b02126ff488049c7cec5f7407ff6a95024' },
+    @{ Url = $QtPkg + '5.12.8-0-202004051457x86_64-7.3.0-release-posix-seh-rt_v5-rev0-runtime.7z';
+       Sha1 = '84f0d3499cd42cd82773faa34443446969c865b2' },
+    @{ Url = $ToolPkg + '7.3.0-1-202004170606x86_64-7.3.0-release-posix-seh-rt_v5-rev0.7z';
+       Sha1 = '518f7ab802dc99f4a309105bed1c9bc01e5f7398' }
 )
 foreach ($a in $Archives) {
     $file = Join-Path $PWD ('.tools/dl/' + (Split-Path -Leaf $a.Url))
@@ -43,20 +43,20 @@ foreach ($a in $Archives) {
     Move-Item -Force "$file.part" $file
 }
 
-# 解压后合并：qtbase/qtsvg/qttools/MinGW 运行时都落到同一个 5.15.2/mingw81_64。
-# 顶层目录名取自归档内的 5.15.2/ 或 Tools/；robocopy 退出码 <8 即成功。
+# 解压后合并：qtbase/qtsvg/qttools/MinGW 运行时都落到同一个 5.12.8/mingw73_64。
+# 顶层目录名取自归档内的 5.12.8/ 或 Tools/；robocopy 退出码 <8 即成功。
 foreach ($z in Get-ChildItem .tools/dl -Filter *.7z) {
     $out = Join-Path $PWD ('.tools/dl/x-' + $z.BaseName)
     & ./.tools/venv/Scripts/python.exe -m py7zr x $z.FullName $out
     if ($LASTEXITCODE -ne 0) { throw "解压失败: $($z.Name)" }
-    $from = Join-Path $out '5.15.2/mingw81_64'
+    $from = Join-Path $out '5.12.8/mingw73_64'
     if (Test-Path $from) {
-        & robocopy $from .tools/Qt/5.15.2/mingw81_64 /E /NFL /NDL /NJH /NJS /NP | Out-Null
+        & robocopy $from .tools/Qt/5.12.8/mingw73_64 /E /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "合并失败: $($z.Name)" }
     }
-    $from = Join-Path $out 'Tools/mingw810_64'
+    $from = Join-Path $out 'Tools/mingw730_64'
     if (Test-Path $from) {
-        & robocopy $from .tools/Qt/Tools/mingw810_64 /E /NFL /NDL /NJH /NJS /NP | Out-Null
+        & robocopy $from .tools/Qt/Tools/mingw730_64 /E /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "合并失败: $($z.Name)" }
     }
     Remove-Item $out -Recurse -Force
@@ -74,8 +74,8 @@ Move-Item (Get-ChildItem .tools/dl/cmake-unpack -Directory | Select-Object -Firs
 Remove-Item .tools/dl/cmake-unpack -Recurse -Force
 
 # 自检：以下路径必须全部存在。
-& ./.tools/Qt/5.15.2/mingw81_64/bin/qmake.exe -v
-& ./.tools/Qt/Tools/mingw810_64/bin/g++.exe --version | Select-Object -First 1
+& ./.tools/Qt/5.12.8/mingw73_64/bin/qmake.exe -v
+& ./.tools/Qt/Tools/mingw730_64/bin/g++.exe --version | Select-Object -First 1
 & ./.tools/cmake/bin/cmake.exe --version | Select-Object -First 1
 & ./.tools/bin/ninja.exe --version
 ```
@@ -87,9 +87,9 @@ Remove-Item .tools/dl/cmake-unpack -Recurse -Force
 | Python（仅用于解压） | `.tools/venv/Scripts/python.exe`（`-m py7zr`） |
 | CMake / CTest | `.tools/cmake/bin/cmake.exe` / `ctest.exe` |
 | Ninja | `.tools/bin/ninja.exe` |
-| Qt 5.15.2 | `.tools/Qt/5.15.2/mingw81_64` |
-| MinGW 8.1 | `.tools/Qt/Tools/mingw810_64` |
-| windeployqt | `.tools/Qt/5.15.2/mingw81_64/bin/windeployqt.exe` |
+| Qt 5.12.8 | `.tools/Qt/5.12.8/mingw73_64` |
+| MinGW 7.3 | `.tools/Qt/Tools/mingw730_64` |
+| windeployqt | `.tools/Qt/5.12.8/mingw73_64/bin/windeployqt.exe` |
 
 下载好的归档留在 `.tools/dl`（约 140 MB），重复执行时会重新校验 SHA1；`.tools/` 已在 `.gitignore` 中，不进仓库。
 
@@ -101,8 +101,8 @@ Remove-Item .tools/dl/cmake-unpack -Recurse -Force
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.ps1 `
     -CMake "$PWD/.tools/cmake/bin/cmake.exe" `
     -Ninja "$PWD/.tools/bin/ninja.exe" `
-    -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
-    -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
+    -QtRoot "$PWD/.tools/Qt/5.12.8/mingw73_64" `
+    -CompilerRoot "$PWD/.tools/Qt/Tools/mingw730_64" `
     -SkipInstaller
 ```
 
@@ -121,8 +121,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.ps1 `
     -CMake "$PWD/.tools/cmake/bin/cmake.exe" `
     -Ninja "$PWD/.tools/bin/ninja.exe" `
-    -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
-    -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
+    -QtRoot "$PWD/.tools/Qt/5.12.8/mingw73_64" `
+    -CompilerRoot "$PWD/.tools/Qt/Tools/mingw730_64" `
     -InnoSetupCompiler "$PWD/.tools/InnoSetup/ISCC.exe"
 ```
 
