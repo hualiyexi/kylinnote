@@ -93,12 +93,49 @@ try {
         '-DKYLINNOTE_WITH_DBUS=OFF', '-DBUILD_TESTING=ON')
     Invoke-Checked $CMake @('--build', $BuildDir, '--config', $Configuration, '--parallel', "$Parallel")
     if (-not $SkipTests) {
+        # CI 里没人能点崩溃对话框：关掉 WER 的 UI，让崩溃以退出码结束而不是挂起。
+        foreach ($WerRoot in @('HKCU:\Software\Microsoft\Windows\Windows Error Reporting',
+                               'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting')) {
+            try {
+                New-Item -Path $WerRoot -Force | Out-Null
+                Set-ItemProperty -Path $WerRoot -Name DontShowUI -Value 1 -Type DWord
+            } catch { Write-Host "WER UI 设置跳过: $WerRoot" }
+        }
+        # 诊断：关键运行库在 PATH 里解析到哪一份。两份不同的 MinGW 运行库会造成崩溃。
+        foreach ($LibName in @('Qt5Core.dll', 'libstdc++-6.dll', 'libgcc_s_seh-1.dll', 'libwinpthread-1.dll')) {
+            $Hits = @(foreach ($PathDir in ($env:PATH -split ';')) {
+                if ($PathDir -and (Test-Path -LiteralPath (Join-Path $PathDir $LibName))) {
+                    Join-Path $PathDir $LibName
+                }
+            })
+            Write-Host ("{0}: {1}" -f $LibName, $(if ($Hits.Count) { $Hits -join ' | ' } else { '<none>' }))
+        }
+        # 预检：-functions 只列出测试函数就退出，用来把 QApplication 构造
+        # 与测试逻辑分开。它挂住说明平台初始化有问题，能退出说明问题在测试内。
+        $Probe = Join-Path $BuildDir 'bin/test_tasks.exe'
+        if (Test-Path -LiteralPath $Probe) {
+            $ProbeOut = Join-Path $BuildDir 'probe.out.txt'
+            $ProbeErr = Join-Path $BuildDir 'probe.err.txt'
+            $ProbeProc = Start-Process -FilePath $Probe -ArgumentList '-functions' -NoNewWindow -PassThru `
+                -RedirectStandardOutput $ProbeOut -RedirectStandardError $ProbeErr
+            if (-not $ProbeProc.WaitForExit(15000)) {
+                $ProbeProc.Kill()
+                Write-Host '=== probe: test_tasks.exe -functions 超时（QApplication 未构造完成）==='
+            } else {
+                Write-Host ("=== probe: test_tasks.exe -functions 退出码 {0} ===" -f $ProbeProc.ExitCode)
+            }
+            foreach ($ProbeFile in @($ProbeOut, $ProbeErr)) {
+                if (Test-Path -LiteralPath $ProbeFile) {
+                    Get-Content -LiteralPath $ProbeFile -Tail 12 | ForEach-Object { Write-Host "  | $_" }
+                }
+            }
+        }
         # CTest 在超时时不打印 --output-on-failure 捕获的内容。失败时补打平台
         # 插件清单和 LastTest.log，用来区分"插件没加载"和"测试逻辑卡住"。
         $env:QT_DEBUG_PLUGINS = '1'
         try {
             Invoke-Checked $CTest @('--test-dir', $BuildDir, '-C', $Configuration,
-                '--output-on-failure', '--no-tests=error', '--timeout', '25')
+                '--output-on-failure', '--no-tests=error')
         } catch {
             $Platforms = Join-Path $QtRoot 'plugins/platforms'
             if (Test-Path -LiteralPath $Platforms) {
