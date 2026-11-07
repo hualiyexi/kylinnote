@@ -4,33 +4,94 @@ KylinNote 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。最�
 
 ## Windows 本地工具（全部位于仓库 .tools）
 
-需要已有 Python 3.9+。以下 PowerShell 命令以仓库根目录为工作目录；本机已知 Python 是 `C:\Python313\python.exe`。无需修改全局 PATH，也无需 Qt 账号或用户密钥。
+需要已有 Python 3.9+ 和 Windows 10/11 自带的 `curl.exe`。以下 PowerShell 命令以仓库根目录为工作目录；本机实测可用的 Python 是 `C:\Users\<用户>\AppData\Local\Programs\Python\Python311\python.exe`（`python -V` 能找到即可，不必安装到 `C:\Python313`）。无需修改全局 PATH，也无需 Qt 账号或用户密钥。
+
+Qt 官方仓库对 `aqtinstall` 拉取 7z 包会限速到几 KB/s（实测 40 分钟未能完成 qtbase），因此不固定 aqt 版本，改为 **`curl` 直连同一批官方归档**，再用 py7zr 解压合并成 aqt 的标准目录布局。`curl` 自动顺延仓库的 `.mirrorlist` 镜像，实测约 1 MB/s。
 
 ```powershell
-C:\Python313\python.exe -m venv .tools/venv
-New-Item -ItemType Directory -Force .tools/tmp,.tools/appdata | Out-Null
-# 仅影响这个 PowerShell 进程；aqt 的缓存也留在仓库内。
+python -m venv .tools/venv
+New-Item -ItemType Directory -Force .tools/tmp,.tools/appdata,.tools/dl,.tools/bin,.tools/Qt | Out-Null
+# 仅影响这个 PowerShell 进程；pip 缓存和临时目录都留在仓库内。
 $env:TEMP = "$PWD/.tools/tmp"
 $env:TMP = $env:TEMP
 $env:APPDATA = "$PWD/.tools/appdata"
-& ./.tools/venv/Scripts/python.exe -m pip install --disable-pip-version-check `
-    aqtinstall==3.3.0 cmake==3.31.10 ninja==1.13.0
-& ./.tools/venv/Scripts/python.exe -m aqt install-qt windows desktop 5.15.2 `
-    win64_mingw81 -O .tools/Qt --archives qtbase qtsvg qttools
-& ./.tools/venv/Scripts/python.exe -m aqt install-tool windows desktop `
-    tools_mingw qt.tools.win64_mingw810 -O .tools/Qt
+& ./.tools/venv/Scripts/python.exe -m pip install --disable-pip-version-check --timeout 120 --retries 8 py7zr
+
+# Qt 归档固定到 5.15.2-0-202011130602 这一版，SHA1 与官方 .sha1 一致。
+$QtPkg  = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5152/qt.qt5.5152.win64_mingw81/'
+$ToolPkg = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/tools_mingw/qt.tools.win64_mingw810/'
+# schannel 证书吊销检查在这类内网/受限网络下会报 CRYPT_E_NO_REVOCATION_CHECK，需关闭。
+$Curl = @('--fail', '--location', '--retry', '5', '--retry-delay', '2',
+          '--connect-timeout', '20', '--silent', '--show-error', '--ssl-no-revoke')
+$Archives = @(
+    @{ Url = $QtPkg + '5.15.2-0-202011130602qtbase-Windows-Windows_10-Mingw-Windows-Windows_10-X86_64.7z';
+       Sha1 = 'cf5936239d84a471c9f44bde6959edb7b350d106' },
+    @{ Url = $QtPkg + '5.15.2-0-202011130602qtsvg-Windows-Windows_10-Mingw-Windows-Windows_10-X86_64.7z';
+       Sha1 = '9604244c450047f259b53665528011bd3c42573a' },
+    @{ Url = $QtPkg + '5.15.2-0-202011130602qttools-Windows-Windows_10-Mingw-Windows-Windows_10-X86_64.7z';
+       Sha1 = '65c9eca0302982a0cebc1fd09f3f0a88d18c56ec' },
+    @{ Url = $QtPkg + '5.15.2-0-202011130602x86_64-8.1.0-release-posix-seh-rt_v6-rev0-runtime.7z';
+       Sha1 = '878628efed4b83f32d5a0651e9cabb2a20994a1a' },
+    @{ Url = $ToolPkg + '8.1.0-1-202004170606x86_64-8.1.0-release-posix-seh-rt_v6-rev0.7z';
+       Sha1 = 'a65a625a48d485f7f8101dfc2c0ec85c50208feb' }
+)
+foreach ($a in $Archives) {
+    $file = Join-Path $PWD ('.tools/dl/' + (Split-Path -Leaf $a.Url))
+    & curl.exe @Curl -o "$file.part" $a.Url
+    if ($LASTEXITCODE -ne 0) { throw "下载失败: $($a.Url)" }
+    if ((Get-FileHash "$file.part" -Algorithm SHA1).Hash -ne $a.Sha1) { throw "SHA1 不符: $file" }
+    Move-Item -Force "$file.part" $file
+}
+
+# 解压后合并：qtbase/qtsvg/qttools/MinGW 运行时都落到同一个 5.15.2/mingw81_64。
+# 顶层目录名取自归档内的 5.15.2/ 或 Tools/；robocopy 退出码 <8 即成功。
+foreach ($z in Get-ChildItem .tools/dl -Filter *.7z) {
+    $out = Join-Path $PWD ('.tools/dl/x-' + $z.BaseName)
+    & ./.tools/venv/Scripts/python.exe -m py7zr x $z.FullName $out
+    if ($LASTEXITCODE -ne 0) { throw "解压失败: $($z.Name)" }
+    $from = Join-Path $out '5.15.2/mingw81_64'
+    if (Test-Path $from) {
+        & robocopy $from .tools/Qt/5.15.2/mingw81_64 /E /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "合并失败: $($z.Name)" }
+    }
+    $from = Join-Path $out 'Tools/mingw810_64'
+    if (Test-Path $from) {
+        & robocopy $from .tools/Qt/Tools/mingw810_64 /E /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "合并失败: $($z.Name)" }
+    }
+    Remove-Item $out -Recurse -Force
+}
+
+# CMake 与 Ninja 从官方 GitHub Release 取预编译包。
+# files.pythonhosted.org 在本机持续读超时，pip 装 cmake/ninja 的方案不可用。
+& curl.exe @Curl -o .tools/dl/ninja.zip 'https://github.com/ninja-build/ninja/releases/download/v1.13.0/ninja-win.zip'
+if ($LASTEXITCODE -ne 0) { throw '下载 ninja 失败' }
+& curl.exe @Curl -o .tools/dl/cmake.zip 'https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-windows-x86_64.zip'
+if ($LASTEXITCODE -ne 0) { throw '下载 cmake 失败' }
+Expand-Archive .tools/dl/ninja.zip -DestinationPath .tools/bin -Force
+Expand-Archive .tools/dl/cmake.zip -DestinationPath .tools/dl/cmake-unpack -Force
+Move-Item (Get-ChildItem .tools/dl/cmake-unpack -Directory | Select-Object -First 1).FullName .tools/cmake
+Remove-Item .tools/dl/cmake-unpack -Recurse -Force
+
+# 自检：以下路径必须全部存在。
+& ./.tools/Qt/5.15.2/mingw81_64/bin/qmake.exe -v
+& ./.tools/Qt/Tools/mingw810_64/bin/g++.exe --version | Select-Object -First 1
+& ./.tools/cmake/bin/cmake.exe --version | Select-Object -First 1
+& ./.tools/bin/ninja.exe --version
 ```
 
 工具路径（本机已实际安装并验证）：
 
 | 工具 | 仓库相对路径 |
 | --- | --- |
-| Python / aqt | `.tools/venv/Scripts/python.exe -m aqt` |
-| CMake / CTest | `.tools/venv/Scripts/cmake.exe` / `ctest.exe` |
-| Ninja | `.tools/venv/Scripts/ninja.exe` |
+| Python（仅用于解压） | `.tools/venv/Scripts/python.exe`（`-m py7zr`） |
+| CMake / CTest | `.tools/cmake/bin/cmake.exe` / `ctest.exe` |
+| Ninja | `.tools/bin/ninja.exe` |
 | Qt 5.15.2 | `.tools/Qt/5.15.2/mingw81_64` |
 | MinGW 8.1 | `.tools/Qt/Tools/mingw810_64` |
 | windeployqt | `.tools/Qt/5.15.2/mingw81_64/bin/windeployqt.exe` |
+
+下载好的归档留在 `.tools/dl`（约 140 MB），重复执行时会重新校验 SHA1；`.tools/` 已在 `.gitignore` 中，不进仓库。
 
 `packaging/build-windows.ps1` 以 **UTF-8 BOM** 保存；PowerShell 5.1 对无 BOM 的 UTF-8 中文注释可能按 ANSI 误解析。脚本内把 `TEMP/TMP` 定向到构建目录（本机默认临时目录不可写），并在 `finally` 恢复 `PATH/TEMP/TMP/QT_PLUGIN_PATH/QT_QPA_PLATFORM_PLUGIN_PATH/QT_QPA_PLATFORM/KYLINNOTE_DATA_DIR`，不写入用户级或机器级环境变量。本机 PowerShell 执行策略禁止直接运行未签名脚本时，用下面命令的进程级 `Bypass`（不修改策略设置）。
 
@@ -38,8 +99,8 @@ $env:APPDATA = "$PWD/.tools/appdata"
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.ps1 `
-    -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
-    -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
+    -CMake "$PWD/.tools/cmake/bin/cmake.exe" `
+    -Ninja "$PWD/.tools/bin/ninja.exe" `
     -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
     -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
     -SkipInstaller
@@ -58,8 +119,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.ps1 `
-    -CMake "$PWD/.tools/venv/Scripts/cmake.exe" `
-    -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
+    -CMake "$PWD/.tools/cmake/bin/cmake.exe" `
+    -Ninja "$PWD/.tools/bin/ninja.exe" `
     -QtRoot "$PWD/.tools/Qt/5.15.2/mingw81_64" `
     -CompilerRoot "$PWD/.tools/Qt/Tools/mingw810_64" `
     -InnoSetupCompiler "$PWD/.tools/InnoSetup/ISCC.exe"
