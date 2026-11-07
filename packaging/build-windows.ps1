@@ -142,16 +142,15 @@ try {
                 } else {
                     $env:QT_QPA_PLATFORM = $Case.Platform
                 }
-                $CaseOut = Join-Path $BuildDir ("probe-$($Case.Name).out.txt")
-                $CaseErr = Join-Path $BuildDir ("probe-$($Case.Name).err.txt")
-                $CaseProc = Start-Process -FilePath $Probe -ArgumentList '-functions' -NoNewWindow -PassThru `
-                    -RedirectStandardOutput $CaseOut -RedirectStandardError $CaseErr
+                # 不重定向：控制台是行缓冲，进程卡住时也能看到已经打印到哪一行。
+                $CaseProc = Start-Process -FilePath $Probe -ArgumentList '-functions' -NoNewWindow -PassThru
                 if (-not $CaseProc.WaitForExit(12000)) {
-                    # 还活着：看它有没有弹窗、以及 DLL 加载进行到哪一步。
+                    # 还活着：看它有没有弹窗、跑掉了多少 CPU、DLL 加载到哪一步。
                     Write-Host ("=== probe[{0}] 超时 ===" -f $Case.Name)
                     try {
                         $CaseProc.Refresh()
                         Write-Host ("  窗口标题: '{0}'" -f $CaseProc.MainWindowTitle)
+                        Write-Host ("  CPU 秒: {0:N2}" -f $CaseProc.TotalProcessorTime.TotalSeconds)
                         $Loaded = @($CaseProc.Modules | ForEach-Object { $_.ModuleName })
                         Write-Host ("  已加载模块 {0} 个: {1}" -f $Loaded.Count, ($Loaded -join ', '))
                     } catch {
@@ -160,11 +159,6 @@ try {
                     $CaseProc.Kill()
                 } else {
                     Write-Host ("=== probe[{0}] 退出码 {1} ===" -f $Case.Name, $CaseProc.ExitCode)
-                }
-                foreach ($ProbeFile in @($CaseOut, $CaseErr)) {
-                    if (Test-Path -LiteralPath $ProbeFile) {
-                        Get-Content -LiteralPath $ProbeFile -Tail 15 | ForEach-Object { Write-Host "  | $_" }
-                    }
                 }
             }
             Remove-Item Env:\QT_QPA_PLATFORM -ErrorAction SilentlyContinue
