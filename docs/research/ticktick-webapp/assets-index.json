@@ -1,0 +1,1127 @@
+{
+  "date": "2026-11-07",
+  "method": "Original UI pixels, opaque redaction, offline crop, separate caption strip; no UI re-rendering.",
+  "notes": [
+    "All crop/mask coordinates are in the original 1500x940 raster, before the 36px caption.",
+    "Raw screenshots are intentionally not distributed in this research directory.",
+    "Source basenames identify private ephemeral browser artifacts, not public download links."
+  ],
+  "assets": [
+    {
+      "file": "assets/01-global/g01-workspace-redacted.png",
+      "title": "工作台：私人内容已遮挡",
+      "sourceFile": "call_a396b2a6063d4433ba7d874425785d37__rk16__3uyXGEDIzdipx9cR-tool-result-1c954dff-4674-4013-b4ec-92467181bf40.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": null,
+      "masks": [
+        [
+          7,
+          13,
+          45,
+          51
+        ],
+        [
+          62,
+          18,
+          288,
+          91
+        ],
+        [
+          94,
+          328,
+          286,
+          479
+        ],
+        [
+          252,
+          113,
+          284,
+          744
+        ],
+        [
+          358,
+          178,
+          946,
+          201
+        ],
+        [
+          358,
+          218,
+          946,
+          241
+        ],
+        [
+          358,
+          302,
+          946,
+          325
+        ],
+        [
+          358,
+          342,
+          946,
+          365
+        ],
+        [
+          358,
+          382,
+          946,
+          405
+        ],
+        [
+          358,
+          422,
+          946,
+          445
+        ],
+        [
+          358,
+          462,
+          946,
+          485
+        ],
+        [
+          358,
+          502,
+          946,
+          525
+        ],
+        [
+          358,
+          542,
+          946,
+          565
+        ],
+        [
+          358,
+          582,
+          946,
+          605
+        ],
+        [
+          358,
+          622,
+          946,
+          645
+        ],
+        [
+          358,
+          662,
+          946,
+          685
+        ],
+        [
+          358,
+          702,
+          946,
+          725
+        ],
+        [
+          358,
+          742,
+          946,
+          765
+        ],
+        [
+          358,
+          782,
+          946,
+          805
+        ],
+        [
+          358,
+          822,
+          946,
+          845
+        ],
+        [
+          358,
+          862,
+          946,
+          885
+        ],
+        [
+          358,
+          902,
+          946,
+          925
+        ]
+      ],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [
+        [
+          103,
+          337,
+          188,
+          359
+        ],
+        [
+          403,
+          181,
+          427,
+          202
+        ],
+        [
+          382,
+          302,
+          407,
+          325
+        ]
+      ],
+      "outputSize": [
+        1500,
+        976
+      ],
+      "sha256": "c32c2603d05f7f7571e4f6a57bba9e89c9a7200df2daaae381bf4030ed179426",
+      "note": "1500×940 CSS px；空详情状态；正文、清单名、计数和头像作纯色遮挡。"
+    },
+    {
+      "file": "assets/01-global/g02-detail-and-date-redacted.png",
+      "title": "任务详情与日期弹层：私人内容已遮挡",
+      "sourceFile": "call_f1a63b7ac4bf417b9c618944f3a8977c__rk16__H0V0ZIlSA8Y9XxcV-tool-result-81376fee-d6a5-4281-aaf9-ad2aa3da39a9.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": null,
+      "masks": [
+        [
+          7,
+          13,
+          45,
+          51
+        ],
+        [
+          62,
+          18,
+          288,
+          91
+        ],
+        [
+          94,
+          328,
+          286,
+          479
+        ],
+        [
+          252,
+          113,
+          284,
+          744
+        ],
+        [
+          358,
+          178,
+          946,
+          201
+        ],
+        [
+          358,
+          218,
+          946,
+          241
+        ],
+        [
+          358,
+          302,
+          946,
+          325
+        ],
+        [
+          358,
+          342,
+          946,
+          365
+        ],
+        [
+          358,
+          382,
+          946,
+          405
+        ],
+        [
+          358,
+          422,
+          946,
+          445
+        ],
+        [
+          358,
+          462,
+          946,
+          485
+        ],
+        [
+          358,
+          502,
+          946,
+          525
+        ],
+        [
+          358,
+          542,
+          946,
+          565
+        ],
+        [
+          358,
+          582,
+          946,
+          605
+        ],
+        [
+          358,
+          622,
+          946,
+          645
+        ],
+        [
+          358,
+          662,
+          946,
+          685
+        ],
+        [
+          358,
+          702,
+          946,
+          725
+        ],
+        [
+          358,
+          742,
+          946,
+          765
+        ],
+        [
+          358,
+          782,
+          946,
+          805
+        ],
+        [
+          358,
+          822,
+          946,
+          845
+        ],
+        [
+          358,
+          862,
+          946,
+          885
+        ],
+        [
+          358,
+          902,
+          946,
+          925
+        ],
+        [
+          995,
+          79,
+          1478,
+          880
+        ],
+        [
+          995,
+          894,
+          1120,
+          930
+        ]
+      ],
+      "protected": [
+        [
+          1034,
+          54,
+          1294,
+          594
+        ]
+      ],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [
+        [
+          103,
+          337,
+          188,
+          359
+        ],
+        [
+          403,
+          181,
+          427,
+          202
+        ],
+        [
+          382,
+          302,
+          407,
+          325
+        ]
+      ],
+      "outputSize": [
+        1500,
+        976
+      ],
+      "sha256": "1676a382aa704c4e6f99af7c7dec7552c9e5adf927886999785825f9f7f070f9",
+      "note": "日期弹层保留；其后私人标题、正文、子任务及所属清单遮挡。"
+    },
+    {
+      "file": "assets/02-navigation/n01-search-empty-result.png",
+      "title": "搜索：无匹配结果",
+      "sourceFile": "call_7815ae5302b6459db789d5437628d41b-tool-result-c49e62ae-cc57-4192-92b3-6342dd978a8f.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        470,
+        160,
+        1030,
+        582
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        560,
+        458
+      ],
+      "sha256": "95e1e66b9b7f92dc24c3849abb1b5aaba66003b4944d823dba7da0a2175fa96a",
+      "note": "只取搜索面板；研究用中性查询；无任务结果；未点击云端搜索。"
+    },
+    {
+      "file": "assets/03-tasks/t01-date-picker.png",
+      "title": "日期选择器",
+      "sourceFile": "call_f1a63b7ac4bf417b9c618944f3a8977c__rk16__H0V0ZIlSA8Y9XxcV-tool-result-81376fee-d6a5-4281-aaf9-ad2aa3da39a9.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        1034,
+        54,
+        1294,
+        594
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        260,
+        576
+      ],
+      "sha256": "2ab1081d0175b7a03f8087aa66336167f5818a4d61e0888a3e621c4d0b53a530",
+      "note": "只取日期控件，不含私人任务正文。"
+    },
+    {
+      "file": "assets/03-tasks/t02-detail-footer.png",
+      "title": "详情底部工具栏：清单名已遮挡",
+      "sourceFile": "call_938ca15212fc42038d7a2b88f9e2c358__rk16__aq-VZv0UR9cWUzR_-tool-result-45a6697f-9044-4862-8ba5-cde84e6d5a5e.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        994,
+        885,
+        1480,
+        933
+      ],
+      "masks": [
+        [
+          995,
+          892,
+          1110,
+          930
+        ]
+      ],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        486,
+        84
+      ],
+      "sha256": "a1c46c4bfacdad130f9ee5ece2831d77bee21ca88333918ea488178c7cf02e43",
+      "note": "所属清单名遮挡；保留格式、评论、更多图标及位置。"
+    },
+    {
+      "file": "assets/04-context-menus/m01-smartlist.png",
+      "title": "智能清单：右键",
+      "sourceFile": "04-context-menus__m01-smartlist-all-rightclick.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        180,
+        140,
+        334,
+        174
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        154,
+        70
+      ],
+      "sha256": "645c0787aa7c77276b6eeedfefcad6167d8c3e86f9cd7047434763d9d575a7c6",
+      "note": "菜单文字局部；不保留背后的账号数据。"
+    },
+    {
+      "file": "assets/04-context-menus/m02-inbox.png",
+      "title": "收集箱：右键",
+      "sourceFile": "04-context-menus__m02-inbox-rightclick.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        180,
+        216,
+        334,
+        318
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        154,
+        138
+      ],
+      "sha256": "8884d762b1f0ca5b22b7c50fdce3802e11d604ed22f61c52e77cacbc82aea018",
+      "note": "菜单文字局部；不保留背后的账号数据。"
+    },
+    {
+      "file": "assets/04-context-menus/m03-task.png",
+      "title": "任务：右键菜单",
+      "sourceFile": "call_c21a4fe5d72645adb1a65bdda050f1ed__rk16__f-JcMt0XUuw0nsB6-tool-result-2b5435f6-89ca-4986-9015-49eb9a49a56a.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        394,
+        346,
+        577,
+        879
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        183,
+        569
+      ],
+      "sha256": "87d3ff0b68c97532aac8335d74d09e8e65cacc2d9221d7c2246bb443e193ec0c",
+      "note": "已启用专注模块时的未完成任务菜单；日期/优先级为图标条。"
+    },
+    {
+      "file": "assets/04-context-menus/m04-workspace.png",
+      "title": "工作区：更多",
+      "sourceFile": "call_33d3d06627c246a7ab33b2d193708bfd__rk16__CEFA0sidGv-2w9po-tool-result-5d175f22-65cd-4117-88ec-f218804095cf.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        814,
+        70,
+        970,
+        279
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        156,
+        245
+      ],
+      "sha256": "29584806c4a10c9aa000200bccaa100bfc07caa945fb32a38787380d52d05ece",
+      "note": "列表视图更多菜单；图标分别为列表、看板、时间线。"
+    },
+    {
+      "file": "assets/04-context-menus/m05-detail.png",
+      "title": "详情：更多",
+      "sourceFile": "call_938ca15212fc42038d7a2b88f9e2c358__rk16__aq-VZv0UR9cWUzR_-tool-result-45a6697f-9044-4862-8ba5-cde84e6d5a5e.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        1310,
+        401,
+        1429,
+        889
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        119,
+        524
+      ],
+      "sha256": "96528df5e632b2afd196000c753f7527f005fc2bc14f159549d86e31ac6d607f",
+      "note": "为避开右下AI悬浮按钮，仅截菜单左侧图标和文字；不要用裁图宽度作菜单宽度。"
+    },
+    {
+      "file": "assets/04-context-menus/m06-filter.png",
+      "title": "过滤器：右键",
+      "sourceFile": "call_60778d41a18e452b976045035fbd94dc__rk16__tbVPt1gSTwP3JHEC-tool-result-97b5fbb0-2ca0-4ee1-84c7-9b6ba2123361.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        180,
+        629,
+        334,
+        761
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        154,
+        168
+      ],
+      "sha256": "8b0b8f31cffec5f09b61df38248fe7b6178634d06922b44dc25dc8cfbb141609",
+      "note": "菜单局部；普通过滤器的编辑、置顶、复制、删除。"
+    },
+    {
+      "file": "assets/05-views/v01-matrix.png",
+      "title": "四象限：私人任务信息已遮挡",
+      "sourceFile": "call_69e44ec88179458593d5163ec62a906e__rk16__McWxgJnKBPbgVrIf-tool-result-f58a523c-507c-4339-b0bf-b292ac8f3476.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": null,
+      "masks": [
+        [
+          7,
+          13,
+          45,
+          51
+        ],
+        [
+          130,
+          148,
+          738,
+          172
+        ],
+        [
+          130,
+          188,
+          738,
+          212
+        ],
+        [
+          137,
+          115,
+          160,
+          136
+        ],
+        [
+          895,
+          545,
+          931,
+          566
+        ],
+        [
+          876,
+          668,
+          913,
+          691
+        ],
+        [
+          835,
+          578,
+          1446,
+          601
+        ],
+        [
+          835,
+          618,
+          1446,
+          641
+        ],
+        [
+          835,
+          702,
+          1446,
+          725
+        ],
+        [
+          835,
+          742,
+          1446,
+          765
+        ],
+        [
+          835,
+          782,
+          1446,
+          805
+        ],
+        [
+          835,
+          822,
+          1446,
+          845
+        ],
+        [
+          835,
+          862,
+          1446,
+          885
+        ],
+        [
+          835,
+          902,
+          1446,
+          925
+        ]
+      ],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [
+        [
+          106,
+          149,
+          173,
+          175
+        ],
+        [
+          883,
+          579,
+          934,
+          605
+        ],
+        [
+          863,
+          702,
+          915,
+          730
+        ]
+      ],
+      "outputSize": [
+        1500,
+        976
+      ],
+      "sha256": "68db091eb6b616f9a8d6c76b0b207c9a8336bafc828ee8b48ffb674553c2be18",
+      "note": "只保留分区、语义色、任务行容器与空区；未拖动任务。"
+    },
+    {
+      "file": "assets/05-views/v02-focus.png",
+      "title": "专注：项目与历史数据已遮挡",
+      "sourceFile": "call_39061ea94a1146a7834a5211e2cac489__rk16__5V_bGKT7MKhI6EOV-tool-result-4feded9d-348a-49d5-be0f-e8a956f79dfb.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": null,
+      "masks": [
+        [
+          7,
+          13,
+          45,
+          51
+        ],
+        [
+          77,
+          87,
+          360,
+          182
+        ],
+        [
+          841,
+          92,
+          877,
+          179
+        ],
+        [
+          950,
+          111,
+          1150,
+          141
+        ],
+        [
+          1224,
+          111,
+          1438,
+          141
+        ],
+        [
+          950,
+          197,
+          1150,
+          228
+        ],
+        [
+          1224,
+          197,
+          1438,
+          228
+        ],
+        [
+          939,
+          331,
+          1180,
+          353
+        ],
+        [
+          939,
+          509,
+          1180,
+          531
+        ],
+        [
+          939,
+          637,
+          1180,
+          659
+        ],
+        [
+          939,
+          795,
+          1180,
+          817
+        ],
+        [
+          939,
+          911,
+          1180,
+          933
+        ],
+        [
+          977,
+          368,
+          1475,
+          392
+        ],
+        [
+          977,
+          394,
+          1475,
+          418
+        ],
+        [
+          977,
+          436,
+          1475,
+          460
+        ],
+        [
+          977,
+          464,
+          1475,
+          488
+        ],
+        [
+          977,
+          547,
+          1475,
+          571
+        ],
+        [
+          977,
+          572,
+          1475,
+          596
+        ],
+        [
+          977,
+          676,
+          1475,
+          700
+        ],
+        [
+          977,
+          703,
+          1475,
+          727
+        ],
+        [
+          977,
+          744,
+          1475,
+          768
+        ],
+        [
+          977,
+          772,
+          1475,
+          796
+        ],
+        [
+          977,
+          834,
+          1475,
+          858
+        ],
+        [
+          977,
+          860,
+          1475,
+          884
+        ]
+      ],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [
+        [
+          938,
+          652,
+          1182,
+          696
+        ],
+        [
+          975,
+          693,
+          1478,
+          714
+        ],
+        [
+          975,
+          762,
+          1478,
+          782
+        ],
+        [
+          975,
+          801,
+          1478,
+          810
+        ],
+        [
+          938,
+          939,
+          1182,
+          969
+        ]
+      ],
+      "outputSize": [
+        1500,
+        976
+      ],
+      "sha256": "208129b94b97bb44ff8dba1903b7004451db9113389fb2120ca85233f5ff96d7",
+      "note": "加载完成后的项目/概览/记录布局；没有开始计时。"
+    },
+    {
+      "file": "assets/05-views/v03-habit.png",
+      "title": "习惯：标题与个人统计已遮挡",
+      "sourceFile": "call_56fc8dfbdc9648a0acd7880b584ddf11__rk16__j198FDSCPgz20w3B-tool-result-19035c85-8010-4557-8610-ef1b24933759.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": null,
+      "masks": [
+        [
+          7,
+          13,
+          45,
+          51
+        ],
+        [
+          81,
+          186,
+          336,
+          231
+        ],
+        [
+          81,
+          256,
+          336,
+          303
+        ],
+        [
+          994,
+          22,
+          1240,
+          66
+        ],
+        [
+          1010,
+          115,
+          1125,
+          145
+        ],
+        [
+          1266,
+          115,
+          1392,
+          145
+        ],
+        [
+          1010,
+          198,
+          1125,
+          226
+        ],
+        [
+          1266,
+          198,
+          1392,
+          226
+        ]
+      ],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [
+        [
+          1251,
+          149,
+          1394,
+          183
+        ],
+        [
+          1251,
+          232,
+          1394,
+          264
+        ]
+      ],
+      "outputSize": [
+        1500,
+        976
+      ],
+      "sha256": "675c0e5a69500f1c7ae243e24fa651b1a5c328f68f414e445da18ae557a78921",
+      "note": "已选中习惯的周打卡行和右侧月统计；没有打卡。"
+    },
+    {
+      "file": "assets/05-views/v04-timeline.png",
+      "title": "时间线：清单名与任务标题已遮挡",
+      "sourceFile": "call_bcbf9bc71f6245f383d8d3260a34c7e2__rk16__f7oEXcS56Opjy7xr-tool-result-ce97d600-dbc9-41a5-a2cd-db28ccd5fa11.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": null,
+      "masks": [
+        [
+          7,
+          13,
+          45,
+          51
+        ],
+        [
+          94,
+          238,
+          286,
+          341
+        ],
+        [
+          251,
+          20,
+          285,
+          610
+        ],
+        [
+          329,
+          252,
+          413,
+          278
+        ],
+        [
+          329,
+          297,
+          413,
+          325
+        ],
+        [
+          329,
+          456,
+          413,
+          483
+        ],
+        [
+          329,
+          574,
+          413,
+          601
+        ],
+        [
+          329,
+          622,
+          413,
+          649
+        ],
+        [
+          507,
+          136,
+          606,
+          156
+        ],
+        [
+          507,
+          175,
+          606,
+          195
+        ]
+      ],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [
+        [
+          325,
+          286,
+          415,
+          316
+        ],
+        [
+          325,
+          656,
+          415,
+          687
+        ]
+      ],
+      "outputSize": [
+        1500,
+        976
+      ],
+      "sha256": "cfb21e4381197a6f7ea73aa1fa45032185efeabd5bba6f35128f570478cedfec",
+      "note": "泳道和任务条的现场布局；没有拖动、调整日期或安排任务。"
+    },
+    {
+      "file": "assets/06-settings/s01-modules.png",
+      "title": "设置：功能模块",
+      "sourceFile": "call_3b3b1f4dfa0b4a08abb2fafe80afcdcb__rk16__dURzqKthUcfLKZMp-tool-result-e6a8c0c9-9971-4aff-9aa1-dd72ece6491b.png",
+      "sourceSize": [
+        1500,
+        940
+      ],
+      "crop": [
+        350,
+        130,
+        1150,
+        810
+      ],
+      "masks": [],
+      "protected": [],
+      "captionHeight": 36,
+      "reviewMasksOutputPixels": [],
+      "outputSize": [
+        800,
+        716
+      ],
+      "sha256": "669185ba30c86b7b64958accec269796e29e3ea79c3eefeefb4830e8e691e566",
+      "note": "只取设置弹窗；开关为当时账号配置，不是产品默认值。"
+    }
+  ]
+}

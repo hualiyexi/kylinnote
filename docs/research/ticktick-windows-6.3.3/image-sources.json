@@ -1,0 +1,50 @@
+[
+  {
+    "file": "official-timeline-reference.png",
+    "source_url": "https://dida-hc.s3.cn-north-1.amazonaws.com.cn/static/img/new_help_center/at/at_manage/timeline/4.png",
+    "article_url": "https://help.dida365.com/tips/6912963677121413120",
+    "classification": "official_legacy_reference_not_local_screenshot",
+    "original_size": [
+      1280,
+      711
+    ],
+    "original_sha256": "be6572aee12e7367d7bd0c87d64c03b7d2dadec1db3ab1480b8ea93a83b55069",
+    "processing": "Original screenshot retained without cropping; source/status banner added above image."
+  },
+  {
+    "file": "official-web-layout-reference.png",
+    "source_url": "https://dida-hc.s3.cn-north-1.amazonaws.com.cn/static/img/202006/021@3x.png",
+    "article_url": "https://help.dida365.com/faqs/6684765710167572480",
+    "classification": "official_legacy_reference_not_local_screenshot",
+    "original_size": [
+      3558,
+      2295
+    ],
+    "original_sha256": "d250e1fb90c6418d1d3962013b498e05d97237b00efc939e870ff36555a9a48a",
+    "processing": "Original screenshot retained without cropping; source/status banner added above image."
+  },
+  {
+    "file": "official-web-row-menu-reference.png",
+    "source_url": "https://dida-hc.s3.cn-north-1.amazonaws.com.cn/static/img/202006/022@3x.png",
+    "article_url": "https://help.dida365.com/faqs/6684765710167572480",
+    "classification": "official_legacy_reference_not_local_screenshot",
+    "original_size": [
+      3558,
+      2295
+    ],
+    "original_sha256": "4f14dc2e71dd62e1ec70b028c765f286a9c4cb92782da860cacbab294ef11385",
+    "processing": "Original screenshot retained without cropping; source/status banner added above image."
+  },
+  {
+    "file": "official-web-detail-menu-reference.png",
+    "source_url": "https://dida-hc.s3.cn-north-1.amazonaws.com.cn/static/img/202006/023@3x.png",
+    "article_url": "https://help.dida365.com/faqs/6684765710167572480",
+    "classification": "official_legacy_reference_not_local_screenshot",
+    "original_size": [
+      3558,
+      2295
+    ],
+    "original_sha256": "7a5a535ef1de0d055bacd8d596ee5658a7559211d7ed1bd65e762eed34fde2f5",
+    "processing": "Original screenshot retained without cropping; source/status banner added above image."
+  }
+]

@@ -1,0 +1,1358 @@
+{
+  "status": "STATIC_INSTALLATION_RESOURCES_ONLY_NOT_RUNTIME_UI_OBSERVATION",
+  "collected_at": "2026-11-07T13:09:09+08:00",
+  "installed_product": "滴答清单 Windows",
+  "file_version": "6.3.3.0",
+  "executable_sha256": "61551ab1e33215e757f50b218bdf74e0fe2884846242b99c69ecaad153359dc7",
+  "method": "Read-only PE/CLI managed resource metadata and BAML string/key references; never loaded or executed assemblies; no private task database/settings read.",
+  "limits": [
+    "Resource presence does not prove runtime visibility, enabled state, current theme, placement, context menu trigger, ordering, membership entitlement, or exact behavior.",
+    "Quoted labels are selected short research excerpts; application binaries, XAML/BAML bodies and complete translations are not distributed.",
+    "BAML numeric font/height values are WPF resource values, not measured physical pixels or CSS values."
+  ],
+  "parser_validation": {
+    "selected_baml_streams_fully_walked": 496,
+    "errors": 0
+  },
+  "view_references": {
+    "views/tabbar/leftmenubar.baml": [
+      {
+        "key": "Sync",
+        "text": "同步",
+        "offset": 7411
+      },
+      {
+        "key": "Notification",
+        "text": "提醒与通知",
+        "offset": 7815
+      },
+      {
+        "key": "More",
+        "text": "更多",
+        "offset": 8551
+      }
+    ],
+    "views/setting/featureconfig.baml": [
+      {
+        "key": "FeatureModule",
+        "text": "功能模块",
+        "offset": 1507
+      },
+      {
+        "key": "Calendar",
+        "text": "日历",
+        "offset": 1926
+      },
+      {
+        "key": "CalendarDesc",
+        "text": "在6种日历视图中规划任务。",
+        "offset": 2135
+      },
+      {
+        "key": "Matrix",
+        "text": "四象限",
+        "offset": 2482
+      },
+      {
+        "key": "MatrixDesc",
+        "text": "关注重要且紧急的事情。",
+        "offset": 2649
+      },
+      {
+        "key": "HabitView",
+        "text": "习惯打卡",
+        "offset": 2929
+      },
+      {
+        "key": "HabitDesc",
+        "text": "养成习惯，让自律成为日常。",
+        "offset": 3094
+      },
+      {
+        "key": "HabitSetting",
+        "text": "打卡设置",
+        "offset": 3450
+      },
+      {
+        "key": "PomoFocus",
+        "text": "番茄专注",
+        "offset": 3523
+      },
+      {
+        "key": "FocusDesc",
+        "text": "使用番茄计时，保持专注。",
+        "offset": 3678
+      },
+      {
+        "key": "FocusSetting",
+        "text": "专注设置",
+        "offset": 4014
+      },
+      {
+        "key": "CountdownTitle",
+        "text": "倒数纪念日",
+        "offset": 4092
+      },
+      {
+        "key": "countdown_tab_bar_desc",
+        "text": "记录每一个重要日子。",
+        "offset": 4267
+      },
+      {
+        "key": "AI",
+        "text": "AI",
+        "offset": 4552
+      },
+      {
+        "key": "AITabDesc",
+        "text": "用 AI 轻松管理任务。",
+        "offset": 4732
+      }
+    ],
+    "views/setting/locksettings.baml": [
+      {
+        "key": "AppSettings",
+        "text": "应用选项",
+        "offset": 1381
+      },
+      {
+        "key": "AutomaticallyStart",
+        "text": "开机自动启动",
+        "offset": 1565
+      },
+      {
+        "key": "AutomaticallyStartToTray",
+        "text": "开机启动至系统托盘",
+        "offset": 1777
+      },
+      {
+        "key": "LockPassword",
+        "text": "应用锁解锁密码",
+        "offset": 2022
+      },
+      {
+        "key": "SetPassword",
+        "text": "设置解锁密码",
+        "offset": 2132
+      },
+      {
+        "key": "DisablePassword",
+        "text": "清除解锁密码",
+        "offset": 2270
+      },
+      {
+        "key": "UnlockOnOpen",
+        "text": "打开应用时需要密码",
+        "offset": 2564
+      },
+      {
+        "key": "LockAfter",
+        "text": "键盘鼠标在",
+        "offset": 2769
+      },
+      {
+        "key": "LockAfterDetail",
+        "text": "分钟内无操作时自动锁定",
+        "offset": 3000
+      },
+      {
+        "key": "HideWidgetAfterLock",
+        "text": "锁定应用时，隐藏桌面小部件和便签",
+        "offset": 3238
+      },
+      {
+        "key": "LockUnlockTickTick",
+        "text": "锁定/解锁应用",
+        "offset": 3354
+      }
+    ],
+    "views/setting/smartrecognitionconfig.baml": [
+      {
+        "key": "SmartRecognition",
+        "text": "智能识别",
+        "offset": 1160
+      },
+      {
+        "key": "SmartDateParsing",
+        "text": "日期识别",
+        "offset": 1337
+      },
+      {
+        "key": "RecognizeDateText",
+        "text": "添加任务时，识别日期和时间信息并自动设置提醒。",
+        "offset": 1495
+      },
+      {
+        "key": "RemoveTimeText",
+        "text": "移除文本中的日期",
+        "offset": 1701
+      },
+      {
+        "key": "TagRecognition",
+        "text": "标签识别",
+        "offset": 1768
+      },
+      {
+        "key": "SelectTagsInTaskName",
+        "text": "添加任务时，你可以选择在任务标题中保留或移除标签文本",
+        "offset": 1813
+      },
+      {
+        "key": "RemoveTagsFromTaskName",
+        "text": "移除任务标题中的标签",
+        "offset": 1976
+      },
+      {
+        "key": "UrlParsing",
+        "text": "网址解析",
+        "offset": 2039
+      },
+      {
+        "key": "UrlParsingDescription",
+        "text": "当任务标题为网址时，将识别为网页标题以便查看。",
+        "offset": 2150
+      }
+    ],
+    "views/setting/newtaskdefault.baml": [
+      {
+        "key": "TaskDefault",
+        "text": "任务默认值",
+        "offset": 1653
+      },
+      {
+        "key": "TaskDefaultTips",
+        "text": "添加任务时，会自动填充的任务属性(默认值不影响特定条件的清单、分组等)。",
+        "offset": 1822
+      },
+      {
+        "key": "DefaultDate",
+        "text": "默认日期",
+        "offset": 2124
+      },
+      {
+        "key": "DefaultDateMode",
+        "text": "默认日期模式",
+        "offset": 2493
+      },
+      {
+        "key": "DefaultDuration",
+        "text": "默认时间段",
+        "offset": 2639
+      },
+      {
+        "key": "SetDefaultReminderInfo",
+        "text": "默认提醒（有时间的任务）",
+        "offset": 2816
+      },
+      {
+        "key": "SetDefaultAllDayInfo",
+        "text": "默认提醒（全天任务）",
+        "offset": 3875
+      },
+      {
+        "key": "DefaultPriority",
+        "text": "默认优先级",
+        "offset": 4594
+      },
+      {
+        "key": "DefaultTags",
+        "text": "默认标签",
+        "offset": 4750
+      },
+      {
+        "key": "DefaultList",
+        "text": "默认清单",
+        "offset": 5372
+      },
+      {
+        "key": "DefaultAddTo",
+        "text": "默认添加到",
+        "offset": 6048
+      },
+      {
+        "key": "OverdueSectionShowsAt",
+        "text": "已过期分组位置",
+        "offset": 6208
+      },
+      {
+        "key": "ResetTaskDefault",
+        "text": "重置任务默认值",
+        "offset": 6399
+      }
+    ],
+    "views/setting/smartlistconfig.baml": [
+      {
+        "key": "SmartList",
+        "text": "智能清单",
+        "offset": 1271
+      }
+    ],
+    "views/setting/minicalendarconfig.baml": [
+      {
+        "key": "item_mini_calendar",
+        "text": "Mini日历",
+        "offset": 1013
+      },
+      {
+        "key": "settings_mini_cal_tips",
+        "text": "使用小窗口日历，快速查看日程安排。",
+        "offset": 1155
+      },
+      {
+        "key": "show_mini_calendar_in_sidebar",
+        "text": "在侧边栏显示Mini日历",
+        "offset": 1447
+      }
+    ],
+    "views/setting/generalsettings.baml": [
+      {
+        "key": "Language",
+        "text": "语言",
+        "offset": 1526
+      }
+    ],
+    "views/setting/moresettingsconfig.baml": [
+      {
+        "key": "Network",
+        "text": "网络",
+        "offset": 1927
+      },
+      {
+        "key": "Proxy",
+        "text": "网络代理",
+        "offset": 2077
+      },
+      {
+        "key": "Manage",
+        "text": "管理",
+        "offset": 2197
+      }
+    ],
+    "views/theme/autodarksettingwindow.baml": [
+      {
+        "key": "FollowSystemDarkMode",
+        "text": "跟随系统切换暗色主题",
+        "offset": 1371
+      },
+      {
+        "key": "SwitchAuto",
+        "text": "自动切换",
+        "offset": 1681
+      },
+      {
+        "key": "NightTheme",
+        "text": "夜间主题",
+        "offset": 2059
+      },
+      {
+        "key": "OK",
+        "text": "确定",
+        "offset": 2512
+      },
+      {
+        "key": "Cancel",
+        "text": "取消",
+        "offset": 2577
+      }
+    ],
+    "views/theme/displaysettingspanel.baml": [],
+    "views/calendar/calendardisplaysettingwindow.baml": [
+      {
+        "key": "DisplaySetting",
+        "text": "显示设置",
+        "offset": 1563
+      },
+      {
+        "key": "Color",
+        "text": "颜色",
+        "offset": 1892
+      },
+      {
+        "key": "Style",
+        "text": "样式",
+        "offset": 2212
+      },
+      {
+        "key": "ShowWeekends",
+        "text": "显示周末",
+        "offset": 2524
+      },
+      {
+        "key": "ShowCompleted",
+        "text": "显示已完成",
+        "offset": 2757
+      },
+      {
+        "key": "ShowSubtask",
+        "text": "显示检查事项",
+        "offset": 2900
+      },
+      {
+        "key": "ShowAllRepeatCycles",
+        "text": "显示所有重复周期",
+        "offset": 3050
+      },
+      {
+        "key": "ShowHabit",
+        "text": "显示习惯",
+        "offset": 3302
+      },
+      {
+        "key": "ShowFocusRecord",
+        "text": "显示专注记录",
+        "offset": 3496
+      },
+      {
+        "key": "show_countdown_in_calendar",
+        "text": "显示倒数纪念日",
+        "offset": 3994
+      },
+      {
+        "key": "ShowCourse",
+        "text": "显示课程",
+        "offset": 4180
+      },
+      {
+        "key": "AdditionalTimeZone",
+        "text": "辅助时区",
+        "offset": 4414
+      },
+      {
+        "key": "AdditionalTimeZoneDesc",
+        "text": "启用后，日历视图的时间轴中可显示多个时区。",
+        "offset": 4586
+      },
+      {
+        "key": "TimeZoneSettings",
+        "text": "时区设置",
+        "offset": 4741
+      }
+    ],
+    "views/kanban/kanbandisplaysettingwindow.baml": [
+      {
+        "key": "DisplaySetting",
+        "text": "显示设置",
+        "offset": 1368
+      },
+      {
+        "key": "ShowDateBy",
+        "text": "日期显示为",
+        "offset": 1618
+      },
+      {
+        "key": "KanbanSize",
+        "text": "看板尺寸",
+        "offset": 2006
+      },
+      {
+        "key": "ShowColumnColor",
+        "text": "显示看板颜色",
+        "offset": 2244
+      },
+      {
+        "key": "ShowInputBox",
+        "text": "显示添加输入框",
+        "offset": 2776
+      },
+      {
+        "key": "ShowSubtask",
+        "text": "显示检查事项",
+        "offset": 2926
+      }
+    ],
+    "views/timeline/timelinesettingswindow.baml": [
+      {
+        "key": "DisplaySetting",
+        "text": "显示设置",
+        "offset": 1375
+      },
+      {
+        "key": "TaskBlocksColor",
+        "text": "任务块颜色",
+        "offset": 1590
+      },
+      {
+        "key": "TimelineColorSetInfo",
+        "text": "任务块的颜色可以根据清单、标签、优先级显示。",
+        "offset": 1928
+      },
+      {
+        "key": "ShowWeek",
+        "text": "显示星期",
+        "offset": 2035
+      },
+      {
+        "key": "ShowSubtask",
+        "text": "显示检查事项",
+        "offset": 2209
+      }
+    ],
+    "views/markdown/editormenuex.baml": [
+      {
+        "key": "BoldTip",
+        "text": "**加粗** (Ctrl+B)",
+        "offset": 2694
+      },
+      {
+        "key": "ItalicTip",
+        "text": "*斜体* (Ctrl+I)",
+        "offset": 2948
+      },
+      {
+        "key": "StrikeThroughTip",
+        "text": "~~删除线~~ (Ctrl+Shift+X)",
+        "offset": 3184
+      },
+      {
+        "key": "UnderLineTip",
+        "text": "~下划线~(Ctrl+U)",
+        "offset": 3453
+      },
+      {
+        "key": "Highlight",
+        "text": "高亮",
+        "offset": 3798
+      },
+      {
+        "key": "Link",
+        "text": "链接",
+        "offset": 7862
+      }
+    ],
+    "views/markdown/ordereditmenu.baml": [
+      {
+        "key": "TextStyle",
+        "text": "文本样式",
+        "offset": 1853
+      },
+      {
+        "key": "continue_numbering",
+        "text": "继续之前的编号",
+        "offset": 1883
+      },
+      {
+        "key": "TextStyle",
+        "text": "文本样式",
+        "offset": 2031
+      },
+      {
+        "key": "start_a_new_list",
+        "text": "开始新列表",
+        "offset": 2059
+      },
+      {
+        "key": "TextStyle",
+        "text": "文本样式",
+        "offset": 2188
+      },
+      {
+        "key": "customize_numbering_value",
+        "text": "修改编号",
+        "offset": 2225
+      },
+      {
+        "key": "the_new_number_is",
+        "text": "当前编号值为",
+        "offset": 3261
+      },
+      {
+        "key": "OK",
+        "text": "确定",
+        "offset": 3390
+      },
+      {
+        "key": "Cancel",
+        "text": "取消",
+        "offset": 3495
+      }
+    ],
+    "views/markdown/editormenulink.baml": [
+      {
+        "key": "EditLink",
+        "text": "编辑链接",
+        "offset": 1567
+      },
+      {
+        "key": "CopyTaskLink",
+        "text": "复制链接",
+        "offset": 1702
+      }
+    ],
+    "views/mainlistview/detailview/linkparenttaskmenu.baml": [
+      {
+        "key": "Edit",
+        "text": "编辑",
+        "offset": 1636
+      },
+      {
+        "key": "UnlinkParentTask",
+        "text": "取消关联",
+        "offset": 1857
+      }
+    ],
+    "views/filter/normalfiltercontrol.baml": [
+      {
+        "key": "lists",
+        "text": "清单",
+        "offset": 3045
+      },
+      {
+        "key": "FilterExpiredToolTip",
+        "text": "由于你删除或归档了所有选中的清单，导致原筛选条件失效，请重新设置。",
+        "offset": 3159
+      },
+      {
+        "key": "Tags",
+        "text": "标签",
+        "offset": 4110
+      },
+      {
+        "key": "date",
+        "text": "日期",
+        "offset": 4602
+      },
+      {
+        "key": "priority",
+        "text": "优先级",
+        "offset": 5098
+      },
+      {
+        "key": "All",
+        "text": "所有",
+        "offset": 5423
+      },
+      {
+        "key": "high",
+        "text": "高",
+        "offset": 5549
+      },
+      {
+        "key": "medium",
+        "text": "中",
+        "offset": 5662
+      },
+      {
+        "key": "low",
+        "text": "低",
+        "offset": 5747
+      },
+      {
+        "key": "none",
+        "text": "无",
+        "offset": 5833
+      },
+      {
+        "key": "assignee",
+        "text": "指派人",
+        "offset": 6023
+      },
+      {
+        "key": "ContentInclude",
+        "text": "内容包含",
+        "offset": 6551
+      },
+      {
+        "key": "KeywordsHint",
+        "text": "输入任务关键词",
+        "offset": 6697
+      },
+      {
+        "key": "TaskType",
+        "text": "任务类型",
+        "offset": 6845
+      },
+      {
+        "key": "All",
+        "text": "所有",
+        "offset": 7026
+      },
+      {
+        "key": "Task",
+        "text": "任务",
+        "offset": 7136
+      },
+      {
+        "key": "Notes",
+        "text": "笔记",
+        "offset": 7267
+      }
+    ],
+    "views/setting/aifeaturesconfig.baml": [
+      {
+        "key": "AIUsage",
+        "text": "用量",
+        "offset": 2109
+      },
+      {
+        "key": "AIMonthlyLimit",
+        "text": "每月限额",
+        "offset": 2263
+      },
+      {
+        "key": "Privacy",
+        "text": "隐私",
+        "offset": 2409
+      },
+      {
+        "key": "AIHelpImproveTitle",
+        "text": "帮助我们改进 AI",
+        "offset": 2821
+      },
+      {
+        "key": "AIHelpImproveDesc",
+        "text": "开启后，你的使用数据将用于优化 AI 体验，我们会严格保护你的隐私安全。",
+        "offset": 2870
+      },
+      {
+        "key": "Integrations",
+        "text": "关联",
+        "offset": 3058
+      },
+      {
+        "key": "MCPServers",
+        "text": "MCP 服务器",
+        "offset": 3295
+      }
+    ]
+  },
+  "global_labels_not_assigned_to_any_context_menu": {
+    "LeftMenuProjectGroupAllTasks": {
+      "text": "所有任务",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 107367
+    },
+    "LeftMenuProjectCloseList": {
+      "text": "已归档的清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 119824
+    },
+    "LeftMenuProjectIsCloseList": {
+      "text": "关闭清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 126197
+    },
+    "NewFolder": {
+      "text": "新文件夹",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 107566
+    },
+    "EditFolder": {
+      "text": "编辑文件夹",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 122385
+    },
+    "AddFolder": {
+      "text": "添加文件夹",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 127148
+    },
+    "AddProject": {
+      "text": "添加清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 151392
+    },
+    "AddTag": {
+      "text": "添加标签",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 111259
+    },
+    "EditTag": {
+      "text": "编辑标签",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 111312
+    },
+    "DeleteTag": {
+      "text": "删除标签",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 111334
+    },
+    "MergeTags": {
+      "text": "合并标签到…",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 112678
+    },
+    "ResetTagOrder": {
+      "text": "恢复默认标签顺序",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 172684
+    },
+    "ResetProjectOrder": {
+      "text": "恢复默认清单顺序",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 113952
+    },
+    "CopyTask": {
+      "text": "创建副本",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 127052
+    },
+    "MoveTaskToProject": {
+      "text": "{0} 被移动到 \"{1}\" 清单下",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 157824
+    },
+    "MoveTaskToTag": {
+      "text": "{0} 被移动到 \"{1}\" 标签下",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 157866
+    },
+    "CopyTaskLink": {
+      "text": "复制链接",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 120097
+    },
+    "TaskComplete": {
+      "text": "完成",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 166155
+    },
+    "TaskAbandon": {
+      "text": "放弃",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 170320
+    },
+    "TaskReopen": {
+      "text": "重新开始",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 170298
+    },
+    "TaskUndone": {
+      "text": "取消完成",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 171779
+    },
+    "TaskDone": {
+      "text": "完成",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 171801
+    },
+    "TaskDeleted": {
+      "text": "任务已被删除",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 171941
+    },
+    "AddSection": {
+      "text": "添加分组",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 119259
+    },
+    "AddSectionUpper": {
+      "text": "在上方添加分组",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 134183
+    },
+    "AddSectionBelow": {
+      "text": "在下方添加分组",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 134214
+    },
+    "AddSubTask": {
+      "text": "添加子任务",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 119513
+    },
+    "FoldAllTask": {
+      "text": "折叠所有子任务",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 166853
+    },
+    "ExpandAllTask": {
+      "text": "展开所有子任务",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 166884
+    },
+    "CreateTask": {
+      "text": "开始记录",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 131690
+    },
+    "NewTask": {
+      "text": "新任务",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 134462
+    },
+    "TaskDetail": {
+      "text": "任务详情",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 137625
+    },
+    "SortByTag": {
+      "text": "按标签",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 120021
+    },
+    "SortByProject": {
+      "text": "按清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 163626
+    },
+    "ByTaskDate": {
+      "text": "按任务日期",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 163645
+    },
+    "QuickSetProject": {
+      "text": "添加/移动任务到指定清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 126844
+    },
+    "CenterAddTaskTextBoxPreviewText": {
+      "text": "添加{1}至“{0}”，回车即可创建",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 143966
+    },
+    "CenterAddTaskTextBoxPreviewTextInbox": {
+      "text": "添加任务至\"收集箱\"，回车即可创建",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 144053
+    },
+    "TaskDefault": {
+      "text": "任务默认值",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 105762
+    },
+    "TaskSetShortcuts": {
+      "text": "任务编辑快捷键",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 165732
+    },
+    "TaskOperation": {
+      "text": "任务操作",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 165763
+    },
+    "QuicklyAddTaskShortcutDescription": {
+      "text": "使用此快捷键，你不再需要打开{0}主窗口，即可一键添加任务。",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 138223
+    },
+    "Calendar": {
+      "text": "日历",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 105377
+    },
+    "Matrix": {
+      "text": "四象限",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 170634
+    },
+    "HabitView": {
+      "text": "习惯打卡",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 175777
+    },
+    "PomoFocus": {
+      "text": "番茄专注",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 175755
+    },
+    "priority": {
+      "text": "优先级",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 105180
+    },
+    "high": {
+      "text": "高",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 124797
+    },
+    "medium": {
+      "text": "中",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 124810
+    },
+    "low": {
+      "text": "低",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 124823
+    },
+    "none": {
+      "text": "无",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 106277
+    },
+    "SmartList": {
+      "text": "智能清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 120170
+    },
+    "ShowTags": {
+      "text": "新标签将隐藏",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 133086
+    },
+    "TaskList": {
+      "text": "任务清单",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 161198
+    },
+    "Inbox": {
+      "text": "收集箱",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 105066
+    },
+    "Today": {
+      "text": "今天",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 105030
+    },
+    "Tomorrow": {
+      "text": "明天",
+      "resource": "resource/stringresource/stringresource.zh-cn.baml",
+      "offset": 105231
+    }
+  },
+  "font_normal": {
+    "Font10": {
+      "offset": 2856,
+      "scalar_texts": [
+        "10"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font11": {
+      "offset": 2868,
+      "scalar_texts": [
+        "11"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font12": {
+      "offset": 2880,
+      "scalar_texts": [
+        "12"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font13": {
+      "offset": 2892,
+      "scalar_texts": [
+        "13"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font14": {
+      "offset": 2904,
+      "scalar_texts": [
+        "14"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font16": {
+      "offset": 2916,
+      "scalar_texts": [
+        "16"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font18": {
+      "offset": 2928,
+      "scalar_texts": [
+        "18"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font19": {
+      "offset": 2940,
+      "scalar_texts": [
+        "19"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Font20": {
+      "offset": 2952,
+      "scalar_texts": [
+        "20"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Height28": {
+      "offset": 3035,
+      "scalar_texts": [
+        "28"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Height32": {
+      "offset": 3059,
+      "scalar_texts": [
+        "32"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Height40": {
+      "offset": 3107,
+      "scalar_texts": [
+        "40"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Height48": {
+      "offset": 3155,
+      "scalar_texts": [
+        "48"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "Height54": {
+      "offset": 3191,
+      "scalar_texts": [
+        "54"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    }
+  },
+  "color_resources": {
+    "white": {
+      "offset": 8355,
+      "scalar_texts": [
+        "#FFFFFFFF"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "black": {
+      "offset": 8830,
+      "scalar_texts": [
+        "#FF191919"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "black_54": {
+      "offset": 9153,
+      "scalar_texts": [
+        "#89191919"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "black_36": {
+      "offset": 9077,
+      "scalar_texts": [
+        "#5C191919"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "black_12": {
+      "offset": 8982,
+      "scalar_texts": [
+        "#20191919"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "black_06": {
+      "offset": 8925,
+      "scalar_texts": [
+        "#0F191919"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "primary_blue_100": {
+      "offset": 12376,
+      "scalar_texts": [
+        "#FF4772FA"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "primary_blue_10": {
+      "offset": 12224,
+      "scalar_texts": [
+        "#1A4772FA"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "primary_blue_5": {
+      "offset": 12243,
+      "scalar_texts": [
+        "#0C4772FA"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "color_#E13E39": {
+      "offset": 9438,
+      "scalar_texts": [
+        "#FFE13E39"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "color_#FAA80C": {
+      "offset": 9400,
+      "scalar_texts": [
+        "#FFFAA80C"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    }
+  },
+  "default_theme": {
+    "OutDateColor": {
+      "offset": 8880,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "color_#E13E39"
+      ]
+    },
+    "WhiteThemeDivider": {
+      "offset": 8892,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "black_12"
+      ]
+    },
+    "MainWindow": {
+      "offset": 8904,
+      "scalar_texts": [
+        "#FFF2F5FE"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "LeftBarIconColor": {
+      "offset": 8923,
+      "scalar_texts": [
+        "#FFFFFF"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "ProjectMenuBaseColor": {
+      "offset": 8940,
+      "scalar_texts": [
+        "#FFFFFF"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "LeftBarBackColorTop": {
+      "offset": 8957,
+      "scalar_texts": [
+        "#4772FA"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "LeftBarBackColorBottom": {
+      "offset": 8974,
+      "scalar_texts": [
+        "#4772FA"
+      ],
+      "property_strings": [],
+      "string_refs": []
+    },
+    "PriorityHighColor": {
+      "offset": 9063,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "color_#E13E39"
+      ]
+    },
+    "PriorityMiddleColor": {
+      "offset": 9087,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "color_#FAA80C"
+      ]
+    },
+    "PriorityLowColor": {
+      "offset": 9075,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "primary_blue_100"
+      ]
+    },
+    "CardHoverColor": {
+      "offset": 9230,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "primary_blue_10"
+      ]
+    },
+    "ProjectHoverBackGround": {
+      "offset": 9218,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "ProjectHoverColor"
+      ]
+    },
+    "PrimaryColor10": {
+      "offset": 9278,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "primary_blue_10"
+      ]
+    },
+    "PrimaryColor5": {
+      "offset": 9290,
+      "scalar_texts": [],
+      "property_strings": [],
+      "string_refs": [
+        "primary_blue_5"
+      ]
+    }
+  },
+  "resource_name_inventory": [
+    "views/setting/featureconfig.baml",
+    "views/detail/projectactivitypanel.baml",
+    "views/tabbar/leftmenubar.baml",
+    "views/mainlistview/tasklist/tasklistviewoptionsdialog.baml",
+    "views/detail/detailhintpanel.baml",
+    "views/setting/locksettings.baml",
+    "views/setting/aifeaturesconfig.baml",
+    "views/setting/premiumconfig.baml",
+    "views/detail/coursedetailcontrol.baml",
+    "views/setting/smartrecognitionconfig.baml",
+    "views/detail/attachmentimagedisplaycontrol.baml",
+    "views/detail/stickycolorselector.baml",
+    "views/detail/taskdetailbatchcontrol.baml",
+    "views/setting/moresettingsconfig.baml",
+    "views/detail/taskdetailwindow.baml",
+    "views/detail/attachmentfiledisplaycontrol.baml",
+    "views/setting/newtaskdefault.baml",
+    "views/detail/taskdetailpopup.baml",
+    "views/setting/generalsettings.baml",
+    "views/detail/taskdetailbottomcontrol.baml",
+    "views/setting/smartlistconfig.baml",
+    "views/detail/attachmentoptionpanel.baml",
+    "views/detail/taskdetailhead.baml",
+    "views/setting/minicalendarconfig.baml",
+    "views/mainlistview/detailview/notionblock/notionblockresources.baml",
+    "views/detail/taskstickywindow.baml",
+    "views/detail/taskexportwindow.baml",
+    "views/mainlistview/detailview/googleeventinfoblock/taskgoogleeventinfopanel.baml",
+    "views/mainlistview/detailview/linkparenttaskmenu.baml",
+    "views/detail/taskdetailwindows.baml",
+    "views/mainlistview/projectlist/minicalendar.baml",
+    "views/detail/taskdetailmorecontent.baml",
+    "views/detail/taskprogresscontrol.baml"
+  ]
+}

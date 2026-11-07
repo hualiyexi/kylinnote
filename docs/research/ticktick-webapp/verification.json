@@ -1,0 +1,187 @@
+{
+  "date": "2026-11-07",
+  "scope": "Research document delivery checks only; no KylinNote build, product or Chromium78 test.",
+  "repositoryHead": "b6c19f3",
+  "markdownFiles": 15,
+  "localLinksChecked": 139,
+  "markdownAnchorsChecked": 3,
+  "privateMarkersChecked": 13,
+  "privateTextHits": [],
+  "pngCount": 16,
+  "listedPngCount": 16,
+  "images": [
+    {
+      "file": "assets/01-global/g01-workspace-redacted.png",
+      "sha256": "c32c2603d05f7f7571e4f6a57bba9e89c9a7200df2daaae381bf4030ed179426",
+      "size": [
+        1500,
+        976
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/01-global/g02-detail-and-date-redacted.png",
+      "sha256": "1676a382aa704c4e6f99af7c7dec7552c9e5adf927886999785825f9f7f070f9",
+      "size": [
+        1500,
+        976
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/02-navigation/n01-search-empty-result.png",
+      "sha256": "95e1e66b9b7f92dc24c3849abb1b5aaba66003b4944d823dba7da0a2175fa96a",
+      "size": [
+        560,
+        458
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/03-tasks/t01-date-picker.png",
+      "sha256": "2ab1081d0175b7a03f8087aa66336167f5818a4d61e0888a3e621c4d0b53a530",
+      "size": [
+        260,
+        576
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/03-tasks/t02-detail-footer.png",
+      "sha256": "a1c46c4bfacdad130f9ee5ece2831d77bee21ca88333918ea488178c7cf02e43",
+      "size": [
+        486,
+        84
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/04-context-menus/m01-smartlist.png",
+      "sha256": "645c0787aa7c77276b6eeedfefcad6167d8c3e86f9cd7047434763d9d575a7c6",
+      "size": [
+        154,
+        70
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/04-context-menus/m02-inbox.png",
+      "sha256": "8884d762b1f0ca5b22b7c50fdce3802e11d604ed22f61c52e77cacbc82aea018",
+      "size": [
+        154,
+        138
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/04-context-menus/m03-task.png",
+      "sha256": "87d3ff0b68c97532aac8335d74d09e8e65cacc2d9221d7c2246bb443e193ec0c",
+      "size": [
+        183,
+        569
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/04-context-menus/m04-workspace.png",
+      "sha256": "29584806c4a10c9aa000200bccaa100bfc07caa945fb32a38787380d52d05ece",
+      "size": [
+        156,
+        245
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/04-context-menus/m05-detail.png",
+      "sha256": "96528df5e632b2afd196000c753f7527f005fc2bc14f159549d86e31ac6d607f",
+      "size": [
+        119,
+        524
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/04-context-menus/m06-filter.png",
+      "sha256": "8b0b8f31cffec5f09b61df38248fe7b6178634d06922b44dc25dc8cfbb141609",
+      "size": [
+        154,
+        168
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/05-views/v01-matrix.png",
+      "sha256": "68db091eb6b616f9a8d6c76b0b207c9a8336bafc828ee8b48ffb674553c2be18",
+      "size": [
+        1500,
+        976
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/05-views/v02-focus.png",
+      "sha256": "208129b94b97bb44ff8dba1903b7004451db9113389fb2120ca85233f5ff96d7",
+      "size": [
+        1500,
+        976
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/05-views/v03-habit.png",
+      "sha256": "675c0e5a69500f1c7ae243e24fa651b1a5c328f68f414e445da18ae557a78921",
+      "size": [
+        1500,
+        976
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/05-views/v04-timeline.png",
+      "sha256": "cfb21e4381197a6f7ea73aa1fa45032185efeabd5bba6f35128f570478cedfec",
+      "size": [
+        1500,
+        976
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    },
+    {
+      "file": "assets/06-settings/s01-modules.png",
+      "sha256": "669185ba30c86b7b64958accec269796e29e3ea79c3eefeefb4830e8e691e566",
+      "size": [
+        800,
+        716
+      ],
+      "integrity": true,
+      "visualReview": "pass"
+    }
+  ],
+  "visualReview": {
+    "initialPass": 10,
+    "initialRepairNeeded": 6,
+    "repairedImagesChanged": 6,
+    "originalPassImagesHashUnchanged": 10,
+    "recheckPass": 6,
+    "finalPass": 16,
+    "method": "Independent image read of 16 outputs, then re-read only six repaired outputs."
+  },
+  "trackedDiffEmpty": true,
+  "stagedDiffEmpty": true,
+  "issues": [],
+  "passed": true
+}
