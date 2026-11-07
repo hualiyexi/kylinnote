@@ -93,7 +93,29 @@ try {
         '-DKYLINNOTE_WITH_DBUS=OFF', '-DBUILD_TESTING=ON')
     Invoke-Checked $CMake @('--build', $BuildDir, '--config', $Configuration, '--parallel', "$Parallel")
     if (-not $SkipTests) {
-        Invoke-Checked $CTest @('--test-dir', $BuildDir, '-C', $Configuration, '--output-on-failure', '--no-tests=error')
+        # CTest 在超时时不打印 --output-on-failure 捕获的内容。失败时补打平台
+        # 插件清单和 LastTest.log，用来区分"插件没加载"和"测试逻辑卡住"。
+        $env:QT_DEBUG_PLUGINS = '1'
+        try {
+            Invoke-Checked $CTest @('--test-dir', $BuildDir, '-C', $Configuration,
+                '--output-on-failure', '--no-tests=error', '--timeout', '25')
+        } catch {
+            $Platforms = Join-Path $QtRoot 'plugins/platforms'
+            if (Test-Path -LiteralPath $Platforms) {
+                Write-Host '=== Qt platform plugins ==='
+                Get-ChildItem -LiteralPath $Platforms | ForEach-Object { Write-Host " - $($_.Name)" }
+            } else {
+                Write-Host "=== Qt platform plugins directory missing: $Platforms ==="
+            }
+            $TestLog = Join-Path $BuildDir 'Testing/Temporary/LastTest.log'
+            if (Test-Path -LiteralPath $TestLog) {
+                Write-Host '=== LastTest.log (tail 120) ==='
+                Get-Content -LiteralPath $TestLog -Tail 120
+            }
+            throw
+        } finally {
+            Remove-Item Env:\QT_DEBUG_PLUGINS -ErrorAction SilentlyContinue
+        }
     }
     Invoke-Checked $CMake @('--install', $BuildDir, '--config', $Configuration, '--prefix', $StageDir)
     $App = Join-Path $StageDir 'kylinnote.exe'
