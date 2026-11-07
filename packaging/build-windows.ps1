@@ -121,11 +121,20 @@ try {
                 Write-Host '=== test_tasks.exe 的导入表 ==='
                 & $Objdump -p $Probe | Select-String 'DLL Name' |
                     ForEach-Object { Write-Host ("  {0}" -f $_.Line.Trim()) }
+                # Qt 5.12 的 Qt5Gui 在 Windows 上依赖 d3dcompiler_47.dll，它在
+                # Qt 仓库里是独立归档；--archives 过滤掉它会导致加载期失败。
+                $GuiDll = Join-Path $QtRoot 'bin/Qt5Gui.dll'
+                if (Test-Path -LiteralPath $GuiDll) {
+                    Write-Host '=== Qt5Gui.dll 的导入表 ==='
+                    & $Objdump -p $GuiDll | Select-String 'DLL Name' |
+                        ForEach-Object { Write-Host ("  {0}" -f $_.Line.Trim()) }
+                }
+                $D3d = Join-Path $QtRoot 'bin/d3dcompiler_47.dll'
+                Write-Host ("=== d3dcompiler_47.dll 是否随 Qt 提供: {0} ===" -f (Test-Path -LiteralPath $D3d))
             }
             $Probes = @(
                 @{ Name = 'default'; Platform = $null },
-                @{ Name = 'windows'; Platform = 'windows' },
-                @{ Name = 'minimal'; Platform = 'minimal' }
+                @{ Name = 'windows'; Platform = 'windows' }
             )
             foreach ($Case in $Probes) {
                 if ($null -eq $Case.Platform) {
@@ -138,8 +147,17 @@ try {
                 $CaseProc = Start-Process -FilePath $Probe -ArgumentList '-functions' -NoNewWindow -PassThru `
                     -RedirectStandardOutput $CaseOut -RedirectStandardError $CaseErr
                 if (-not $CaseProc.WaitForExit(12000)) {
-                    $CaseProc.Kill()
+                    # 还活着：看它有没有弹窗、以及 DLL 加载进行到哪一步。
                     Write-Host ("=== probe[{0}] 超时 ===" -f $Case.Name)
+                    try {
+                        $CaseProc.Refresh()
+                        Write-Host ("  窗口标题: '{0}'" -f $CaseProc.MainWindowTitle)
+                        $Loaded = @($CaseProc.Modules | ForEach-Object { $_.ModuleName })
+                        Write-Host ("  已加载模块 {0} 个: {1}" -f $Loaded.Count, ($Loaded -join ', '))
+                    } catch {
+                        Write-Host ("  模块枚举失败: {0}" -f $_.Exception.Message)
+                    }
+                    $CaseProc.Kill()
                 } else {
                     Write-Host ("=== probe[{0}] 退出码 {1} ===" -f $Case.Name, $CaseProc.ExitCode)
                 }
