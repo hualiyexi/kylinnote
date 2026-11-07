@@ -287,7 +287,9 @@ int main(int argc, char **argv) {
     # bin/qt.conf 让 windeployqt 正确解析 Qt 前缀（见测试段的说明）。
     Set-Content -LiteralPath (Join-Path $QtRoot 'bin/qt.conf') -Encoding ASCII `
         -Value "[Paths]`nPrefix = ..`n"
-    Invoke-Checked $WinDeployQt @('--compiler-runtime', '--force', '--no-patchqt',
+    # 必须显式 --release：Qt 5.12 的自动检测会把这里判成 debug，部署出
+    # Qt5Cored.dll 一类带 d 后缀的库，与下面按 release 名字的校验对不上。
+    Invoke-Checked $WinDeployQt @('--release', '--compiler-runtime', '--force', '--no-patchqt',
         '--verbose', '2', '--no-translations', '--svg', '--network',
         '--dir', $StageDir, $App)
     # Explicitly require the features that windeployqt's dependency scan can miss.
