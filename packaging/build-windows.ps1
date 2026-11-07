@@ -110,29 +110,49 @@ try {
             })
             Write-Host ("{0}: {1}" -f $LibName, $(if ($Hits.Count) { $Hits -join ' | ' } else { '<none>' }))
         }
-        # 预检：-functions 只列出测试函数就退出，用来把 QApplication 构造
-        # 与测试逻辑分开。它挂住说明平台初始化有问题，能退出说明问题在测试内。
+        # 预检：-functions 只列出测试函数就退出，用来把 QApplication 构造与
+        # 测试逻辑分开。分三组平台对照，并打开插件加载日志，判断是平台插件
+        # 初始化卡住，还是进程在进入 Qt 之前就没有起来。
+        $env:QT_DEBUG_PLUGINS = '1'
         $Probe = Join-Path $BuildDir 'bin/test_tasks.exe'
         if (Test-Path -LiteralPath $Probe) {
-            $ProbeOut = Join-Path $BuildDir 'probe.out.txt'
-            $ProbeErr = Join-Path $BuildDir 'probe.err.txt'
-            $ProbeProc = Start-Process -FilePath $Probe -ArgumentList '-functions' -NoNewWindow -PassThru `
-                -RedirectStandardOutput $ProbeOut -RedirectStandardError $ProbeErr
-            if (-not $ProbeProc.WaitForExit(15000)) {
-                $ProbeProc.Kill()
-                Write-Host '=== probe: test_tasks.exe -functions 超时（QApplication 未构造完成）==='
-            } else {
-                Write-Host ("=== probe: test_tasks.exe -functions 退出码 {0} ===" -f $ProbeProc.ExitCode)
+            $Objdump = Join-Path $CompilerRoot 'bin/objdump.exe'
+            if (Test-Path -LiteralPath $Objdump) {
+                Write-Host '=== test_tasks.exe 的导入表 ==='
+                & $Objdump -p $Probe | Select-String 'DLL Name' |
+                    ForEach-Object { Write-Host ("  {0}" -f $_.Line.Trim()) }
             }
-            foreach ($ProbeFile in @($ProbeOut, $ProbeErr)) {
-                if (Test-Path -LiteralPath $ProbeFile) {
-                    Get-Content -LiteralPath $ProbeFile -Tail 12 | ForEach-Object { Write-Host "  | $_" }
+            $Probes = @(
+                @{ Name = 'default'; Platform = $null },
+                @{ Name = 'windows'; Platform = 'windows' },
+                @{ Name = 'minimal'; Platform = 'minimal' }
+            )
+            foreach ($Case in $Probes) {
+                if ($null -eq $Case.Platform) {
+                    Remove-Item Env:\QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+                } else {
+                    $env:QT_QPA_PLATFORM = $Case.Platform
+                }
+                $CaseOut = Join-Path $BuildDir ("probe-$($Case.Name).out.txt")
+                $CaseErr = Join-Path $BuildDir ("probe-$($Case.Name).err.txt")
+                $CaseProc = Start-Process -FilePath $Probe -ArgumentList '-functions' -NoNewWindow -PassThru `
+                    -RedirectStandardOutput $CaseOut -RedirectStandardError $CaseErr
+                if (-not $CaseProc.WaitForExit(12000)) {
+                    $CaseProc.Kill()
+                    Write-Host ("=== probe[{0}] 超时 ===" -f $Case.Name)
+                } else {
+                    Write-Host ("=== probe[{0}] 退出码 {1} ===" -f $Case.Name, $CaseProc.ExitCode)
+                }
+                foreach ($ProbeFile in @($CaseOut, $CaseErr)) {
+                    if (Test-Path -LiteralPath $ProbeFile) {
+                        Get-Content -LiteralPath $ProbeFile -Tail 15 | ForEach-Object { Write-Host "  | $_" }
+                    }
                 }
             }
+            Remove-Item Env:\QT_QPA_PLATFORM -ErrorAction SilentlyContinue
         }
         # CTest 在超时时不打印 --output-on-failure 捕获的内容。失败时补打平台
         # 插件清单和 LastTest.log，用来区分"插件没加载"和"测试逻辑卡住"。
-        $env:QT_DEBUG_PLUGINS = '1'
         try {
             Invoke-Checked $CTest @('--test-dir', $BuildDir, '-C', $Configuration,
                 '--output-on-failure', '--no-tests=error')
