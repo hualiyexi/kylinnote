@@ -39,34 +39,34 @@ jobs:
               sed -i -E "s|https?://(archive.ubuntu.com/ubuntu|security.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports)|http://old-releases.ubuntu.com/ubuntu|g" /etc/apt/sources.list
               apt-get update -o APT::Update::Error-Mode=any
             fi
-            packages=(dist/kylinnote_*_arm64.deb)
+            packages=(dist/kylinlist_*_arm64.deb)
             test "${#packages[@]}" -eq 1
             apt-get install -y --no-install-recommends "./${packages[0]}"
-            test -x /usr/bin/kylinnote
-            test "$(dpkg-query -W -f="\${Status}" kylinnote)" = "install ok installed"
+            test -x /usr/bin/kylinlist
+            test "$(dpkg-query -W -f="\${Status}" kylinlist)" = "install ok installed"
           '
 
       - name: Prepare clean runtime image with base graphics dependencies only
         run: |
-          bundles=(dist/kylinnote_*_arm64_bundle.deb)
+          bundles=(dist/kylinlist_*_arm64_bundle.deb)
           test "${#bundles[@]}" -eq 1
-          docker run --name kylinnote-runtime-base --platform linux/arm64 \
+          docker run --name kylinlist-runtime-base --platform linux/arm64 \
             -v "$PWD":/src:ro -w /src ubuntu:20.04 \
             bash packaging/test-bundle.sh --prepare "${bundles[0]}"
-          docker commit kylinnote-runtime-base kylinnote-runtime:test
-          docker rm kylinnote-runtime-base
+          docker commit kylinlist-runtime-base kylinlist-runtime:test
+          docker rm kylinlist-runtime-base
 
       - name: Offline dpkg install, every ELF dependency and real X11 app smoke
         run: |
-          bundles=(dist/kylinnote_*_arm64_bundle.deb)
+          bundles=(dist/kylinlist_*_arm64_bundle.deb)
           docker run --rm --platform linux/arm64 --network none \
-            -v "$PWD":/src:ro -w /src kylinnote-runtime:test \
+            -v "$PWD":/src:ro -w /src kylinlist-runtime:test \
             bash packaging/test-bundle.sh "${bundles[0]}"
 
       - name: Upload ARM64 packages
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kylinnote-linux-arm64
+          name: kylinlist-linux-arm64
           path: dist/*.deb
           if-no-files-found: error
           retention-days: 14
@@ -110,15 +110,15 @@ jobs:
 
       - name: Install, start, uninstall and verify user data survives
         run: |
-          $target = "$env:RUNNER_TEMP/kylinnote-install-test"
-          $data = "$env:RUNNER_TEMP/kylinnote-data-test"
-          ./packaging/test-windows.ps1 -Installer "$PWD/dist/KylinNote-1.1.0-Windows-x64-Setup.exe" `
+          $target = "$env:RUNNER_TEMP/kylinlist-install-test"
+          $data = "$env:RUNNER_TEMP/kylinlist-data-test"
+          ./packaging/test-windows.ps1 -Installer "$PWD/dist/KylinList-1.1.0-Windows-x64-Setup.exe" `
             -InstallDir $target -DataDir $data
 
       - name: Upload portable and installer packages
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kylinnote-windows-x64
+          name: kylinlist-windows-x64
           path: |
             dist/*.zip
             dist/*-Setup.exe
@@ -135,7 +135,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8.0.2
         with:
-          pattern: kylinnote-*
+          pattern: kylinlist-*
           merge-multiple: true
           path: dist
       - name: Release artifacts for this existing tag
