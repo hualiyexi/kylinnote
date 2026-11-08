@@ -1,5 +1,5 @@
-#ifndef KYLINNOTE_TITLEBAR_H
-#define KYLINNOTE_TITLEBAR_H
+#ifndef KYLINLIST_TITLEBAR_H
+#define KYLINLIST_TITLEBAR_H
 
 #include "../Common.h"
 
@@ -8,7 +8,7 @@
 class QToolButton;
 class QMouseEvent;
 
-namespace kn {
+namespace kl {
 
 // 无边框窗口拖动条；关闭仅取消桌面投影，不删除任务。
 class TitleBar : public QWidget {
@@ -38,6 +38,6 @@ private:
     bool m_dragging = false;
 };
 
-}  // namespace kn
+}  // namespace kl
 
-#endif  // KYLINNOTE_TITLEBAR_H
+#endif  // KYLINLIST_TITLEBAR_H

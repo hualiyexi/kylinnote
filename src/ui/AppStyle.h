@@ -3,7 +3,7 @@
 #include <QFont>
 #include <QString>
 class QApplication;
-namespace kn {
+namespace kl {
 namespace AppStyle {
 
 // 颜色令牌：主面板、委托与详情共用同一套值，避免各处硬编码。
@@ -51,4 +51,4 @@ QFont font(Font role);
 void apply(QApplication& app);
 QString previewCss();
 }  // namespace AppStyle
-}  // namespace kn
+}  // namespace kl

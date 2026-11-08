@@ -1,12 +1,12 @@
-#ifndef KYLINNOTE_RESIZEGRIP_H
-#define KYLINNOTE_RESIZEGRIP_H
+#ifndef KYLINLIST_RESIZEGRIP_H
+#define KYLINLIST_RESIZEGRIP_H
 
 #include <QWidget>
 
 class QPaintEvent;
 class QMouseEvent;
 
-namespace kn {
+namespace kl {
 
 // 右下角缩放手柄：Qt 5.12 尚无 QWindow::startSystemResize，需自行计算
 class ResizeGrip : public QWidget
@@ -29,6 +29,6 @@ private:
     bool   m_resizing = false;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_RESIZEGRIP_H
+#endif // KYLINLIST_RESIZEGRIP_H

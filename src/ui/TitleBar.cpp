@@ -8,7 +8,7 @@
 #include <QPixmap>
 #include <QToolButton>
 
-namespace kn {
+namespace kl {
 
 TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("TitleBar"));
@@ -107,4 +107,4 @@ void TitleBar::mouseReleaseEvent(QMouseEvent* event) {
     QWidget::mouseReleaseEvent(event);
 }
 
-}  // namespace kn
+}  // namespace kl

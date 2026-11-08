@@ -14,10 +14,9 @@
 #include <QVBoxLayout>
 #include <QVariant>
 
-#include "../app/AttachmentStore.h"
 #include "../app/TaskStore.h"
 
-namespace kn {
+namespace kl {
 namespace {
 // 图片预览只使用应用已经复制并解码过的受管文件。
 class ImagePreviewDialog final : public QDialog {
@@ -85,16 +84,15 @@ void AttachmentWidget::setStore(TaskStore* store) {
 }
 
 QString AttachmentWidget::filePath(const Attachment& attachment) const {
-    if (!attachmentcodec::isSafeAttachmentRelativePath(attachment.relativePath))
+    if (!m_store)
         return QString();
-    const QString path =
-        QDir(dataDirPath()).filePath(QStringLiteral("attachments/") + attachment.relativePath);
+    const QString path = m_store->attachmentFilePath(attachment);
     const QFileInfo info(path);
     return info.exists() && info.isFile() ? path : QString();
 }
 
-void AttachmentWidget::setTask(qint64 taskId) {
-    m_taskId = taskId;
+void AttachmentWidget::setTask(QString entityId) {
+    m_entityId = entityId;
     refresh();
 }
 
@@ -117,11 +115,11 @@ void AttachmentWidget::clearRows() {
 
 void AttachmentWidget::refresh() {
     clearRows();
-    const QVector<Attachment> items = m_store ? m_store->attachments(m_taskId) : QVector<Attachment>();
+    const QVector<Attachment> items = m_store ? m_store->attachments(m_entityId) : QVector<Attachment>();
     m_header->setVisible(!m_compact);
-    m_empty->setVisible(items.isEmpty() && m_taskId > 0 && !m_compact);
-    setVisible(m_taskId > 0 && (!m_compact || !items.isEmpty()));
-    m_add->setEnabled(m_taskId > 0 && !m_readOnly && m_store != nullptr);
+    m_empty->setVisible(items.isEmpty() && !m_entityId.isEmpty() && !m_compact);
+    setVisible(!m_entityId.isEmpty() && (!m_compact || !items.isEmpty()));
+    m_add->setEnabled(!m_entityId.isEmpty() && !m_readOnly && m_store != nullptr);
     for (const Attachment& attachment : items)
         addRow(attachment);
 }
@@ -188,12 +186,12 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
                 QStringLiteral("移除附件"),
                 QStringLiteral("从任务移除“%1”？\n仅删除应用中的副本，不影响你选择的原文件。")
                     .arg(attachment.originalName)) == QMessageBox::Yes)
-            m_store->removeAttachment(m_taskId, attachment.id);
+            m_store->removeAttachment(m_entityId, attachment.id);
     });
 }
 
 void AttachmentWidget::importFiles() {
-    if (m_taskId <= 0 || m_readOnly)
+    if (m_entityId.isEmpty() || m_readOnly)
         return;
     const QStringList paths = QFileDialog::getOpenFileNames(
         this,
@@ -202,11 +200,11 @@ void AttachmentWidget::importFiles() {
         QStringLiteral("图片与常用文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.txt *.md *.pdf *.doc *.docx "
                        "*.xls *.xlsx);;所有文件 (*)"));
     for (const QString& path : paths) {
-        if (m_store->importAttachment(m_taskId, path).id.isEmpty()) {
+        if (m_store->importAttachment(m_entityId, path).id.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("无法添加附件"), m_store->lastError());
             break;
         }
     }
 }
 
-}  // namespace kn
+}  // namespace kl

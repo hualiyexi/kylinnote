@@ -1,6 +1,8 @@
-#pragma once
+#ifndef KYLINLIST_TASKPANEL_H
+#define KYLINLIST_TASKPANEL_H
+
 #include <QMainWindow>
-#include "TaskFilter.h"
+#include "../domain/ViewSpec.h"
 class QListWidget;
 class QListView;
 class QLabel;
@@ -9,7 +11,7 @@ class QComboBox;
 class QSplitter;
 class QStackedWidget;
 class QCloseEvent;
-namespace kn {
+namespace kl {
 class TaskStore;
 class TaskListModel;
 class TaskDetailWidget;
@@ -18,20 +20,23 @@ class TaskPanel : public QMainWindow {
 public:
     explicit TaskPanel(TaskStore* store, QWidget* parent = nullptr);
     bool flush();
-    void showTask(qint64 id = 0);
+    void setRestoreFrozen(bool frozen);
+    void resetAfterRestore();
+    void showTask(QString id = QString());
     void focusQuickAdd();
 signals:
     void quitRequested();
-
+    void importBackupRequested(QString path);
 protected:
     void closeEvent(QCloseEvent* event) override;
-
 private:
     void buildUi();
     void rebuildNavigation();
     void applyFilter();
     void createTask();
+    void updateQuickAddKind();
     void showTaskMenu(const QPoint& position);
+    void organizationMenu(const QPoint& position);
     void groupMenu();
     void backupMenu();
     void showError(const QString& message);
@@ -41,12 +46,15 @@ private:
     QListWidget* m_navigation = nullptr;
     QListView* m_list = nullptr;
     QLineEdit *m_search = nullptr, *m_quick = nullptr;
-    QComboBox* m_sort = nullptr;
+    QLabel* m_quickKind = nullptr;
+    QComboBox* m_renderer = nullptr;
     QLabel *m_heading = nullptr, *m_count = nullptr, *m_empty = nullptr, *m_error = nullptr;
     QSplitter* m_splitter = nullptr;
     QStackedWidget* m_listStack = nullptr;
-    TaskFilter m_filter;
-    qint64 m_selectedId = 0;
-    bool m_resetting = false, m_rebuilding = false;
+    ViewSpec m_filter;
+    QString m_selectedId = QString();
+    bool m_resetting = false, m_rebuilding = false, m_restoreFrozen = false;
 };
-}  // namespace kn
+}  // namespace kl
+
+#endif // KYLINLIST_TASKPANEL_H

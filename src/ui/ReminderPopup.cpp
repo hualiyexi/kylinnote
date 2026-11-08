@@ -6,12 +6,20 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QVBoxLayout>
-#include "TaskFilter.h"
-namespace kn {
-ReminderPopup::ReminderPopup(const Task& task, QWidget* parent)
-    : QDialog(parent, Qt::Tool | Qt::WindowStaysOnTopHint) {
+#include "../domain/ViewSpec.h"
+namespace kl {
+ReminderPopup::ReminderPopup(const Entity& task, QWidget* parent)
+    : ReminderPopup(task, QString(), parent) {
+}
+ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* parent)
+    : QDialog(parent, Qt::Tool | Qt::WindowStaysOnTopHint), m_entityId(task.id), m_reminderId(reminderId) {
+    if (m_reminderId.isEmpty()) {
+        const int primary = primaryReminderIndex(task);
+        if (primary >= 0)
+            m_reminderId = task.reminders.at(primary).id;
+    }
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle(QStringLiteral("待办提醒 · KylinNote"));
+    setWindowTitle(QStringLiteral("待办提醒 · 麒麟清单"));
     setObjectName(QStringLiteral("ReminderPopup"));
     setMinimumWidth(390);
     auto* layout = new QVBoxLayout(this);
@@ -51,12 +59,12 @@ ReminderPopup::ReminderPopup(const Task& task, QWidget* parent)
     buttons->addWidget(dismiss);
     buttons->addWidget(done);
     layout->addLayout(buttons);
-    connect(snooze, &QPushButton::clicked, this, [this, task, delay]() {
-        emit snoozeRequested(task.id, delay->currentData().toInt());
+    connect(snooze, &QPushButton::clicked, this, [this, delay]() {
+        emit snoozeRequested(m_entityId, m_reminderId, delay->currentData().toInt());
     });
-    connect(done, &QPushButton::clicked, this, [this, task]() { emit completeRequested(task.id); });
-    connect(open, &QPushButton::clicked, this, [this, task]() {
-        emit openRequested(task.id);
+    connect(done, &QPushButton::clicked, this, [this]() { emit completeRequested(m_entityId); });
+    connect(open, &QPushButton::clicked, this, [this]() {
+        emit openRequested(m_entityId);
         close();
     });
     connect(dismiss, &QPushButton::clicked, this, &QDialog::close);
@@ -66,4 +74,4 @@ ReminderPopup::ReminderPopup(const Task& task, QWidget* parent)
         move(area.right() - width() - 24, area.bottom() - height() - 24);
     }
 }
-}  // namespace kn
+}  // namespace kl

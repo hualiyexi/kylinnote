@@ -1,8 +1,10 @@
-#pragma once
+#ifndef KYLINLIST_TASKDETAILWIDGET_H
+#define KYLINLIST_TASKDETAILWIDGET_H
+
 #include <QSet>
 #include <QTimer>
 #include <QWidget>
-#include "../domain/Task.h"
+#include "../domain/Entity.h"
 class QLineEdit;
 class QCheckBox;
 class QComboBox;
@@ -10,7 +12,7 @@ class QDateTimeEdit;
 class QListWidget;
 class QPushButton;
 class QLabel;
-namespace kn {
+namespace kl {
 class TaskStore;
 class MarkdownEditor;
 class AttachmentWidget;
@@ -18,30 +20,34 @@ class TaskDetailWidget : public QWidget {
     Q_OBJECT
 public:
     explicit TaskDetailWidget(TaskStore* store, QWidget* parent = nullptr);
-    bool setTask(qint64 id);
-    qint64 taskId() const {
-        return m_id;
-    }
+    bool setTask(QString id);
+    QString entityId() const { return m_id; }
     bool flush();
+    bool finishEditing();
     void focusTitle();
 signals:
-    void taskRemoved(qint64 id);
-
+    void taskRemoved(QString id);
+    void internalLinkRequested(QString entityId);
 private:
     void buildUi();
     void loadFields();
     void refreshGroups();
     void dirty(const QString& field);
     void updateEnabled();
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void beginTextSession();
+    bool endTextSession();
     TaskStore* m_store;
-    qint64 m_id = 0;
+    QString m_id;
     bool m_loading = false, m_saving = false;
     QSet<QString> m_dirty;
+    QString m_editSession;
     QTimer m_saveTimer;
     QWidget* m_form = nullptr;
+    QWidget *m_scheduleHost = nullptr, *m_priorityHost = nullptr, *m_appearanceHost = nullptr;
     QLabel *m_empty = nullptr, *m_status = nullptr;
     QLineEdit *m_title = nullptr, *m_tags = nullptr, *m_checkInput = nullptr;
-    QCheckBox *m_completed = nullptr, *m_pinned = nullptr, *m_favorite = nullptr;
+    QCheckBox *m_completed = nullptr, *m_pinned = nullptr, *m_pinnedAt = nullptr;
     QComboBox *m_group = nullptr, *m_priority = nullptr, *m_recurrence = nullptr, *m_color = nullptr,
               *m_layer = nullptr;
     QCheckBox *m_hasStart = nullptr, *m_hasDue = nullptr, *m_hasReminder = nullptr;
@@ -49,6 +55,8 @@ private:
     MarkdownEditor* m_description = nullptr;
     AttachmentWidget* m_attachments = nullptr;
     QListWidget* m_checklist = nullptr;
-    QPushButton *m_remove = nullptr, *m_restore = nullptr;
+    QPushButton *m_remove = nullptr, *m_restore = nullptr, *m_convert = nullptr, *m_activity = nullptr;
 };
-}  // namespace kn
+}  // namespace kl
+
+#endif // KYLINLIST_TASKDETAILWIDGET_H

@@ -1,11 +1,11 @@
-#ifndef KYLINNOTE_COLORTHEME_H
-#define KYLINNOTE_COLORTHEME_H
+#ifndef KYLINLIST_COLORTHEME_H
+#define KYLINLIST_COLORTHEME_H
 
 #include "../Common.h"
 
 class QWidget;   // 注意：Qt 类的前向声明必须在全局作用域，不能落进 kn 命名空间
 
-namespace kn {
+namespace kl {
 
 // Windows 7 便笺风格的 6 色调色板，默认黄色
 class ColorTheme
@@ -32,6 +32,6 @@ public:
     static void apply(QWidget *window, NoteColor c);
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_COLORTHEME_H
+#endif // KYLINLIST_COLORTHEME_H

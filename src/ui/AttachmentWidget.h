@@ -4,14 +4,13 @@
 #include <QVector>
 #include <QWidget>
 
-#include "../app/AttachmentStore.h"
 #include "../domain/Attachment.h"
 
 class QVBoxLayout;
 class QLabel;
 class QPushButton;
 
-namespace kn {
+namespace kl {
 
 class TaskStore;
 
@@ -22,7 +21,7 @@ class AttachmentWidget final : public QWidget {
 public:
     explicit AttachmentWidget(TaskStore* store, QWidget* parent = nullptr);
     void setStore(TaskStore* store);
-    void setTask(qint64 taskId);
+    void setTask(QString entityId);
     void setReadOnly(bool readOnly);
     void setCompact(bool compact);
     void refresh();
@@ -34,7 +33,7 @@ private:
     void addRow(const Attachment& attachment);
 
     TaskStore* m_store;
-    qint64 m_taskId = 0;
+    QString m_entityId = QString();
     bool m_readOnly = false;
     bool m_compact = false;
     QVBoxLayout* m_rows = nullptr;
@@ -43,4 +42,4 @@ private:
     QLabel* m_empty = nullptr;
 };
 
-}  // namespace kn
+}  // namespace kl

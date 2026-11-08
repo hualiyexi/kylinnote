@@ -1,7 +1,7 @@
 #include "TaskListModel.h"
-#include <algorithm>
 #include "../app/TaskStore.h"
-namespace kn {
+
+namespace kl {
 TaskListModel::TaskListModel(TaskStore* store, QObject* parent) : QAbstractListModel(parent), m_store(store) {
     connect(store, &TaskStore::taskChanged, this, &TaskListModel::refresh);
     connect(store, &TaskStore::tasksReset, this, &TaskListModel::refresh);
@@ -9,62 +9,66 @@ TaskListModel::TaskListModel(TaskStore* store, QObject* parent) : QAbstractListM
     refresh();
 }
 int TaskListModel::rowCount(const QModelIndex& parent) const {
-    return parent.isValid() ? 0 : m_tasks.size();
+    return parent.isValid() ? 0 : m_rows.size();
 }
 QVariant TaskListModel::data(const QModelIndex& index, int role) const {
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_tasks.size())
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_rows.size()) return QVariant();
+    const Row& row = m_rows.at(index.row());
+    if (row.isHeader) {
+        if (role == HeaderRole) return true;
+        if (role == Qt::DisplayRole || role == Qt::AccessibleTextRole || role == Qt::ToolTipRole) return row.header;
         return QVariant();
-    const Task& task = m_tasks[index.row()];
+    }
+    const Entity& entity = row.entity;
+    const QDate today = toAppTime(appNow()).date();
     switch (role) {
         case Qt::DisplayRole:
-            return task.title;
+            return entity.title;
         case Qt::AccessibleTextRole:
-            return task.title + QStringLiteral("，") +
-                   (task.completed ? QStringLiteral("已完成") : QStringLiteral("未完成")) +
-                   QStringLiteral("，") + scheduleLabel(task);
+            return entity.title + QStringLiteral("，") +
+                (entity.kind == EntityKind::Note ? QStringLiteral("笔记")
+                    : (entity.completed ? QStringLiteral("已完成") : QStringLiteral("未完成"))) +
+                QStringLiteral("，") + (entity.kind == EntityKind::Task ? scheduleLabel(entity) : QString());
         case Qt::CheckStateRole:
-            return task.completed ? Qt::Checked : Qt::Unchecked;
+            if (entity.kind == EntityKind::Task) return entity.completed ? Qt::Checked : Qt::Unchecked;
+            return QVariant();
         case IdRole:
-            return task.id;
+            return entity.id;
+        case KindRole:
+            return static_cast<int>(entity.kind);
         case PriorityRole:
-            return task.priority;
+            return entity.kind == EntityKind::Task ? entity.priority : 0;
         case CompletedRole:
-            return task.completed;
-        case FavoriteRole:
-            return task.favorite;
+            return entity.kind == EntityKind::Task && entity.completed;
         case PinnedRole:
-            return task.pinned;
+            return entity.pinnedAt.isValid();
         case DeletedRole:
-            return task.deleted;
-        case OverdueRole:
-            return !task.completed && task.dueAt.isValid() && task.dueAt < QDateTime::currentDateTime();
+            return entity.deleted;
+        case OverdueRole: {
+            const QDate date = effectiveDate(entity);
+            return !entity.deleted && entity.kind == EntityKind::Task && entity.status == TaskStatus::Active && date.isValid() && date < today;
+        }
+        case HeaderRole:
+            return false;
         case Qt::ToolTipRole:
-            return task.title + QLatin1Char('\n') + scheduleLabel(task);
+            return entity.title + QLatin1Char('\n') + (entity.kind == EntityKind::Note ? QStringLiteral("笔记") : scheduleLabel(entity));
         case MetaRole: {
             QStringList parts;
-            parts << scheduleLabel(task);
-            for (const auto& g : m_store->groups())
-                if (g.id == task.groupId) {
-                    parts << g.name;
-                    break;
-                }
-            if (task.priority > 0)
-                parts << priorityLabel(task.priority);
-            if (task.reminderAt.isValid())
-                parts << QStringLiteral("有提醒");
-            if (task.recurrence != QLatin1String("none"))
-                parts << recurrenceLabel(task.recurrence);
-            if (!task.checklist.isEmpty()) {
-                int done = 0;
-                for (const auto& c : task.checklist)
-                    if (c.done)
-                        ++done;
-                parts << QStringLiteral("清单 %1/%2").arg(done).arg(task.checklist.size());
+            if (entity.kind == EntityKind::Note) parts << QStringLiteral("笔记");
+            else {
+                parts << scheduleLabel(entity);
+                if (entity.priority > 0) parts << priorityLabel(entity.priority);
+                if (entity.reminderAt.isValid()) parts << QStringLiteral("有提醒");
+                if (entity.recurrence != QLatin1String("none")) parts << recurrenceLabel(entity.recurrence);
             }
-            if (task.pinned)
-                parts << QStringLiteral("已贴桌面");
-            if (!task.tags.isEmpty())
-                parts << QStringLiteral("#") + task.tags.join(QStringLiteral(" #"));
+            for (const TaskList& list : m_store->lists())
+                if (list.id == entity.listId) { parts << list.name; break; }
+            if (!entity.checklist.isEmpty()) {
+                int done = 0;
+                for (const ChecklistItem& item : entity.checklist) if (item.done) ++done;
+                parts << QStringLiteral("清单 %1/%2").arg(done).arg(entity.checklist.size());
+            }
+            if (!entity.tags.isEmpty()) parts << QStringLiteral("#") + entity.tags.join(QStringLiteral(" #"));
             return parts.join(QStringLiteral("   "));
         }
         default:
@@ -72,42 +76,42 @@ QVariant TaskListModel::data(const QModelIndex& index, int role) const {
     }
 }
 Qt::ItemFlags TaskListModel::flags(const QModelIndex& index) const {
-    if (!index.isValid())
-        return Qt::NoItemFlags;
-    Qt::ItemFlags f = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-    if (!data(index, DeletedRole).toBool())
-        f |= Qt::ItemIsUserCheckable;
-    return f;
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_rows.size()) return Qt::NoItemFlags;
+    const Row& row = m_rows.at(index.row());
+    if (row.isHeader) return Qt::ItemIsEnabled;
+    Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    if (row.entity.kind == EntityKind::Task && !row.entity.deleted) flags |= Qt::ItemIsUserCheckable;
+    return flags;
 }
 bool TaskListModel::setData(const QModelIndex& index, const QVariant& value, int role) {
-    const qint64 id = taskId(index);
-    if (role != Qt::CheckStateRole || !id || m_store->task(id).deleted)
-        return false;
+    const QString id = entityId(index);
+    const Entity entity = id.isEmpty() ? Entity() : m_store->entity(id);
+    if (role != Qt::CheckStateRole || entity.id.isEmpty() || entity.kind != EntityKind::Task || entity.deleted) return false;
     return m_store->setCompleted(id, value.toInt() == Qt::Checked);
 }
-void TaskListModel::setFilter(const TaskFilter& filter) {
+void TaskListModel::setFilter(const ViewSpec& filter) {
     m_filter = filter;
     refresh();
 }
 void TaskListModel::refresh() {
     beginResetModel();
-    m_tasks.clear();
-    const auto now = QDateTime::currentDateTime();
-    for (const Task& task : m_store->tasks())
-        if (m_filter.matches(task, now))
-            m_tasks.append(task);
-    std::stable_sort(m_tasks.begin(), m_tasks.end(), [this](const Task& a, const Task& b) {
-        return m_filter.lessThan(a, b);
-    });
+    m_rows.clear(); m_entityCount = 0;
+    const QVector<ViewSection> sections = buildSections(m_store->entities(), m_filter, toAppTime(appNow()).date());
+    for (const ViewSection& section : sections) {
+        Row header; header.header = section.title; header.isHeader = true; m_rows.append(header);
+        for (const Entity& entity : section.items) {
+            Row row; row.entity = entity; m_rows.append(row); ++m_entityCount;
+        }
+    }
     endResetModel();
 }
-QModelIndex TaskListModel::indexForTask(qint64 id) const {
-    for (int i = 0; i < m_tasks.size(); ++i)
-        if (m_tasks[i].id == id)
-            return index(i, 0);
+QModelIndex TaskListModel::indexForTask(QString id) const {
+    for (int i = 0; i < m_rows.size(); ++i)
+        if (!m_rows.at(i).isHeader && m_rows.at(i).entity.id == id) return index(i, 0);
     return QModelIndex();
 }
-qint64 TaskListModel::taskId(const QModelIndex& index) const {
-    return index.isValid() && index.row() >= 0 && index.row() < m_tasks.size() ? m_tasks[index.row()].id : 0;
+QString TaskListModel::entityId(const QModelIndex& index) const {
+    return index.isValid() && index.row() >= 0 && index.row() < m_rows.size() && !m_rows.at(index.row()).isHeader
+        ? m_rows.at(index.row()).entity.id : QString();
 }
-}  // namespace kn
+}  // namespace kl
