@@ -1,72 +1,128 @@
-#ifndef KYLINNOTE_TASKREPOSITORY_H
-#define KYLINNOTE_TASKREPOSITORY_H
+#ifndef KYLINLIST_TASKREPOSITORY_H
+#define KYLINLIST_TASKREPOSITORY_H
 
 #include "../domain/Attachment.h"
-#include "../domain/Task.h"
+#include "../domain/Entity.h"
 
 #include <QSqlDatabase>
+#include <QStringList>
 #include <QVector>
+#include <functional>
 
-namespace kn {
+namespace kl {
 
-// revision/anchor 不属于 UI 领域对象，但必须持久保存以检测陈旧写入、保护重复撤销。
-struct StoredTask {
-    Task task;
-    qint64 revision = 0;
+struct StoredEntity {
+    Entity entity;
+    qint64 revision = 0;             // 0 = 尚未插入
+    qint64 serverRevision = 0;
     int recurrenceAnchorDay = 0;
 };
-
 struct RecurrenceLink {
-    qint64 sourceId = 0;
-    qint64 nextId = 0;          // 0 = 下一次实例已永久删除（生成凭证仍存在）
-    qint64 nextRevision = 0;   // 自动生成当时的 revision，用于安全撤销
+    QString id;
+    QString sourceId;
+    QString nextId;                  // 空 = 后续实例已永久删除，凭证仍保留
+    qint64 nextRevision = 0;
+    qint64 revision = 1;
+    qint64 serverRevision = 0;
 };
 
-struct TaskSnapshot {
-    QVector<StoredTask> tasks;
-    QVector<TaskGroup> groups;
+struct EntitySnapshot {
+    QVector<Folder> folders;
+    QVector<TaskList> lists;
+    QVector<Section> sections;
+    QVector<RecurrenceSeries> recurrenceSeries;
+    QVector<StoredEntity> entities;
     QVector<RecurrenceLink> recurrenceLinks;
-    QVector<Attachment> attachments; // 附件元数据；文件内容由 AttachmentStore 管理
+    QVector<ChecklistItem> checklistItems;
+    QVector<Tag> tags;
+    QVector<TaskTag> taskTags;
+    QVector<TaskReminder> reminders;
+    QVector<ReminderDelivery> reminderDeliveries;
+    QVector<Attachment> attachments;
+    QVector<DesktopNote> desktopNotes;
+    QVector<ViewDef> viewDefs;
+    QVector<SyncBinding> syncBindings;
+    QVector<LocalMeta> localMeta;
+    QVector<Tombstone> tombstones;
+    QVector<OutboxItem> outbox;
 };
 
-struct TaskChanges {
-    QVector<StoredTask> saves;       // id=0 插入；否则按 revision 条件更新
-    QVector<StoredTask> removals;    // 必须带当前 revision，避免删除已被别处改动的任务
-    QVector<TaskGroup> groupSaves;   // id=0 插入，否则重命名
-    QVector<qint64> groupRemovals;   // 自动把所有关联任务（包括回收站）移到未分组
-    QVector<qint64> removeLinks;     // 安全撤销完成时撤回生成凭证
-    QVector<Attachment> attachmentSaves;    // 仅新增附件元数据；文件须由调用者先复制到位
-    QVector<Attachment> attachmentRemovals; // 按 id+taskId 删除元数据；物理清理在提交成功后进行
-    qint64 generationSourceId = 0;
-    int generatedTaskIndex = -1;     // saves 中新实例的位置；同一来源至多有一个凭证
+struct EntityChanges {
+    QVector<Folder> folderSaves;
+    QStringList folderRemovals;
+    QVector<TaskList> groupSaves;     // group 是现有 UI 对 list 的门面称呼
+    QStringList groupRemovals;
+    QVector<Section> sectionSaves;
+    QStringList sectionRemovals;
+    QVector<RecurrenceSeries> seriesSaves;
+    QVector<StoredEntity> saves;
+    QVector<StoredEntity> removals;
+    // 不覆盖任务正文字段的关联写入，用 CAS 推进 revision/updated_at。
+    QVector<StoredEntity> touches;
+    QVector<EntityEvent> eventSaves; // 仅随 apply 追加，不进入全量快照
+    QVector<ChecklistItem> checklistSaves;
+    QStringList checklistRemovals;
+    QVector<Tag> tagSaves;
+    QVector<TaskTag> taskTagSaves;
+    QVector<TaskTag> taskTagRemovals;
+    QVector<TaskReminder> reminderSaves;
+    QStringList reminderRemovals;
+    QVector<ReminderDelivery> deliverySaves;
+    QVector<Attachment> attachmentSaves;
+    QVector<Attachment> attachmentRemovals;
+    QVector<DesktopNote> desktopNoteSaves;
+    QStringList desktopNoteRemovals;
+    QVector<RecurrenceLink> recurrenceLinkSaves;
+    QStringList removeLinks;
+    QString generationSourceId;       // 仅用于 reset 信号；凭证在 recurrenceLinkSaves
+    int generatedTaskIndex = -1;
 };
 
-// 所有读写必须与所属 QSqlDatabase 在同一线程。一次 apply 是一个事务，
-// 仅提交成功才回填 changes 的新 id/revision 和 after；失败时调用者对象不变。
 class TaskRepository
 {
 public:
     explicit TaskRepository(const QSqlDatabase &database);
-
-    bool load(TaskSnapshot *out, QString *error = nullptr) const;
-    bool apply(TaskChanges *changes, TaskSnapshot *after, QString *error = nullptr);
-    // 完整校验后的备份合并：组和任务都分配新 id，映射内部引用并保留重复生成凭证。
-    // incoming.attachments 使用调用者预生成的新附件 id/relativePath，taskId 在此映射到新任务。
-    bool merge(const TaskSnapshot &incoming, TaskSnapshot *after, QString *error = nullptr);
+    bool load(EntitySnapshot *out, QString *error = nullptr) const;
+    bool apply(EntityChanges *changes, EntitySnapshot *after, QString *error = nullptr);
+    bool appendEvents(const QVector<EntityEvent> &events, QString *error = nullptr);
+    QVector<EntityEvent> eventsFor(const QString &entityId, QString *error = nullptr) const;
+    QVector<EntityEvent> allEvents(QString *error = nullptr) const;
+    bool convertKind(const QString &id, EntityKind to, EntitySnapshot *after, QString *error = nullptr);
+    bool convertKind(const QString &id, EntityKind to, QString *error)
+    {
+        EntitySnapshot ignored; return convertKind(id, to, &ignored, error);
+    }
+    using BeforeCommit = std::function<bool(QString *)>;
+    bool replaceAll(const EntitySnapshot &incoming, const QVector<EntityEvent> &events,
+                    const QString &defaultTimezone, const QDateTime &importedAt,
+                    EntitySnapshot *after, QString *error = nullptr,
+                    const BeforeCommit &beforeCommit = BeforeCommit());
+    bool setLocalMeta(const QString &key, const QString &value, QString *error = nullptr);
 
 private:
-    bool readSnapshot(TaskSnapshot *out, QString *error) const;
-    bool saveTask(StoredTask *task, QString *error);
-    bool saveGroup(TaskGroup *group, QString *error);
-    bool removeTask(const StoredTask &task, QString *error);
-    bool removeGroup(qint64 id, QString *error);
+    bool readSnapshot(EntitySnapshot *out, QString *error) const;
+    bool saveTask(StoredEntity *stored, QString *error);
+    bool saveFolder(Folder *folder, QString *error);
+    bool saveGroup(TaskList *group, QString *error);
+    bool saveSection(Section *section, QString *error);
+    bool saveSeries(RecurrenceSeries *series, QString *error);
+    bool saveChecklist(ChecklistItem *item, QString *error);
+    bool saveTag(Tag *tag, QString *error);
+    bool saveReminder(TaskReminder *reminder, QString *error);
+    bool saveDelivery(const ReminderDelivery &delivery, QString *error);
+    bool saveAttachment(const Attachment &attachment, QString *error);
+    bool saveDesktopNote(DesktopNote *note, QString *error);
     bool insertLink(const RecurrenceLink &link, QString *error);
-    bool insertAttachment(const Attachment &attachment, QString *error);
+    bool touchTask(const StoredEntity &stored, QString *error);
+    bool removeTask(const StoredEntity &stored, QString *error);
+    bool tombstone(const QString &type, const QString &id, QString *error);
+    bool queueOutbox(const EntityChanges &changes, QString *error);
+    bool appendEventsInTransaction(QVector<EntityEvent> *events, QString *error);
     bool ready(QString *error) const;
 
     QSqlDatabase m_database;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_TASKREPOSITORY_H
+#endif // KYLINLIST_TASKREPOSITORY_H
