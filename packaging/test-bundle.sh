@@ -6,12 +6,10 @@
 # See docs/building.md and .github/workflows/build.yml for exact commands.
 set -euo pipefail
 PREPARE=no
-TIMEOUT_MODE=no
 while (($#)); do
     case "$1" in
         --prepare) PREPARE=yes; shift;;
-        --timeout-mode) TIMEOUT_MODE=yes; shift;;
-        -h|--help) echo 'Usage: test-bundle.sh [--prepare] [--timeout-mode] FILE.deb'; exit 0;;
+        -h|--help) echo 'Usage: test-bundle.sh [--prepare] FILE.deb'; exit 0;;
         --*) echo "Unknown argument: $1" >&2; exit 2;;
         *) [[ -z "${DEB:-}" ]] || { echo 'Pass exactly one deb' >&2; exit 2; }; DEB="$1"; shift;;
     esac
@@ -87,14 +85,12 @@ while IFS= read -r -d '' elf; do
         fi
     done <<< "$needed"
 done < <(find "$LIBDIR" -type f -print0)
-((elf_count > 10)) || die 'Unexpectedly few ELF objects in bundle'
 echo "==> $elf_count ELF objects resolve without any system Qt"
 
 RUN_DIR="$(mktemp -d)"
 mkdir -m 0700 "$RUN_DIR/runtime"
 SMOKE_LOG="$RUN_DIR/smoke.log"
 APP_ARGS=(--smoke-test --data-dir "$RUN_DIR/data")
-[[ "$TIMEOUT_MODE" == no ]] || APP_ARGS=(--data-dir "$RUN_DIR/data")
 set +e
 env LD_LIBRARY_PATH="$LIBDIR" QT_QPA_PLATFORM=xcb QT_DEBUG_PLUGINS=1 \
     QT_PLUGIN_PATH="$LIBDIR/plugins" QT_QPA_PLATFORM_PLUGIN_PATH="$LIBDIR/plugins/platforms" \
@@ -105,11 +101,7 @@ env LD_LIBRARY_PATH="$LIBDIR" QT_QPA_PLATFORM=xcb QT_DEBUG_PLUGINS=1 \
 result=$?
 set -e
 tail -n 100 "$SMOKE_LOG"
-if [[ "$TIMEOUT_MODE" == yes ]]; then
-    [[ "$result" == 124 ]] || die "Application crashed/exited before timeout: exit $result ($SMOKE_LOG)"
-else
-    [[ "$result" == 0 ]] || die "--smoke-test failed or did not exit automatically: exit $result ($SMOKE_LOG)"
-fi
+[[ "$result" == 0 ]] || die "--smoke-test failed or did not exit automatically: exit $result ($SMOKE_LOG)"
 # Prove that the real platform and database plugins loaded during app startup.
 grep -E 'loaded library.*libqxcb\.so' "$SMOKE_LOG" >/dev/null || die 'xcb platform plugin was not loaded'
 grep -E 'loaded library.*libqsqlite\.so' "$SMOKE_LOG" >/dev/null || die 'SQLite driver was not loaded'

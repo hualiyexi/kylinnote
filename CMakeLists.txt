@@ -23,7 +23,6 @@ include(CTest)
 option(KYLINNOTE_BUNDLE_QT "Install Linux executable beside bundled Qt libraries" OFF)
 option(KYLINNOTE_WITH_DBUS "Build the optional Linux D-Bus adapter" ${UNIX})
 option(KYLINNOTE_REQUIRE_X11 "Fail if Linux global-hotkey support cannot be built" OFF)
-option(KYLINNOTE_RECORD_QT_METADATA "Record selected Qt targets for Debian packaging" OFF)
 
 find_package(Qt5 5.12 REQUIRED COMPONENTS Core Gui Widgets Sql Network)
 if(UNIX AND NOT APPLE AND KYLINNOTE_WITH_DBUS)
@@ -161,19 +160,6 @@ if(BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 90)
     endforeach()
-endif()
-
-# Packaging verifies these actual imported libraries, not just a common prefix
-# such as /usr, against qmake and its plugin installation.
-if(KYLINNOTE_RECORD_QT_METADATA)
-    set(qt_metadata "Qt5Core_DIR=${Qt5Core_DIR}\nQt5Core_VERSION=${Qt5Core_VERSION}\n")
-    foreach(component IN ITEMS Core Gui Widgets Sql Network DBus Test)
-        if(TARGET Qt5::${component})
-            string(APPEND qt_metadata "Qt5${component}=$<TARGET_FILE:Qt5::${component}>\n")
-        endif()
-    endforeach()
-    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/kylinnote-qt-$<CONFIG>.txt"
-         CONTENT "${qt_metadata}")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY.md")

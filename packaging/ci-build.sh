@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Run in a native ARM64 ubuntu:20.04 container. glibc 2.31 / Qt 5.12
-# is a compatibility reference, not proof of support for every Kylin system.
+# Build ARM64 packages in Ubuntu 20.04 with the distribution's Qt 5.12.8.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export DEBIAN_FRONTEND=noninteractive
@@ -21,15 +20,8 @@ apt-get install -y --no-install-recommends \
     libx11-dev libxext-dev libxrender-dev libxi-dev libgl1-mesa-dev \
     libxcb-xinerama0 libxkbcommon-x11-0
 
-# Each mode explicitly configures ON/OFF and has its own cache/staging tree.
-bash packaging/build-deb.sh --arch arm64 --build-dir "$PWD/build-deb-arm64-system"
-bash packaging/build-deb.sh --arch arm64 --bundle-qt --build-dir "$PWD/build-deb-arm64-bundle"
+# Each mode has its own cache/staging tree and writes directly to dist.
 mkdir -p dist
-for package in kylinnote_*_arm64.deb kylinnote_*_arm64_bundle.deb; do
-    [[ -f "$package" ]] || continue
-    # Ignore historical .deb files in the checkout; retain only this build's version.
-    built_version="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9][0-9A-Za-z.+~-]*).*/\1/p' CMakeLists.txt | head -n1)"
-    [[ "$(dpkg-deb -f "$package" Version)" == "$built_version" ]] || continue
-    cp "$package" dist/
-done
+bash packaging/build-deb.sh --arch arm64 --build-dir "$PWD/build-deb-arm64-system" --output-dir "$PWD/dist"
+bash packaging/build-deb.sh --arch arm64 --bundle-qt --build-dir "$PWD/build-deb-arm64-bundle" --output-dir "$PWD/dist"
 find dist -maxdepth 1 -name '*.deb' -exec ls -lh {} \;
