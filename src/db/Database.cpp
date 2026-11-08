@@ -4,269 +4,236 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QTextDocument>
 #include <QVariant>
 
-namespace kn {
+namespace kl {
 namespace {
-const int kSchemaVersion = 3;
 
-const char *const kNotesSchema =
-    "CREATE TABLE IF NOT EXISTS notes ("
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL DEFAULT '',"
-    "content TEXT NOT NULL DEFAULT '', color INTEGER NOT NULL DEFAULT 0,"
-    "geometry TEXT NOT NULL DEFAULT '', z_order INTEGER NOT NULL DEFAULT 0,"
-    "created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '',"
-    "deleted INTEGER NOT NULL DEFAULT 0)";
-
-// 保留旧 notes，避免改变旧便签的任何原始字节。task_groups/tasks 的外键仅用于新模型。
-const char *const kV2Schema[] = {
-    "CREATE TABLE task_groups (id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "name TEXT NOT NULL CHECK(length(trim(name)) > 0))",
-    "CREATE TABLE tasks ("
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL DEFAULT '',"
-    "description TEXT NOT NULL DEFAULT '', content_format INTEGER NOT NULL DEFAULT 0 CHECK(content_format IN (0,1)),"
-    "group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL,"
-    "priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN 0 AND 2),"
-    "completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),"
-    "favorite INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0,1)),"
-    "pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0,1)),"
-    "deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)),"
-    "start_at TEXT, due_at TEXT, reminder_at TEXT, notified_at TEXT,"
-    "created_at TEXT, updated_at TEXT, completed_at TEXT,"
-    "recurrence TEXT NOT NULL DEFAULT 'none' CHECK(recurrence IN ('none','daily','weekly','monthly')),"
-    "tags TEXT NOT NULL DEFAULT '[]', checklist TEXT NOT NULL DEFAULT '[]',"
-    "color INTEGER NOT NULL DEFAULT 0 CHECK(color BETWEEN 0 AND 5),"
-    "geometry TEXT NOT NULL DEFAULT '', z_order INTEGER NOT NULL DEFAULT 0,"
-    "layer INTEGER NOT NULL DEFAULT 1 CHECK(layer BETWEEN 0 AND 2),"
-    "revision INTEGER NOT NULL DEFAULT 1,"
-    "recurrence_anchor_day INTEGER NOT NULL DEFAULT 0 CHECK(recurrence_anchor_day BETWEEN 0 AND 31))",
-    // 持久生成凭证。next_id 为 NULL 表示实例已永久删除，仍阻止同一来源再次生成。
-    "CREATE TABLE task_recurrence_links ("
-    "source_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,"
-    "next_id INTEGER UNIQUE REFERENCES tasks(id) ON DELETE SET NULL,"
-    "next_revision INTEGER NOT NULL)",
-    "CREATE INDEX idx_tasks_group ON tasks(group_id)",
-    "CREATE INDEX idx_tasks_reminder ON tasks(deleted,completed,reminder_at)",
-    "CREATE INDEX idx_tasks_deleted ON tasks(deleted)"
-};
-
-// v3 仅新增附件元数据表，不改动 v1/v2 的任何表与数据。
-// size 上限与 attachmentcodec::kMaximumAttachmentBytes（2 MiB）保持一致。
-const char *const kV3Schema[] = {
-    "CREATE TABLE attachments ("
-    "id TEXT PRIMARY KEY,"
-    "task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
-    "original_name TEXT NOT NULL,"
-    "relative_path TEXT NOT NULL UNIQUE,"
-    "mime TEXT NOT NULL,"
-    "size INTEGER NOT NULL CHECK(size > 0 AND size <= 2097152),"
-    "is_image INTEGER NOT NULL CHECK(is_image IN (0,1)),"
-    "created_at TEXT NOT NULL,"
-    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order >= 0))",
-    "CREATE INDEX idx_attachments_task ON attachments(task_id,sort_order)"
+const char *const kSchema[] = {
+    "CREATE TABLE folders("
+    "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+    "CREATE TABLE lists("
+    "id TEXT PRIMARY KEY,folder_id TEXT,kind TEXT NOT NULL DEFAULT 'task' CHECK(kind IN ('task','note')),"
+    "name TEXT NOT NULL CHECK(length(trim(name))>0),is_inbox INTEGER NOT NULL DEFAULT 0 CHECK(is_inbox IN (0,1)),"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE RESTRICT)",
+    "CREATE TABLE sections("
+    "id TEXT PRIMARY KEY,list_id TEXT NOT NULL,name TEXT NOT NULL CHECK(length(trim(name))>0),"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE CASCADE)",
+    "CREATE TABLE recurrence_series("
+    "id TEXT PRIMARY KEY,rrule TEXT NOT NULL CHECK(rrule LIKE 'FREQ=%'),anchor_day INTEGER NOT NULL DEFAULT 0 CHECK(anchor_day BETWEEN 0 AND 31),"
+    "timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',dtstart_utc_ms INTEGER,dtstart_date TEXT,"
+    "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
+    "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+    "CREATE TABLE entities("
+    "id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('task','note')),"
+    "title TEXT NOT NULL CHECK(length(trim(title))>0),body_markdown TEXT NOT NULL DEFAULT '',"
+    "folder_id TEXT,list_id TEXT NOT NULL,section_id TEXT,parent_id TEXT,"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+    "status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','abandoned')),"
+    "deleted_at_utc_ms INTEGER,start_at_utc_ms INTEGER,due_at_utc_ms INTEGER,all_day_date TEXT,"
+    "timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',recurrence_series_id TEXT,occurrence_key TEXT,"
+    "priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN 0 AND 3),pinned_at_utc_ms INTEGER,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,completed_at_utc_ms INTEGER,abandoned_at_utc_ms INTEGER,"
+    "UNIQUE(id,kind),CHECK(kind='task' OR parent_id IS NULL),CHECK(parent_id IS NULL OR parent_id<>id),"
+    "CHECK((status='completed')=(completed_at_utc_ms IS NOT NULL)),"
+    "CHECK((status='abandoned')=(abandoned_at_utc_ms IS NOT NULL)),"
+    "CHECK((recurrence_series_id IS NULL)=(occurrence_key IS NULL)),UNIQUE(recurrence_series_id,occurrence_key),"
+    "FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE RESTRICT,"
+    "FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE RESTRICT,"
+    "FOREIGN KEY(section_id) REFERENCES sections(id) ON DELETE RESTRICT,"
+    "FOREIGN KEY(parent_id,kind) REFERENCES entities(id,kind) ON DELETE CASCADE,"
+    "FOREIGN KEY(recurrence_series_id) REFERENCES recurrence_series(id) ON DELETE RESTRICT)",
+    "CREATE TABLE recurrence_links("
+    "id TEXT PRIMARY KEY,source_id TEXT NOT NULL UNIQUE REFERENCES entities(id) ON DELETE CASCADE,"
+    "next_id TEXT UNIQUE REFERENCES entities(id) ON DELETE SET NULL,next_revision INTEGER NOT NULL CHECK(next_revision>0),"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+    "CREATE TABLE checklist_items("
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
+    "CREATE TABLE tags("
+    "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),normalized_name TEXT NOT NULL,color TEXT NOT NULL DEFAULT '',"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "UNIQUE(normalized_name))",
+    "CREATE TABLE entity_tags("
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,tag_id TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
+    "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),UNIQUE(entity_id,tag_id),"
+    "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE,"
+    "FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE)",
+    "CREATE TABLE reminders("
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,trigger_at_utc_ms INTEGER NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+    "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
+    "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
+    "CREATE TABLE reminder_deliveries("
+    "reminder_id TEXT NOT NULL REFERENCES reminders(id) ON DELETE CASCADE,installation_id TEXT NOT NULL,"
+    "scheduled_at_utc_ms INTEGER NOT NULL,delivered_at_utc_ms INTEGER NOT NULL,PRIMARY KEY(reminder_id,installation_id))",
+    "CREATE TABLE attachments("
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,original_name TEXT NOT NULL,relative_path TEXT NOT NULL UNIQUE,mime TEXT NOT NULL,"
+    "size INTEGER NOT NULL CHECK(size>0 AND size<=2097152),sha256 TEXT NOT NULL CHECK(length(sha256)=64),"
+    "is_image INTEGER NOT NULL CHECK(is_image IN (0,1)),local_state TEXT NOT NULL DEFAULT 'available' CHECK(local_state IN ('available','missing','corrupt')),"
+    "created_at_utc_ms INTEGER NOT NULL,verified_at_utc_ms INTEGER,sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
+    "CREATE TABLE desktop_notes("
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,device_id TEXT NOT NULL,"
+    "color INTEGER NOT NULL DEFAULT 0 CHECK(color BETWEEN 0 AND 5),geometry TEXT NOT NULL DEFAULT '',z_order INTEGER NOT NULL DEFAULT 0,"
+    "layer INTEGER NOT NULL DEFAULT 1 CHECK(layer BETWEEN 0 AND 2),open INTEGER NOT NULL DEFAULT 0 CHECK(open IN (0,1)),"
+    "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,UNIQUE(entity_id,device_id))",
+    "CREATE TABLE sync_bindings("
+    "id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,remote_id TEXT NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+    "UNIQUE(entity_type,entity_id),UNIQUE(entity_type,remote_id))",
+    "CREATE TABLE view_defs("
+    "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),spec_json TEXT NOT NULL,"
+    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+    "CREATE TABLE local_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+    "CREATE TABLE tombstones("
+    "id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,deleted_at_utc_ms INTEGER NOT NULL,"
+    "UNIQUE(entity_type,entity_id))",
+    "CREATE TABLE outbox("
+    "id TEXT PRIMARY KEY,batch_id TEXT NOT NULL,base_server_revision INTEGER NOT NULL DEFAULT 0 CHECK(base_server_revision>=0),"
+    "entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,operation TEXT NOT NULL CHECK(operation IN ('upsert','delete')),"
+    "payload_json TEXT NOT NULL DEFAULT '{}',created_at_utc_ms INTEGER NOT NULL)",
+    "CREATE TABLE entity_events("
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,entity_kind TEXT NOT NULL CHECK(entity_kind IN ('task','note')),"
+    "entity_title TEXT NOT NULL,batch_id TEXT NOT NULL,"
+    "type TEXT NOT NULL CHECK(type IN ('created','changed','kind_changed','trashed','restored','deleted',"
+    "'attachment_added','attachment_removed','reminder_added','reminder_removed')),"
+    "field TEXT NOT NULL DEFAULT '',old_value TEXT,new_value TEXT,occurred_at_utc_ms INTEGER NOT NULL)",
+    "CREATE UNIQUE INDEX idx_one_inbox ON lists(is_inbox) WHERE is_inbox=1",
+    "CREATE TRIGGER prevent_inbox_delete BEFORE DELETE ON lists WHEN OLD.is_inbox=1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
+    "CREATE TRIGGER prevent_inbox_unset BEFORE UPDATE OF is_inbox ON lists WHEN OLD.is_inbox=1 AND NEW.is_inbox<>1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
+    "CREATE INDEX idx_lists_folder ON lists(folder_id,sort_order)",
+    "CREATE INDEX idx_sections_list ON sections(list_id,sort_order)",
+    "CREATE INDEX idx_entities_list ON entities(list_id,section_id)",
+    "CREATE INDEX idx_entities_parent ON entities(parent_id)",
+    "CREATE INDEX idx_entities_due ON entities(kind,status,due_at_utc_ms)",
+    "CREATE INDEX idx_entities_trash ON entities(deleted_at_utc_ms)",
+    "CREATE INDEX idx_entities_pinned ON entities(pinned_at_utc_ms) WHERE pinned_at_utc_ms IS NOT NULL",
+    "CREATE UNIQUE INDEX idx_entity_occurrence ON entities(recurrence_series_id,occurrence_key) WHERE recurrence_series_id IS NOT NULL",
+    "CREATE INDEX idx_checklist_entity ON checklist_items(entity_id,sort_order)",
+    "CREATE INDEX idx_reminders_due ON reminders(trigger_at_utc_ms,entity_id)",
+    "CREATE INDEX idx_deliveries_install ON reminder_deliveries(installation_id,scheduled_at_utc_ms)",
+    "CREATE INDEX idx_attachments_entity ON attachments(entity_id,sort_order)",
+    "CREATE INDEX idx_desktop_device ON desktop_notes(device_id,entity_id)",
+    "CREATE INDEX idx_view_defs_order ON view_defs(sort_order,id)",
+    "CREATE INDEX idx_tombstones_entity ON tombstones(entity_type,entity_id)",
+    "CREATE INDEX idx_outbox_batch ON outbox(batch_id,base_server_revision,id)",
+    "CREATE INDEX idx_events_entity ON entity_events(entity_id,occurred_at_utc_ms)"
 };
 }
 
-const char *Database::kConnectionName = "kylinnote_main";
+const char *Database::kConnectionName = "kylinlist_main";
 Database::Database() = default;
-
-Database &Database::instance()
-{
-    static Database database;
-    return database;
-}
-
+Database &Database::instance() { static Database database; return database; }
 bool Database::fail(const QString &message, QString *error)
 {
-    m_lastError = message;
-    if (error) {
-        *error = message;
-    }
-    return false;
+    m_lastError = message; if (error) *error = message; return false;
 }
-
 bool Database::open(QString *error)
 {
-    if (isOpen()) {
-        if (error) error->clear();
-        return true;
-    }
-    if (ensureDataDir().isEmpty()) {
-        return fail(QStringLiteral("无法创建数据目录: ") + dataDirPath(), error);
-    }
+    if (isOpen()) { if (error) error->clear(); return true; }
+    if (ensureDataDir().isEmpty()) return fail(QStringLiteral("无法创建数据目录: ") + dataDirPath(), error);
     return openAt(databasePath(), error);
 }
-
 bool Database::openAt(const QString &path, QString *error)
 {
-    if (isOpen() && m_path == path) {
-        if (error) error->clear();
-        return true;
-    }
-    close();
-    if (path.trimmed().isEmpty()) {
-        return fail(QStringLiteral("数据库路径不能为空"), error);
-    }
-
+    if (isOpen() && m_path == path) { if (error) error->clear(); return true; }
+    close(); if (path.trimmed().isEmpty()) return fail(QStringLiteral("数据库路径不能为空"), error);
     QString failure;
     {
-        QSqlDatabase conn = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
-                                                      QLatin1String(kConnectionName));
-        conn.setDatabaseName(path);
-        if (!conn.open()) {
-            failure = QStringLiteral("打开数据库失败: ") + conn.lastError().text();
-        } else {
-            // 先拒绝未来版本，再修改 journal_mode 或任何 schema。
-            QSqlQuery query(conn);
-            if (!query.exec(QStringLiteral("PRAGMA user_version")) || !query.next()) {
-                failure = QStringLiteral("读取 user_version 失败: ") + query.lastError().text();
+        QSqlDatabase database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QLatin1String(kConnectionName));
+        database.setDatabaseName(path);
+        if (!database.open()) failure = QStringLiteral("打开数据库失败: ") + database.lastError().text();
+        else {
+            QSqlQuery versionQuery(database), applicationQuery(database), objectsQuery(database);
+            if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next()
+                || !applicationQuery.exec(QStringLiteral("PRAGMA application_id")) || !applicationQuery.next()
+                || !objectsQuery.exec(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")) || !objectsQuery.next()) {
+                failure = QStringLiteral("读取数据库标识失败");
             } else {
-                const int version = query.value(0).toInt();
-                query.finish();
-                if (version > kSchemaVersion || version < 0) {
-                    failure = QStringLiteral("数据库版本 %1 高于当前支持版本 %2，请使用较新版本程序")
-                                  .arg(version).arg(kSchemaVersion);
-                } else if (!applyPragmas(&failure) || !migrate(version, kSchemaVersion, &failure)) {
-                    // 具体错误由被调用者提供；连接在本作用域退出后统一关闭/移除。
-                }
+                const int version = versionQuery.value(0).toInt(), application = applicationQuery.value(0).toInt(), objects = objectsQuery.value(0).toInt();
+                versionQuery.finish(); applicationQuery.finish(); objectsQuery.finish();
+                if (version == 0 && application == 0 && objects == 0) {
+                    if (!applyPragmas(&failure) || !initializeSchema(&failure)) {}
+                } else if (version != schemaVersion() || application != applicationId()) {
+                    failure = QStringLiteral("不是受支持的 KylinList v5 数据库；拒绝迁移或改写旧数据");
+                } else if (!applyPragmas(&failure)) {}
             }
         }
     }
-    if (!failure.isEmpty()) {
-        close();
-        return fail(failure, error);
-    }
-    m_path = path;
-    m_ready = true;
-    m_lastError.clear();
-    if (error) error->clear();
-    return true;
+    if (!failure.isEmpty()) { close(); return fail(failure, error); }
+    m_path = path; m_ready = true; m_lastError.clear(); if (error) error->clear(); return true;
 }
-
 void Database::close()
 {
-    m_ready = false;
-    m_path.clear();
-    if (!QSqlDatabase::contains(QLatin1String(kConnectionName))) {
-        return;
-    }
-    {
-        QSqlDatabase conn = QSqlDatabase::database(QLatin1String(kConnectionName), false);
-        conn.close();
-    }
-    // 调用者须在 close/openAt 前释放 repository/store 中的连接副本。
+    m_ready = false; m_path.clear(); if (!QSqlDatabase::contains(QLatin1String(kConnectionName))) return;
+    { QSqlDatabase database = QSqlDatabase::database(QLatin1String(kConnectionName), false); database.close(); }
     QSqlDatabase::removeDatabase(QLatin1String(kConnectionName));
 }
-
 bool Database::isOpen() const
 {
     return m_ready && QSqlDatabase::contains(QLatin1String(kConnectionName))
         && QSqlDatabase::database(QLatin1String(kConnectionName), false).isOpen();
 }
-
-QSqlDatabase Database::connection() const
-{
-    // 迁移期间也要取得连接；对外成功状态只能由 isOpen 判断。
-    return QSqlDatabase::database(QLatin1String(kConnectionName), false);
-}
-
+QSqlDatabase Database::connection() const { return QSqlDatabase::database(QLatin1String(kConnectionName), false); }
 bool Database::applyPragmas(QString *error)
 {
-    const char *const pragmas[] = {
-        "PRAGMA busy_timeout = 5000", "PRAGMA foreign_keys = ON",
-        "PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL"
-    };
+    const char *const pragmas[] = {"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL"};
     for (const char *sql : pragmas) {
         QSqlQuery query(connection());
-        if (!query.exec(QLatin1String(sql))) {
-            return fail(QStringLiteral("执行 %1 失败: %2")
-                        .arg(QLatin1String(sql), query.lastError().text()), error);
-        }
+        if (!query.exec(QLatin1String(sql))) return fail(QStringLiteral("执行 %1 失败: %2").arg(QLatin1String(sql), query.lastError().text()), error);
+        if (qstrcmp(sql, "PRAGMA journal_mode=WAL") == 0 && query.next()
+            && query.value(0).toString().compare(QStringLiteral("wal"), Qt::CaseInsensitive) != 0) return fail(QStringLiteral("SQLite 未进入 WAL 模式"), error);
     }
     return true;
 }
-
-bool Database::migrate(int from, int to, QString *error)
+bool Database::initializeSchema(QString *error)
 {
-    if (from == to) return true;
-    QSqlDatabase conn = connection();
-    if (!conn.transaction()) {
-        return fail(QStringLiteral("开始数据库迁移失败: ") + conn.lastError().text(), error);
-    }
+    QSqlDatabase database = connection();
+    if (!database.transaction()) return fail(QStringLiteral("开始初始化 schema 失败: ") + database.lastError().text(), error);
     QString failure;
-    const auto execute = [&conn, &failure](const QString &sql) {
-        QSqlQuery query(conn);
-        if (!query.exec(sql)) {
-            failure = QStringLiteral("数据库迁移失败: ") + query.lastError().text();
-            return false;
-        }
-        return true;
-    };
-    bool ok = true;
-    if (from == 0) {
-        ok = execute(QLatin1String(kNotesSchema))
-          && execute(QStringLiteral("CREATE INDEX IF NOT EXISTS idx_notes_deleted ON notes(deleted)"));
+    for (const char *sql : kSchema) {
+        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v5 schema 失败: ") + query.lastError().text(); break; }
     }
-    if (ok && from < 2) {
-        for (const char *sql : kV2Schema) {
-            if (!(ok = execute(QLatin1String(sql)))) break;
-        }
-        if (ok) {
-            QSqlQuery notes(conn);
-            ok = notes.exec(QStringLiteral("SELECT id,title,content,color,geometry,z_order,created_at,updated_at,deleted FROM notes ORDER BY id"));
-            if (!ok) failure = QStringLiteral("读取旧便签失败: ") + notes.lastError().text();
-            QSqlQuery insert(conn);
-            if (ok) {
-                ok = insert.prepare(QStringLiteral(
-                    "INSERT INTO tasks(id,title,description,content_format,pinned,deleted,color,geometry,z_order,created_at,updated_at)"
-                    " VALUES(?,?,?,0,?,?,?,?,?,?,?)"));
-                if (!ok) failure = insert.lastError().text();
-            }
-            while (ok && notes.next()) {
-                QTextDocument document;
-                document.setHtml(notes.value(2).toString());
-                QString title = notes.value(1).toString();
-                if (title.trimmed().isEmpty()) {
-                    title = document.toPlainText().section(QLatin1Char('\n'), 0, 0).trimmed().left(60);
-                    if (title.isEmpty()) title = QStringLiteral("未命名便签");
-                }
-                insert.bindValue(0, notes.value(0));
-                insert.bindValue(1, title);
-                insert.bindValue(2, document.toPlainText().isNull() ? QStringLiteral("") : document.toPlainText());
-                insert.bindValue(3, notes.value(8).toInt() == 0 ? 1 : 0);
-                insert.bindValue(4, notes.value(8).toInt() == 0 ? 0 : 1);
-                insert.bindValue(5, notes.value(3));
-                insert.bindValue(6, notes.value(4));
-                insert.bindValue(7, notes.value(5));
-                insert.bindValue(8, notes.value(6));
-                insert.bindValue(9, notes.value(7));
-                if (!insert.exec()) {
-                    ok = false;
-                    failure = QStringLiteral("导入旧便签失败: ") + insert.lastError().text();
-                }
-            }
-            if (ok && notes.lastError().isValid()) {
-                ok = false;
-                failure = notes.lastError().text();
-            }
+    const QString inboxId = newUuid(), now = QString::number(utcMs(utcNow()));
+    if (failure.isEmpty()) {
+        QSqlQuery inbox(database);
+        inbox.prepare(QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,NULL,'task','收集箱',1,0,?,?)"));
+        inbox.addBindValue(inboxId); inbox.addBindValue(now); inbox.addBindValue(now);
+        if (!inbox.exec()) failure = QStringLiteral("创建 inbox 失败: ") + inbox.lastError().text();
+    }
+    if (failure.isEmpty()) {
+        const QString keys[] = {QStringLiteral("installation_id"),QStringLiteral("device_id"),QStringLiteral("signed_in"),
+            QStringLiteral("default_timezone"),QStringLiteral("inbox_list_id"),QStringLiteral("schema_created_at_utc_ms"),
+            QStringLiteral("sync_base_server_revision")};
+        const QString values[] = {newUuid(),newUuid(),QStringLiteral("0"),defaultTimeZone(),inboxId,now,QStringLiteral("0")};
+        QSqlQuery meta(database); meta.prepare(QStringLiteral("INSERT INTO local_meta(key,value) VALUES(?,?)"));
+        for (int i = 0; i < 7 && failure.isEmpty(); ++i) {
+            meta.bindValue(0, keys[i]); meta.bindValue(1, values[i]);
+            if (!meta.exec()) failure = QStringLiteral("初始化安装元数据失败: ") + meta.lastError().text();
         }
     }
-    if (ok && from < 3) {
-        for (const char *sql : kV3Schema) {
-            if (!(ok = execute(QLatin1String(sql)))) break;
-        }
-    }
-    if (ok) ok = execute(QStringLiteral("PRAGMA user_version = %1").arg(to));
-    if (ok && !conn.commit()) {
-        ok = false;
-        failure = QStringLiteral("提交迁移失败: ") + conn.lastError().text();
-    }
-    if (!ok) {
-        conn.rollback();
-        return fail(failure, error);
+    QSqlQuery versions(database);
+    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=5"))
+                              || !versions.exec(QStringLiteral("PRAGMA application_id=%1").arg(applicationId()))))
+        failure = QStringLiteral("写入数据库标识失败: ") + versions.lastError().text();
+    QSqlQuery foreign(database);
+    if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next())) failure = QStringLiteral("新 schema 外键检查失败");
+    if (!failure.isEmpty() || !database.commit()) {
+        if (failure.isEmpty()) failure = database.lastError().text(); database.rollback(); return fail(failure, error);
     }
     return true;
 }
 
-} // namespace kn
+} // namespace kl
