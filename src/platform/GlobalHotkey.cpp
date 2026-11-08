@@ -5,12 +5,12 @@
 #include <QSocketNotifier>
 #include <QTimer>
 
-#ifdef KYLINNOTE_HAVE_X11
+#ifdef KYLINLIST_HAVE_X11
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
 
-namespace kn {
+namespace kl {
 
 namespace {
 // 抓取时必须穷举这些锁键组合，否则开了 NumLock 之后快捷键就失灵
@@ -94,7 +94,7 @@ GlobalHotkey::GlobalHotkey(QObject *parent)
 {
     m_dpy = XOpenDisplay(nullptr);
     if (!m_dpy) {
-        qWarning() << "[kylinnote] 无法连接 X server，全局快捷键不可用";
+        qWarning() << "[kylinlist] 无法连接 X server，全局快捷键不可用";
         return;
     }
 
@@ -135,13 +135,13 @@ bool GlobalHotkey::grab(const QKeySequence &seq, int id)
 
     const unsigned long keysym = qtKeyToKeysym(qtKey);
     if (keysym == 0) {
-        qWarning() << "[kylinnote] 无法识别的快捷键:" << seq.toString();
+        qWarning() << "[kylinlist] 无法识别的快捷键:" << seq.toString();
         return false;
     }
 
     const KeyCode keycode = XKeysymToKeycode(m_dpy, (KeySym)keysym);
     if (keycode == 0) {
-        qWarning() << "[kylinnote] 当前键盘布局无此按键:" << seq.toString();
+        qWarning() << "[kylinlist] 当前键盘布局无此按键:" << seq.toString();
         return false;
     }
 
@@ -169,7 +169,7 @@ bool GlobalHotkey::grab(const QKeySequence &seq, int id)
         }
         XSync(m_dpy, False);
         XSetErrorHandler(guard);
-        qWarning() << "[kylinnote] 快捷键" << seq.toString()
+        qWarning() << "[kylinlist] 快捷键" << seq.toString()
                    << "抓取失败（可能已被其它程序占用）";
         return false;
     }
@@ -216,9 +216,9 @@ void GlobalHotkey::onX11Readable()
     }
 }
 
-} // namespace kn
+} // namespace kl
 #else
-namespace kn {
+namespace kl {
 GlobalHotkey::GlobalHotkey(QObject *parent):QObject(parent) {}
 GlobalHotkey::~GlobalHotkey()=default;
 bool GlobalHotkey::grab(const QKeySequence &,int) {return false;}

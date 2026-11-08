@@ -1,14 +1,14 @@
-#ifndef KYLINNOTE_AUTOSTART_H
-#define KYLINNOTE_AUTOSTART_H
+#ifndef KYLINLIST_AUTOSTART_H
+#define KYLINLIST_AUTOSTART_H
 
 #include <QString>
 #include <QStringList>
 
-namespace kn {
+namespace kl {
 
 // 开机自启（当前用户，无需管理员权限）：
-//   Windows：HKCU\Software\Microsoft\Windows\CurrentVersion\Run 的 KylinNote 值
-//   Linux  ：~/.config/autostart/kylinnote.desktop
+//   Windows：HKCU\Software\Microsoft\Windows\CurrentVersion\Run 的 KylinList 值
+//   Linux  ：~/.config/autostart/kylinlist.desktop
 // 本类只提供读写能力，是否开启完全由调用方（用户设置）决定，
 // 程序不会在未获用户授权时默认强制开启自启。
 class Autostart
@@ -33,6 +33,6 @@ public:
     static void setArguments(const QStringList &arguments);
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_AUTOSTART_H
+#endif // KYLINLIST_AUTOSTART_H

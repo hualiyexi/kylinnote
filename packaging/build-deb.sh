@@ -89,7 +89,7 @@ PLUGIN_SRC="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
 
 MODE=system
 [[ "$BUNDLE_QT" == ON ]] && MODE=bundle
-PKG_NAME="kylinnote_${VERSION}_${ARCH}"
+PKG_NAME="kylinlist_${VERSION}_${ARCH}"
 [[ "$BUNDLE_QT" == OFF ]] || PKG_NAME="${PKG_NAME}_bundle"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR}"
 mkdir -p -- "$OUTPUT_DIR"
@@ -116,8 +116,8 @@ trap cleanup EXIT
 # Explicit OFF is essential: reusing an old bundle cache must not turn a normal
 # package into a half-bundle. The default cache paths are also mode-specific.
 CMAKE_ARGS=(-S "$PROJECT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DKYLINNOTE_BUNDLE_QT="$BUNDLE_QT"
-    -DBUILD_TESTING=ON -DKYLINNOTE_WITH_DBUS=ON -DKYLINNOTE_REQUIRE_X11=ON
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DKYLINLIST_BUNDLE_QT="$BUNDLE_QT"
+    -DBUILD_TESTING=ON -DKYLINLIST_WITH_DBUS=ON -DKYLINLIST_REQUIRE_X11=ON
     -DCMAKE_PREFIX_PATH="$QT_PREFIX")
 echo "==> Configure $VERSION / $ARCH / $MODE / Qt $QT_VERSION"
 cmake "${CMAKE_ARGS[@]}"
@@ -133,7 +133,7 @@ mkdir -m 0700 "$TEST_ENV/home" "$TEST_ENV/config" "$TEST_ENV/data" "$TEST_ENV/ca
     export XDG_CONFIG_DIRS=/etc/xdg XDG_DATA_DIRS=/usr/local/share:/usr/share
     export TMPDIR="$TEST_ENV/tmp" TMP="$TEST_ENV/tmp" TEMP="$TEST_ENV/tmp"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=$TEST_ENV/no-session-bus" DBUS_SYSTEM_BUS_ADDRESS="unix:path=$TEST_ENV/no-system-bus"
-    unset DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE DBUS_SESSION_BUS_PID XAUTHORITY KYLINNOTE_DATA_DIR
+    unset DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE DBUS_SESSION_BUS_PID XAUTHORITY KYLINLIST_DATA_DIR
     for test in tasks ui; do
         test_list="$(cmake -E chdir "$BUILD_DIR" ctest -C Release -N -R "^${test}$")"
         printf '%s\n' "$test_list"
@@ -175,8 +175,8 @@ needed_libraries() {
 }
 
 if [[ "$BUNDLE_QT" == ON ]]; then
-    LIBDIR="$STAGING$INSTALL_PREFIX/lib/kylinnote"
-    BIN="$LIBDIR/kylinnote"
+    LIBDIR="$STAGING$INSTALL_PREFIX/lib/kylinlist"
+    BIN="$LIBDIR/kylinlist"
     [[ -x "$BIN" ]] || die "Bundle executable missing: $BIN"
     verify_architecture "$BIN"
     echo "==> Using Qt plugins: $PLUGIN_SRC (Qt $QT_VERSION)"
@@ -229,22 +229,22 @@ if [[ "$BUNDLE_QT" == ON ]]; then
 
     # These are preinstalled/base graphic dependencies on the target, never Qt.
     # The clean runtime test installs this explicit list BEFORE going offline.
-    DEPENDS='libc6 (>= 2.31), libstdc++6, libgcc-s1, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-glx0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-render0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xinput0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1, libfontconfig1, libfreetype6, libglib2.0-0, libdbus-1-3, zlib1g'
+    DEPENDS='libc6 (>= 2.31), libstdc++6, libgcc-s1, tzdata, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-glx0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-render0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xinput0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1, libfontconfig1, libfreetype6, libglib2.0-0, libdbus-1-3, zlib1g'
 else
-    BIN="$STAGING$INSTALL_PREFIX/bin/kylinnote"
+    BIN="$STAGING$INSTALL_PREFIX/bin/kylinlist"
     verify_architecture "$BIN"
     QT_DEPENDS="libqt5core5a (>= $QT_VERSION), libqt5gui5 (>= $QT_VERSION), libqt5widgets5 (>= $QT_VERSION), libqt5sql5 (>= $QT_VERSION), libqt5network5 (>= $QT_VERSION), libqt5dbus5 (>= $QT_VERSION), libqt5sql5-sqlite (>= $QT_VERSION), libqt5svg5 (>= $QT_VERSION)"
-    DEPENDS="libc6 (>= 2.31), libstdc++6, libgcc-s1, libx11-6, $QT_DEPENDS"
+    DEPENDS="libc6 (>= 2.31), libstdc++6, libgcc-s1, libx11-6, tzdata, $QT_DEPENDS"
     if [[ "$USE_SHLIBDEPS" == yes ]]; then
         command -v dpkg-shlibdeps >/dev/null || die 'Install dpkg-dev for --shlibdeps'
         # dpkg-shlibdeps expects debian/control in its working directory. Keep
         # this generated file inside our new private staging root, not a reused
         # build directory where it could overwrite an existing file or symlink.
         mkdir -m 0700 "$STAGING_ROOT/debian"
-        printf 'Source: kylinnote\nSection: utils\nPriority: optional\nMaintainer: KylinNote <kylinnote@localhost>\n\nPackage: kylinnote\nArchitecture: any\nDescription: Desktop notes and tasks\n' > "$STAGING_ROOT/debian/control"
+        printf 'Source: kylinlist\nSection: utils\nPriority: optional\nMaintainer: KylinList <kylinlist@localhost>\n\nPackage: kylinlist\nArchitecture: any\nDescription: Local tasks and checklists\n' > "$STAGING_ROOT/debian/control"
         DEPS="$(cd "$STAGING_ROOT" && dpkg-shlibdeps -O -e"$BIN")" || die 'dpkg-shlibdeps failed'
         [[ "$DEPS" == shlibs:Depends=* && -n "${DEPS#shlibs:Depends=}" ]] || die 'dpkg-shlibdeps returned no dependencies'
-        DEPENDS="${DEPS#shlibs:Depends=}, $QT_DEPENDS"
+        DEPENDS="${DEPS#shlibs:Depends=}, tzdata, $QT_DEPENDS"
     fi
     if [[ "$DO_STRIP" == yes ]]; then strip --strip-unneeded "$BIN"; fi
 fi

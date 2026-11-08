@@ -26,25 +26,25 @@ try {
     $Setup.Refresh()
     Write-Output "Installer exit: $($Setup.ExitCode)"
     if ($Setup.ExitCode -ne 0) { throw "Installer failed: $($Setup.ExitCode)" }
-    $App = Join-Path $InstallDir 'kylinnote.exe'
+    $App = Join-Path $InstallDir 'kylinlist.exe'
     if (-not (Test-Path -LiteralPath $App)) { throw 'Installed application missing' }
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     $PowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     & $PowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'windows/Smoke.ps1') `
         -Application $App -DataDir $DataDir -WorkDir $InstallDir
     if ($LASTEXITCODE -ne 0) { throw "Installed application failed: $LASTEXITCODE" }
-    if (-not (Test-Path -LiteralPath (Join-Path $DataDir 'notes.db'))) { throw 'Installed application did not create SQLite database' }
+    if (-not (Test-Path -LiteralPath (Join-Path $DataDir 'kylinlist.db'))) { throw 'Installed application did not create SQLite database' }
     $Uninstaller = Get-ChildItem -LiteralPath $InstallDir -Filter 'unins*.exe' | Select-Object -First 1
     if (-not $Uninstaller) { throw 'Uninstaller missing' }
     $Uninstall = Start-Process -PassThru -FilePath $Uninstaller.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
     if (-not $Uninstall.WaitForExit(60000)) { $Uninstall.Kill(); throw 'Uninstaller timed out' }
     $Uninstall.Refresh()
     if ($Uninstall.ExitCode -ne 0) { throw "Uninstaller failed: $($Uninstall.ExitCode)" }
-    if (-not (Test-Path -LiteralPath (Join-Path $DataDir 'notes.db'))) { throw 'Uninstall deleted user data' }
+    if (-not (Test-Path -LiteralPath (Join-Path $DataDir 'kylinlist.db'))) { throw 'Uninstall deleted user data' }
     Write-Output 'PASS: install, isolated app start, SQLite initialization, uninstall, user data preserved.'
 } finally {
     $TestProcesses = Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -eq 'kylinnote.exe' -and $_.ExecutablePath -eq (Join-Path $InstallDir 'kylinnote.exe') -and $_.CommandLine -like '*--smoke-test*'
+        $_.Name -eq 'kylinlist.exe' -and $_.ExecutablePath -eq (Join-Path $InstallDir 'kylinlist.exe') -and $_.CommandLine -like '*--smoke-test*'
     }
     foreach ($Process in $TestProcesses) { Stop-Process -Id $Process.ProcessId -Force -ErrorAction SilentlyContinue }
 }

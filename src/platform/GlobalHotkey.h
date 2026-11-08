@@ -1,5 +1,5 @@
-#ifndef KYLINNOTE_GLOBALHOTKEY_H
-#define KYLINNOTE_GLOBALHOTKEY_H
+#ifndef KYLINLIST_GLOBALHOTKEY_H
+#define KYLINLIST_GLOBALHOTKEY_H
 
 #include <QList>
 #include <QObject>
@@ -10,7 +10,7 @@ class QKeySequence;
 // Xlib 前向声明，避免把 X11 头文件污染到所有包含本文件的编译单元
 typedef struct _XDisplay Display;
 
-namespace kn {
+namespace kl {
 
 // X11 全局热键：用 XGrabKey 在根窗口上抓取按键，焦点在别的软件里也能响应。
 //
@@ -55,6 +55,6 @@ private:
     QList<Binding>   m_bindings;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_GLOBALHOTKEY_H
+#endif // KYLINLIST_GLOBALHOTKEY_H

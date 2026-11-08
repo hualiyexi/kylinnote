@@ -1,7 +1,7 @@
 #!/bin/sh
-# KylinNote 启动包装脚本（自包含包专用）
+# KylinList 启动包装脚本（自包含包专用）
 #
-# 真正的可执行文件与 Qt 运行库位于 <prefix>/lib/kylinnote，
+# 真正的可执行文件与 Qt 运行库位于 <prefix>/lib/kylinlist，
 # 这里负责把库搜索路径指过去，然后 exec 真身。
 # 内网的机器即使没装任何 Qt 包，也能直接运行。
 # prefix 由脚本自身位置推导，支持 /usr 之外的安装前缀。
@@ -9,10 +9,10 @@
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 BINDIR="$(dirname "$SELF")"
 PREFIX="$(dirname "$BINDIR")"
-LIBDIR="$PREFIX/lib/kylinnote"
+LIBDIR="$PREFIX/lib/kylinlist"
 
-if [ ! -x "$LIBDIR/kylinnote" ]; then
-    echo "KylinNote: 未找到 $LIBDIR/kylinnote，安装可能已损坏" >&2
+if [ ! -x "$LIBDIR/kylinlist" ]; then
+    echo "KylinList: 未找到 $LIBDIR/kylinlist，安装可能已损坏" >&2
     exit 127
 fi
 
@@ -29,4 +29,4 @@ export QT_QPA_PLATFORM_PLUGIN_PATH="$LIBDIR/plugins/platforms"
 : "${QT_QPA_PLATFORM:=xcb}"
 export QT_QPA_PLATFORM
 
-exec "$LIBDIR/kylinnote" "$@"
+exec "$LIBDIR/kylinlist" "$@"

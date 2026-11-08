@@ -17,7 +17,7 @@ done
 die() { echo "ERROR: $*" >&2; exit 1; }
 [[ -f "${DEB:-}" ]] || die 'A bundle .deb path is required'
 [[ "$EUID" == 0 ]] || die 'Run inside a disposable container as root'
-[[ "$(dpkg-deb -f "$DEB" Package)" == kylinnote ]] || die 'Unexpected package name'
+[[ "$(dpkg-deb -f "$DEB" Package)" == kylinlist ]] || die 'Unexpected package name'
 [[ "$(dpkg-deb -f "$DEB" Architecture)" == "$(dpkg --print-architecture)" ]] || die 'Wrong package architecture'
 DEPENDENCIES="$(dpkg-deb -f "$DEB" Depends)"
 [[ "$DEPENDENCIES" != *libqt5* && "$DEPENDENCIES" != *qtbase* ]] || die 'Bundle must not depend on system Qt packages'
@@ -53,10 +53,10 @@ for tool in readelf ldd xvfb-run dbus-run-session timeout; do
 done
 # No apt operation is permitted below. CI also disables networking here.
 dpkg -i "$DEB"
-[[ "$(dpkg-query -W -f='${Status}' kylinnote)" == 'install ok installed' ]] || die 'Offline dpkg install failed'
+[[ "$(dpkg-query -W -f='${Status}' kylinlist)" == 'install ok installed' ]] || die 'Offline dpkg install failed'
 assert_no_system_qt
-LIBDIR=/usr/lib/kylinnote
-for path in kylinnote libQt5Core.so.5 libQt5Gui.so.5 libQt5Widgets.so.5 libQt5Sql.so.5 libQt5Network.so.5 libQt5Svg.so.5 libQt5XcbQpa.so.5 \
+LIBDIR=/usr/lib/kylinlist
+for path in kylinlist libQt5Core.so.5 libQt5Gui.so.5 libQt5Widgets.so.5 libQt5Sql.so.5 libQt5Network.so.5 libQt5Svg.so.5 libQt5XcbQpa.so.5 \
         plugins/platforms/libqxcb.so plugins/sqldrivers/libqsqlite.so \
         plugins/imageformats/libqsvg.so plugins/iconengines/libqsvgicon.so qt.conf; do
     [[ -f "$LIBDIR/$path" ]] || die "Bundle is missing $path"
@@ -97,7 +97,7 @@ env LD_LIBRARY_PATH="$LIBDIR" QT_QPA_PLATFORM=xcb QT_DEBUG_PLUGINS=1 \
     XDG_RUNTIME_DIR="$RUN_DIR/runtime" \
     timeout --signal=TERM --kill-after=3s 20s \
     dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
-    /usr/bin/kylinnote "${APP_ARGS[@]}" > "$SMOKE_LOG" 2>&1
+    /usr/bin/kylinlist "${APP_ARGS[@]}" > "$SMOKE_LOG" 2>&1
 result=$?
 set -e
 tail -n 100 "$SMOKE_LOG"
@@ -105,5 +105,5 @@ tail -n 100 "$SMOKE_LOG"
 # Prove that the real platform and database plugins loaded during app startup.
 grep -E 'loaded library.*libqxcb\.so' "$SMOKE_LOG" >/dev/null || die 'xcb platform plugin was not loaded'
 grep -E 'loaded library.*libqsqlite\.so' "$SMOKE_LOG" >/dev/null || die 'SQLite driver was not loaded'
-[[ -s "$RUN_DIR/data/notes.db" ]] || die 'The real application did not initialize its database'
+[[ -s "$RUN_DIR/data/kylinlist.db" ]] || die 'The real application did not initialize its database'
 echo "==> Offline install, ELF closure, xcb / SQLite loading and real-app smoke passed ($SMOKE_LOG)"

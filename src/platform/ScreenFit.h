@@ -1,9 +1,9 @@
-#ifndef KYLINNOTE_SCREENFIT_H
-#define KYLINNOTE_SCREENFIT_H
+#ifndef KYLINLIST_SCREENFIT_H
+#define KYLINLIST_SCREENFIT_H
 
 #include <QRect>
 
-namespace kn {
+namespace kl {
 
 // 多屏坐标修正与窗管就绪判定
 class ScreenFit
@@ -19,6 +19,6 @@ public:
     static QRect defaultGeometry(int cascadeIndex = 0);
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_SCREENFIT_H
+#endif // KYLINLIST_SCREENFIT_H

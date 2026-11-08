@@ -9,7 +9,7 @@
 #include <QSettings>
 #endif
 
-namespace kn {
+namespace kl {
 namespace {
 
 QStringList &argumentsStorage()
@@ -21,10 +21,10 @@ QStringList &argumentsStorage()
 
 QString executablePath()
 {
-    // 自包含 Linux 包里真身位于 /usr/lib/kylinnote，自启必须走 /usr/bin 的
+    // 自包含 Linux 包里真身位于 /usr/lib/kylinlist，自启必须走 /usr/bin 的
     // 启动脚本才能拿到随包 Qt 库与插件路径
-#ifdef KYLINNOTE_AUTOSTART_EXEC
-    return QStringLiteral(KYLINNOTE_AUTOSTART_EXEC);
+#ifdef KYLINLIST_AUTOSTART_EXEC
+    return QStringLiteral(KYLINLIST_AUTOSTART_EXEC);
 #else
     return QCoreApplication::applicationFilePath();
 #endif
@@ -33,7 +33,7 @@ QString executablePath()
 #ifdef Q_OS_WIN
 
 const QString kRunKey = QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const QString kValueName = QStringLiteral("KylinNote");
+const QString kValueName = QStringLiteral("KylinList");
 
 QString windowsCommandLine()
 {
@@ -107,7 +107,7 @@ QString Autostart::filePath()
 #ifdef Q_OS_WIN
     return kRunKey + QLatin1Char('\\') + kValueName;
 #else
-    return QDir::homePath() + QStringLiteral("/.config/autostart/kylinnote.desktop");
+    return QDir::homePath() + QStringLiteral("/.config/autostart/kylinlist.desktop");
 #endif
 }
 
@@ -162,11 +162,11 @@ bool Autostart::setEnabled(bool enabled, QString *error)
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Version=1.0\n"
-        "Name=KylinNote\n"
-        "GenericName=Desktop Notes\n"
-        "Comment=KylinNote 桌面便签\n"
+        "Name=麒麟清单\n"
+        "GenericName=Entity List\n"
+        "Comment=麒麟清单本地任务与桌面便签\n"
         "Exec=%1\n"
-        "Icon=kylinnote\n"
+        "Icon=kylinlist\n"
         "Terminal=false\n"
         "NoDisplay=false\n"
         "Categories=Utility;\n"
@@ -217,4 +217,4 @@ void Autostart::setArguments(const QStringList &arguments)
     argumentsStorage() = arguments;
 }
 
-} // namespace kn
+} // namespace kl
