@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=KylinList
+Name[zh_CN]=麒麟清单
+GenericName=Task List
+GenericName[zh_CN]=任务清单
+Comment=Manage local tasks, checklists, schedules and reminders
+Comment[zh_CN]=管理本地任务、清单、日程与提醒，并可贴到桌面
+Exec=kylinlist
+TryExec=kylinlist
+Icon=kylinlist
+Terminal=false
+Categories=Utility;Office;
+Keywords=task;checklist;todo;note;sticky;任务;清单;待办;便签;
+StartupNotify=false

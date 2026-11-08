@@ -7,7 +7,7 @@
 #include <QLocalSocket>
 #include <QVariant>
 
-namespace kn {
+namespace kl {
 namespace {
 
 // 通道名只允许安全字符：Windows 上它是命名管道名，Unix 上是 socket 文件名
@@ -61,7 +61,7 @@ QString InstanceChannel::defaultServerName()
 #endif
     const QString suffix = QString::fromLatin1(QCryptographicHash::hash(
         dataPath.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
-    return QStringLiteral("kylinnote-") + user.left(24) + QLatin1Char('-')
+    return QStringLiteral("kylinlist-") + user.left(24) + QLatin1Char('-')
            + suffix + QStringLiteral(".ipc");
 }
 
@@ -218,4 +218,4 @@ void InstanceChannel::dispatchMessage(const QString &message)
     }
 }
 
-} // namespace kn
+} // namespace kl

@@ -5,7 +5,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 
-namespace kn {
+namespace kl {
 
 namespace {
 // 与屏幕可用区的最小重叠比例，低于该比例视为已越界
@@ -126,4 +126,4 @@ QRect ScreenFit::defaultGeometry(int cascadeIndex)
     return clampInto(geo, avail);
 }
 
-} // namespace kn
+} // namespace kl

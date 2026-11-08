@@ -1,5 +1,5 @@
-#ifndef KYLINNOTE_INSTANCECHANNEL_H
-#define KYLINNOTE_INSTANCECHANNEL_H
+#ifndef KYLINLIST_INSTANCECHANNEL_H
+#define KYLINLIST_INSTANCECHANNEL_H
 
 #include <QObject>
 #include <QString>
@@ -7,7 +7,7 @@
 class QLocalServer;
 class QLocalSocket;
 
-namespace kn {
+namespace kl {
 
 // 跨平台单实例 IPC：基于 QtNetwork 的 QLocalServer / QLocalSocket
 // （Windows 为命名管道，Linux/macOS 为 Unix domain socket）。
@@ -32,7 +32,7 @@ public:
     explicit InstanceChannel(QObject *parent = nullptr);
     ~InstanceChannel() override;
 
-    // 每用户唯一通道名（kylinnote-<user>.ipc），避免多用户共用机器时互相打扰
+    // 每用户唯一通道名（kylinlist-<user>.ipc），避免多用户共用机器时互相打扰
     static QString defaultServerName();
 
     // 成为主实例并开始监听。已有活实例在监听时返回 false；
@@ -66,6 +66,6 @@ private:
     QLocalServer *m_server = nullptr;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_INSTANCECHANNEL_H
+#endif // KYLINLIST_INSTANCECHANNEL_H

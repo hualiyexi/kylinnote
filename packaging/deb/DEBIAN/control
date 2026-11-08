@@ -1,11 +1,12 @@
-Package: kylinnote
+Package: kylinlist
 Version: 1.0.2
 Section: utils
 Priority: optional
 Architecture: arm64
-Maintainer: KylinNote Maintainer <kylinnote@localhost>
-Homepage: http://localhost/kylinnote
-Depends: libc6, libstdc++6, libgcc1, libqt5core5a, libqt5gui5, libqt5widgets5, libqt5sql5, libqt5sql5-sqlite, libqt5dbus5
-Description: KylinNote desktop notes and tasks
- KylinNote provides desktop notes and task management with local storage.
- It includes note editing, task organization, reminders and a system tray.
+Maintainer: KylinList Maintainer <kylinlist@localhost>
+Homepage: http://localhost/kylinlist
+Depends: libc6, libstdc++6, libgcc1, tzdata, libqt5core5a, libqt5gui5, libqt5widgets5, libqt5sql5, libqt5sql5-sqlite, libqt5dbus5
+Description: KylinList task and checklist manager
+ KylinList provides local task, checklist and schedule management.
+ It includes Markdown details, subtasks, reminders and desktop notes.
+ 麒麟清单以任务和清单为核心，桌面便签只是任务的展示方式。

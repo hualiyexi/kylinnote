@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#!
 Build with explicit local tools. This script changes PATH only for its own
 process, restores it on exit, and never installs Qt or tools globally.
@@ -61,7 +61,7 @@ if ($BuildDir -eq $ProjectDir -or $BuildDir -eq [IO.Path]::GetPathRoot($BuildDir
 $VersionMatch = [regex]::Match((Get-Content -LiteralPath (Join-Path $ProjectDir 'CMakeLists.txt') -Raw), '(?m)^\s*VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)')
 if (-not $VersionMatch.Success) { throw 'Cannot parse project version from CMakeLists.txt' }
 $Version = $VersionMatch.Groups[1].Value
-$PackageName = "KylinNote-$Version-Windows-x64"
+$PackageName = "KylinList-$Version-Windows-x64"
 $StageParent = Join-Path $BuildDir 'package'
 $StageDir = Join-Path $StageParent $PackageName
 # This exact, verified package child is the only recursive deletion target.
@@ -82,15 +82,15 @@ $env:TMP = $env:TEMP
 New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
 $OriginalPluginPath = $env:QT_PLUGIN_PATH
 $OriginalPlatformPluginPath = $env:QT_QPA_PLATFORM_PLUGIN_PATH
-$OriginalDataDir = $env:KYLINNOTE_DATA_DIR
+$OriginalDataDir = $env:KYLINLIST_DATA_DIR
 $OriginalPlatform = $env:QT_QPA_PLATFORM
 try {
     $env:PATH = "$(Join-Path $QtRoot 'bin');$(Join-Path $CompilerRoot 'bin');$OriginalPath"
     Invoke-Checked $CMake @('-S', $ProjectDir, '-B', $BuildDir, '-G', 'Ninja',
         "-DCMAKE_BUILD_TYPE=$Configuration", "-DCMAKE_MAKE_PROGRAM=$Ninja",
         "-DCMAKE_C_COMPILER=$Gcc", "-DCMAKE_CXX_COMPILER=$Gxx",
-        "-DCMAKE_PREFIX_PATH=$QtRoot", '-DKYLINNOTE_BUNDLE_QT=OFF',
-        '-DKYLINNOTE_WITH_DBUS=OFF', '-DBUILD_TESTING=ON')
+        "-DCMAKE_PREFIX_PATH=$QtRoot", '-DKYLINLIST_BUNDLE_QT=OFF',
+        '-DKYLINLIST_WITH_DBUS=OFF', '-DBUILD_TESTING=ON')
     Invoke-Checked $CMake @('--build', $BuildDir, '--config', $Configuration, '--parallel', "$Parallel")
     if (-not $SkipTests) {
         # Qt 5.12.8 的官方 Windows 构建使用相对前缀：QLibraryInfo 会把插件目录
@@ -133,7 +133,7 @@ try {
         }
     }
     Invoke-Checked $CMake @('--install', $BuildDir, '--config', $Configuration, '--prefix', $StageDir)
-    $App = Join-Path $StageDir 'kylinnote.exe'
+    $App = Join-Path $StageDir 'kylinlist.exe'
     foreach ($LicenseFile in @('LICENSE', 'LICENSE.LGPL3', 'LICENSE.LGPLv3', 'COPYING', 'COPYING.LIB')) {
         $SourceLicense = Join-Path $QtRoot $LicenseFile
         if (Test-Path -LiteralPath $SourceLicense) {
@@ -189,15 +189,15 @@ try {
     $env:QT_PLUGIN_PATH = $StageDir
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $StageDir 'platforms'
     $env:QT_QPA_PLATFORM = 'windows'
-    $env:KYLINNOTE_DATA_DIR = Join-Path $BuildDir ("smoke-" + [guid]::NewGuid().ToString('N'))
+    $env:KYLINLIST_DATA_DIR = Join-Path $BuildDir ("smoke-" + [guid]::NewGuid().ToString('N'))
     # A GUI-subsystem application never creates a black console window.
     # The build-only launcher waits for the real process exit code.
     $PowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     & $PowerShell -NoProfile -ExecutionPolicy Bypass -File `
         (Join-Path $ProjectDir 'packaging/windows/Smoke.ps1') -Application $App `
-        -DataDir "$env:KYLINNOTE_DATA_DIR" -WorkDir $BuildDir
+        -DataDir "$env:KYLINLIST_DATA_DIR" -WorkDir $BuildDir
     if ($LASTEXITCODE -ne 0) { throw "GUI smoke helper failed: $LASTEXITCODE" }
-    if (-not (Test-Path -LiteralPath (Join-Path $env:KYLINNOTE_DATA_DIR 'notes.db'))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $env:KYLINLIST_DATA_DIR 'kylinlist.db'))) {
         throw 'Deployed app did not initialize its SQLite database'
     }
     if (-not $SkipArchive) {
@@ -207,10 +207,10 @@ try {
         Write-Output "Portable archive: $ZipFile"
     }
     if (-not $SkipInstaller) {
-        $InstallerScript = Join-Path $ProjectDir 'packaging/windows/KylinNote.iss'
+        $InstallerScript = Join-Path $ProjectDir 'packaging/windows/KylinList.iss'
         Invoke-Checked $InnoSetupCompiler @("/DAppVersion=$Version", "/DSourceDir=$StageDir",
             "/DOutputDir=$OutputDir", $InstallerScript)
-        $Installer = Join-Path $OutputDir "KylinNote-$Version-Windows-x64-Setup.exe"
+        $Installer = Join-Path $OutputDir "KylinList-$Version-Windows-x64-Setup.exe"
         if (-not (Test-Path -LiteralPath $Installer)) { throw "Installer was not generated: $Installer" }
         Write-Output "Current-user offline installer: $Installer"
     }
@@ -221,6 +221,6 @@ try {
     $env:TMP = $OriginalTmp
     $env:QT_PLUGIN_PATH = $OriginalPluginPath
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = $OriginalPlatformPluginPath
-    $env:KYLINNOTE_DATA_DIR = $OriginalDataDir
+    $env:KYLINLIST_DATA_DIR = $OriginalDataDir
     $env:QT_QPA_PLATFORM = $OriginalPlatform
 }
