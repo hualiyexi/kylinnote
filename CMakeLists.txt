@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -24,7 +25,7 @@ option(KYLINLIST_BUNDLE_QT "Install Linux executable beside bundled Qt libraries
 option(KYLINLIST_WITH_DBUS "Build the optional Linux D-Bus adapter" ${UNIX})
 option(KYLINLIST_REQUIRE_X11 "Fail if Linux global-hotkey support cannot be built" OFF)
 
-find_package(Qt5 5.12 REQUIRED COMPONENTS Core Gui Widgets Sql Network)
+find_package(Qt5 5.12 REQUIRED COMPONENTS Core Gui Widgets Sql Network Svg)
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     find_package(Qt5 5.12 REQUIRED COMPONENTS DBus)
 endif()
@@ -65,6 +66,11 @@ set(KYLINLIST_UI_SOURCES
     src/ui/ColorTheme.cpp
     src/ui/NoteChecklist.cpp
     src/ui/AttachmentWidget.cpp
+    src/ui/design/DesignTokens.cpp
+    src/ui/design/ThemeManager.cpp
+    src/ui/design/TypeSystem.cpp
+    src/ui/design/QssBuilder.cpp
+    src/ui/AppIcons.cpp
     src/ui/AppStyle.cpp
     src/ui/Markdown.cpp
     src/ui/EntityHoverPreview.cpp
@@ -82,7 +88,7 @@ if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
 endif()
 add_library(kylinlist_ui STATIC ${KYLINLIST_UI_SOURCES})
 target_include_directories(kylinlist_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(kylinlist_ui PUBLIC kylinlist_core Qt5::Widgets)
+target_link_libraries(kylinlist_ui PUBLIC kylinlist_core Qt5::Widgets Qt5::Svg)
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     target_link_libraries(kylinlist_ui PUBLIC Qt5::DBus)
     target_compile_definitions(kylinlist_ui PUBLIC KYLINLIST_HAVE_DBUS=1)
