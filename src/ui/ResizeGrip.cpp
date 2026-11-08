@@ -6,7 +6,7 @@
 #include <QPainter>
 #include <QPen>
 
-namespace kn {
+namespace kl {
 
 ResizeGrip::ResizeGrip(QWidget *parent)
     : QWidget(parent)
@@ -91,4 +91,4 @@ void ResizeGrip::leaveEvent(QEvent *event)
     QWidget::leaveEvent(event);
 }
 
-} // namespace kn
+} // namespace kl

@@ -1,12 +1,13 @@
 #pragma once
+#include <QPointer>
 #include <QTimer>
 #include <QWidget>
-#include "../domain/Task.h"
+#include "../domain/Entity.h"
 class QLabel;
 class QCheckBox;
 class QPushButton;
 class QStackedWidget;
-namespace kn {
+namespace kl {
 class TitleBar;
 class ResizeGrip;
 class MarkdownEditor;
@@ -17,16 +18,16 @@ class DocumentPreview;
 class NoteWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit NoteWidget(const Task& task, QWidget* parent = nullptr);
-    qint64 id() const {
+    explicit NoteWidget(const Entity& task, QWidget* parent = nullptr);
+    QString id() const {
         return m_task.id;
     }
     int zOrder() const {
         return m_task.zOrder;
     }
-    Task snapshot() const;
-    void applyTask(const Task& task);
-    void applySaved(const Task& task);
+    Entity snapshot() const;
+    void applyTask(const Entity& task);
+    void applySaved(const Entity& task);
     void setSaveFailed(bool failed);
     bool saveFailed() const {
         return m_saveFailed;
@@ -42,15 +43,16 @@ public:
     void raiseTemporarily();
     void focusEditor();
     bool flush();
+    bool finishEditing();
     void setStore(TaskStore* store);
     void refreshAttachments();
 signals:
     void activated(NoteWidget* note);
     void closeRequested(NoteWidget* note);
     void saveRequested(NoteWidget* note);
-    void taskOpenRequested(qint64 id);
-    void completionRequested(qint64 id, bool completed);
-    void checklistToggled(qint64 id, int index, bool completed);
+    void taskOpenRequested(QString id);
+    void completionRequested(QString id, bool completed);
+    void checklistToggled(QString id, int index, bool completed);
 
 protected:
     void moveEvent(QMoveEvent* event) override;
@@ -60,13 +62,17 @@ protected:
     void leaveEvent(QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void buildUi();
     void updateView();
     void applyWindowFlags();
     void scheduleSave();
-    Task m_task;
+    void beginTextSession();
+    bool endTextSession();
+    Entity m_task;
+    QPointer<TaskStore> m_store;
     TitleBar* m_titleBar = nullptr;
     QLabel *m_title = nullptr, *m_schedule = nullptr, *m_status = nullptr;
     QCheckBox* m_complete = nullptr;
@@ -78,7 +84,8 @@ private:
     DocumentPreview* m_preview = nullptr;
     ResizeGrip* m_grip = nullptr;
     QTimer m_saveTimer;
+    QString m_editSession;
     bool m_loading = false, m_saveFailed = false, m_descriptionDirty = false, m_temporary = false,
          m_applyingFlags = false, m_pending = false;
 };
-}  // namespace kn
+}  // namespace kl

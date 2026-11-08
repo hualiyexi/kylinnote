@@ -5,7 +5,7 @@
 #include <QPainter>
 #include <QPainterPath>
 
-namespace kn {
+namespace kl {
 
 NoteChecklist::NoteChecklist(QWidget* parent) : QWidget(parent), m_ink(QStringLiteral("#39352D")) {
     setMouseTracking(true);
@@ -96,4 +96,4 @@ void NoteChecklist::leaveEvent(QEvent* event) {
     QWidget::leaveEvent(event);
 }
 
-}  // namespace kn
+}  // namespace kl

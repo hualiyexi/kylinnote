@@ -4,9 +4,9 @@
 #include <QVector>
 #include <QWidget>
 
-#include "../domain/Task.h"
+#include "../domain/Entity.h"
 
-namespace kn {
+namespace kl {
 
 // 桌面便签专用的轻量清单视图。它不使用 Fusion 列表/滚动条，避免破坏纸面绘制；
 // 完整编辑仍在任务详情中进行。这里只负责阅读和勾选已有项。
@@ -35,4 +35,4 @@ private:
     void updateHeight();
 };
 
-}  // namespace kn
+}  // namespace kl

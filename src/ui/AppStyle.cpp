@@ -3,7 +3,7 @@
 #include <QFontDatabase>
 #include <QPalette>
 
-namespace kn {
+namespace kl {
 namespace AppStyle {
 namespace {
 QString family() {
@@ -48,9 +48,9 @@ QString sheet() {
                "QComboBox::drop-down,QDateTimeEdit::drop-down{border:0;width:22px;}"
                "QComboBox QAbstractItemView{background:#FFFFFF;border:1px solid #E4E8F0;"
                "border-radius:6px;padding:4px;selection-background-color:%6;selection-color:%1;outline:0;}"
-               "QComboBox#TaskSort{background:transparent;color:#5B6472;}"
-               "QComboBox#TaskSort:hover{background:%11;}"
-               "QComboBox#TaskSort:focus{background:%11;}"
+               "QComboBox#ViewRenderer{background:transparent;color:#5B6472;}"
+               "QComboBox#ViewRenderer:hover{background:%11;}"
+               "QComboBox#ViewRenderer:focus{background:%11;}"
                "QTextEdit,QTextBrowser,QPlainTextEdit{background:#F7F8FB;border:1px solid transparent;"
                "border-radius:%10px;padding:8px;selection-background-color:#D9E4FF;selection-color:%1;}"
                "QTextEdit:focus,QPlainTextEdit:focus{background:#FFFFFF;border:1px solid %3;}"
@@ -202,13 +202,15 @@ QString previewCss() {
                "body{color:%1;font-size:10pt;} p{margin-top:6px;margin-bottom:8px;}"
                "h1{font-size:16pt;}h2{font-size:13pt;}h3{font-size:11pt;}"
                "pre,code{background-color:%2;}"
-               "blockquote{color:%3;}a{color:%4;}"
+               "blockquote{color:%3;}a{color:%4;}a.trash-link{color:%3;text-decoration:line-through;}"
+               ".broken-link{color:%6;background-color:#FDECEC;}.trash-marker{font-size:8pt;color:%3;}"
                "table{border-collapse:collapse;}td,th{border:1px solid %5;padding:5px;}")
         .arg(hex(Color::Text))
         .arg(hex(Color::Field))
         .arg(hex(Color::Muted))
         .arg(hex(Color::Accent))
-        .arg(hex(Color::Separator));
+        .arg(hex(Color::Separator))
+        .arg(hex(Color::Danger));
 }
 }  // namespace AppStyle
-}  // namespace kn
+}  // namespace kl

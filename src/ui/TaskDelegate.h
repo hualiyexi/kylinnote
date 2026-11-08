@@ -1,8 +1,8 @@
 #pragma once
 #include <QStyledItemDelegate>
-namespace kn {
+namespace kl {
 // 侧栏导航的线性小图标，全部用 QPainter 绘制，不依赖图标字体或网页资源。
-enum class NavIcon { None, Inbox, Today, Upcoming, Overdue, Star, Pin, Done, Trash, Folder };
+enum class NavIcon { None, Inbox, Today, Upcoming, Overdue, Pin, Done, Trash, Folder, Abandoned, Note, TaskList };
 void drawNavIcon(QPainter* painter, NavIcon icon, const QRectF& rect, const QColor& color);
 
 // 任务行：圆角 checkbox + 标题 + 元信息，选中为柔和蓝。
@@ -34,4 +34,4 @@ public:
                const QModelIndex& index) const override;
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
 };
-}  // namespace kn
+}  // namespace kl

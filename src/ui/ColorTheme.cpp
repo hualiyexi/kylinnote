@@ -3,7 +3,7 @@
 #include <QPalette>
 #include <QWidget>
 
-namespace kn {
+namespace kl {
 
 ColorTheme::Spec ColorTheme::spec(NoteColor c) {
     switch (c) {
@@ -80,4 +80,4 @@ void ColorTheme::apply(QWidget* window, NoteColor c) {
     window->setPalette(palette);
 }
 
-}  // namespace kn
+}  // namespace kl

@@ -3,26 +3,16 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QtMath>
 #include "AppStyle.h"
 #include "TaskListModel.h"
 
-namespace kn {
+namespace kl {
 namespace {
 using AppStyle::Color;
 using AppStyle::Metric;
 
 QRectF checkBoxRect(const QRect& row) {
     return QRectF(row.left() + 16.0, row.center().y() - 8.0, 16.0, 16.0);
-}
-QPolygonF starPoints(const QPointF& center, qreal outer, qreal inner) {
-    QPolygonF polygon;
-    for (int i = 0; i < 10; ++i) {
-        const qreal angle = -M_PI / 2 + i * M_PI / 5;
-        const qreal radius = i % 2 == 0 ? outer : inner;
-        polygon << center + QPointF(radius * qCos(angle), radius * qSin(angle));
-    }
-    return polygon;
 }
 void drawCheckMark(QPainter* p, const QRectF& box, const QColor& color, qreal width) {
     QPen pen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
@@ -72,14 +62,24 @@ void drawNavIcon(QPainter* painter, NavIcon icon, const QRectF& rect, const QCol
             painter->drawPolyline(QPolygonF() << QPointF(7.0, 4.0) << QPointF(7.0, 7.4)
                                               << QPointF(9.4, 8.6));
             break;
-        case NavIcon::Star:
-            painter->drawPolygon(starPoints(QPointF(7.0, 7.4), 5.8, 2.5));
-            break;
         case NavIcon::Pin:
-            // 桌面显示器：贴到桌面。
-            painter->drawRoundedRect(QRectF(1.5, 2.0, 11.0, 7.8), 1.5, 1.5);
-            painter->drawLine(QPointF(7.0, 9.8), QPointF(7.0, 12.2));
-            painter->drawLine(QPointF(4.4, 12.2), QPointF(9.6, 12.2));
+            painter->drawLine(QPointF(7.0, 2.0), QPointF(4.0, 5.0));
+            painter->drawLine(QPointF(7.0, 2.0), QPointF(10.0, 5.0));
+            painter->drawRoundedRect(QRectF(3.0, 4.5, 8.0, 3.0), 1.0, 1.0);
+            painter->drawLine(QPointF(7.0, 7.5), QPointF(7.0, 12.5));
+            painter->drawLine(QPointF(4.5, 10.0), QPointF(9.5, 10.0));
+            break;
+        case NavIcon::Note:
+            painter->drawRoundedRect(QRectF(2.0, 1.5, 10.0, 11.0), 1.5, 1.5);
+            painter->drawLine(QPointF(4.0, 4.5), QPointF(10.0, 4.5));
+            painter->drawLine(QPointF(4.0, 7.0), QPointF(10.0, 7.0));
+            painter->drawLine(QPointF(4.0, 9.5), QPointF(8.0, 9.5));
+            break;
+        case NavIcon::TaskList:
+            painter->drawRoundedRect(QRectF(1.5, 2.0, 11.0, 10.0), 1.5, 1.5);
+            drawCheckMark(painter, QRectF(2.5, 3.0, 5.0, 5.0), color, 1.2);
+            painter->drawLine(QPointF(8.0, 5.0), QPointF(11.0, 5.0));
+            painter->drawLine(QPointF(4.0, 9.0), QPointF(11.0, 9.0));
             break;
         case NavIcon::Done:
             painter->drawEllipse(QPointF(7.0, 7.0), 5.5, 5.5);
@@ -100,6 +100,10 @@ void drawNavIcon(QPainter* painter, NavIcon icon, const QRectF& rect, const QCol
                                               << QPointF(12.5, 4.8) << QPointF(12.5, 11.8)
                                               << QPointF(1.5, 11.8));
             break;
+        case NavIcon::Abandoned:
+            painter->drawEllipse(QPointF(7.0, 7.0), 5.5, 5.5);
+            painter->drawLine(QPointF(3.2, 10.8), QPointF(10.8, 3.2));
+            break;
         case NavIcon::None:
             break;
     }
@@ -109,11 +113,19 @@ void drawNavIcon(QPainter* painter, NavIcon icon, const QRectF& rect, const QCol
 void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
+    if (i.data(TaskListModel::HeaderRole).toBool()) {
+        p->setFont(AppStyle::font(AppStyle::Font::Small));
+        p->setPen(AppStyle::color(Color::Muted));
+        p->drawText(o.rect.adjusted(16, 5, -12, 0), Qt::AlignLeft | Qt::AlignVCenter, i.data().toString());
+        p->restore();
+        return;
+    }
     const bool selected = o.state & QStyle::State_Selected;
     const bool hovered = o.state & QStyle::State_MouseOver;
     const bool completed = i.data(TaskListModel::CompletedRole).toBool();
     const bool deleted = i.data(TaskListModel::DeletedRole).toBool();
-    const bool favorite = i.data(TaskListModel::FavoriteRole).toBool();
+    const bool pinned = i.data(TaskListModel::PinnedRole).toBool();
+    const EntityKind kind = static_cast<EntityKind>(i.data(TaskListModel::KindRole).toInt());
     const bool overdue = i.data(TaskListModel::OverdueRole).toBool();
     const int priority = i.data(TaskListModel::PriorityRole).toInt();
     const QRect row = o.rect;
@@ -132,12 +144,14 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     }
     if (priority > 0 && !deleted) {
         p->setPen(Qt::NoPen);
-        p->setBrush(AppStyle::color(priority == 2 ? Color::Danger : Color::Warning));
+        p->setBrush(AppStyle::color(priority == 3 ? Color::Danger : Color::Warning));
         p->drawRoundedRect(QRectF(row.left() + 5.0, row.center().y() - 9.0, 3.0, 18.0), 1.5, 1.5);
     }
 
     const QRectF box = checkBoxRect(row);
-    if (completed) {
+    if (kind == EntityKind::Note) {
+        drawNavIcon(p, NavIcon::Note, box, AppStyle::color(Color::Muted));
+    } else if (completed) {
         p->setPen(Qt::NoPen);
         p->setBrush(AppStyle::color(Color::Accent));
         p->drawEllipse(box);
@@ -149,7 +163,7 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     }
 
     const int textLeft = row.left() + 44;
-    const int textWidth = row.right() - textLeft - (favorite ? 40 : 18);
+    const int textWidth = row.right() - textLeft - (pinned ? 36 : 18);
     QFont titleFont = AppStyle::font(AppStyle::Font::Body);
     titleFont.setStrikeOut(completed);
     p->setFont(titleFont);
@@ -166,12 +180,10 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
                 Qt::AlignLeft | Qt::AlignVCenter,
                 p->fontMetrics().elidedText(
                     i.data(TaskListModel::MetaRole).toString(), Qt::ElideRight, textWidth));
+    if (pinned)
+        drawNavIcon(p, NavIcon::Pin, QRectF(row.right() - 28.0, row.center().y() - 7.0, 14.0, 14.0),
+                    AppStyle::color(Color::Accent));
 
-    if (favorite) {
-        p->setPen(Qt::NoPen);
-        p->setBrush(AppStyle::color(Color::Star));
-        p->drawPolygon(starPoints(QPointF(row.right() - 20.0, row.center().y()), 7.0, 3.0));
-    }
     if (o.state & QStyle::State_HasFocus) {
         p->setBrush(Qt::NoBrush);
         p->setPen(QPen(AppStyle::color(Color::Accent), 1.0));
@@ -179,8 +191,8 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     }
     p->restore();
 }
-QSize TaskDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const {
-    return QSize(320, AppStyle::metric(Metric::TaskRowHeight));
+QSize TaskDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& index) const {
+    return QSize(320, index.data(TaskListModel::HeaderRole).toBool() ? 30 : AppStyle::metric(Metric::TaskRowHeight));
 }
 bool TaskDelegate::editorEvent(QEvent* event,
                                QAbstractItemModel* model,
@@ -260,4 +272,4 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 QSize NavigationDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& i) const {
     return QSize(160, i.data(SectionRole).toBool() ? 30 : AppStyle::metric(Metric::NavRowHeight));
 }
-}  // namespace kn
+}  // namespace kl

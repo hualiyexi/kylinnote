@@ -21,12 +21,13 @@
 #include "MarkdownEditor.h"
 #include "NoteChecklist.h"
 #include "ResizeGrip.h"
-#include "TaskFilter.h"
+#include "../app/TaskStore.h"
+#include "../domain/ViewSpec.h"
 #include "TitleBar.h"
 
-namespace kn {
+namespace kl {
 
-NoteWidget::NoteWidget(const Task& task, QWidget* parent) : QWidget(parent), m_task(task) {
+NoteWidget::NoteWidget(const Entity& task, QWidget* parent) : QWidget(parent), m_task(task) {
     setObjectName(QStringLiteral("NoteWidget"));
     setAttribute(Qt::WA_StyledBackground, false);
     setAttribute(Qt::WA_OpaquePaintEvent, false);
@@ -42,7 +43,7 @@ NoteWidget::NoteWidget(const Task& task, QWidget* parent) : QWidget(parent), m_t
         setGeometry(task.geometry);
     else
         resize(DefaultWidth, DefaultHeight);
-    m_editor->setContent(task.description, task.contentFormat);
+    m_editor->setContent(task.body);
     updateView();
     applyWindowFlags();
     m_loading = false;
@@ -78,6 +79,7 @@ void NoteWidget::buildUi() {
 
     m_body = new QStackedWidget(this);
     m_preview = new DocumentPreview(this);
+    connect(m_preview, &DocumentPreview::internalLinkActivated, this, &NoteWidget::taskOpenRequested);
     m_preview->setObjectName(QStringLiteral("NotePreview"));
     m_preview->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_preview->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -87,6 +89,8 @@ void NoteWidget::buildUi() {
     m_preview->setStyleSheet(QStringLiteral("QTextBrowser{padding:0;}"));
     m_preview->document()->setDocumentMargin(0);
     m_editor = new MarkdownEditor(this);
+    m_editor->textEditor()->installEventFilter(this);
+    connect(m_editor, &MarkdownEditor::internalLinkActivated, this, &NoteWidget::taskOpenRequested);
     m_editor->setCompact(true);
     m_editor->setMinimumHeight(0);
     m_editor->textEditor()->setMinimumHeight(0);
@@ -132,8 +136,8 @@ void NoteWidget::buildUi() {
     m_schedule->hide();
     connect(m_editToggle, &QPushButton::clicked, this, [this]() {
         const bool editing = m_body->currentIndex() == 0;
-        if (!editing && !flush())
-            return;
+        if (editing) { if (!flush()) return; }
+        else if (!finishEditing()) return;
         m_body->setCurrentIndex(editing ? 1 : 0);
         m_editToggle->setText(editing ? QStringLiteral("完成") : QStringLiteral("编辑"));
         if (editing) {
@@ -155,11 +159,11 @@ void NoteWidget::buildUi() {
         scheduleSave();
     });
     connect(m_titleBar, &TitleBar::openClicked, this, [this]() {
-        if (flush())
+        if (finishEditing())
             emit taskOpenRequested(id());
     });
     connect(m_complete, &QCheckBox::clicked, this, [this](bool checked) {
-        if (flush())
+        if (finishEditing())
             emit completionRequested(id(), checked);
         else {
             const QSignalBlocker blocker(m_complete);
@@ -189,20 +193,29 @@ void NoteWidget::updateView() {
     QString schedule = scheduleLabel(m_task);
     if (m_task.reminderAt.isValid())
         schedule += (schedule.isEmpty() ? QString() : QStringLiteral(" · ")) +
-                    m_task.reminderAt.toLocalTime().toString(QStringLiteral("M月d日 HH:mm"));
+                    toAppTime(m_task.reminderAt).toString(QStringLiteral("M月d日 HH:mm"));
     m_schedule->setText(schedule);
     m_schedule->setVisible(!schedule.isEmpty());
-    m_preview->setHtml(Markdown::displayHtml(m_task));
+    m_preview->setHtml(Markdown::displayHtml(m_task, m_store ? Markdown::entityMap(m_store->entities()) : Markdown::EntityMap()));
     m_preview->setPlaceholderText(QStringLiteral("写下说明，或从详情添加图片与附件"));
     ColorTheme::apply(this, m_task.color);
     m_titleBar->setColorIndicator(m_task.color);
     m_checklist->setItems(m_task.checklist);
     m_checklist->setInkColor(QColor(ColorTheme::spec(m_task.color).text));
     m_checklist->setVisible(!m_task.checklist.isEmpty());
-    setWindowTitle(m_task.title + QStringLiteral(" — KylinNote"));
+    setWindowTitle(m_task.title + QStringLiteral(" — 麒麟清单"));
 }
 
 void NoteWidget::setStore(TaskStore* store) {
+    if (m_store != store) {
+        if (m_store) disconnect(m_store, nullptr, this, nullptr);
+        m_store = store; m_preview->setStore(store); m_editor->setStore(store);
+        if (m_store) {
+            connect(m_store, &TaskStore::taskChanged, this, [this](QString) { updateView(); });
+            connect(m_store, &TaskStore::tasksReset, this, &NoteWidget::updateView);
+        }
+        updateView();
+    }
     m_attachments->setStore(store);
     m_attachments->setTask(id());
 }
@@ -211,32 +224,30 @@ void NoteWidget::refreshAttachments() {
     m_attachments->refresh();
 }
 
-void NoteWidget::applyTask(const Task& task) {
+void NoteWidget::applyTask(const Entity& task) {
     const bool changedLayer = m_task.layer != task.layer;
     m_loading = true;
     const QString pendingDescription = m_descriptionDirty ? m_editor->content() : QString();
     m_task = task;
-    if (!m_descriptionDirty && m_editor->content() != task.description)
-        m_editor->setContent(task.description, task.contentFormat);
+    if (!m_descriptionDirty && m_editor->content() != task.body)
+        m_editor->setContent(task.body);
     if (m_descriptionDirty)
-        m_task.description = pendingDescription;
+        m_task.body = pendingDescription;
     updateView();
     if (changedLayer)
         applyWindowFlags();
     m_loading = false;
 }
 
-Task NoteWidget::snapshot() const {
-    Task task = m_task;
+Entity NoteWidget::snapshot() const {
+    Entity task = m_task;
     task.geometry = geometry();
-    if (m_descriptionDirty) {
-        task.description = m_editor->content();
-        task.contentFormat = ContentFormat::Markdown;
-    }
+    if (m_descriptionDirty)
+        task.body = m_editor->content();
     return task;
 }
 
-void NoteWidget::applySaved(const Task& task) {
+void NoteWidget::applySaved(const Entity& task) {
     m_descriptionDirty = false;
     m_pending = false;
     applyTask(task);
@@ -260,6 +271,27 @@ bool NoteWidget::flush() {
     if (m_pending)
         emit saveRequested(this);
     return !m_saveFailed;
+}
+void NoteWidget::beginTextSession() {
+    if (!m_editSession.isEmpty() || !m_store || m_task.deleted) return;
+    m_editSession = m_store->beginEditSession(id());
+}
+bool NoteWidget::endTextSession() {
+    if (m_editSession.isEmpty()) return true;
+    if (!flush()) return false;
+    const QString session = m_editSession;
+    if (!m_store || !m_store->endEditSession(session)) return false;
+    m_editSession.clear(); return true;
+}
+bool NoteWidget::finishEditing() {
+    return flush() && endTextSession();
+}
+bool NoteWidget::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_editor->textEditor()) {
+        if (event->type() == QEvent::FocusIn) beginTextSession();
+        if (event->type() == QEvent::FocusOut) endTextSession();
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void NoteWidget::scheduleSave() {
@@ -366,4 +398,4 @@ void NoteWidget::changeEvent(QEvent* event) {
     QWidget::changeEvent(event);
 }
 
-}  // namespace kn
+}  // namespace kl
