@@ -4,7 +4,7 @@
 
 面向离线办公环境的个人待办软件。统一管理任务、时间与提醒，支持将需要关注的任务贴到桌面。采用原生 Qt Widgets，不依赖浏览器、账号或云服务。
 
-目前支持 **银河麒麟 V10 ARM64 / X11** 和 **Windows x64**。Linux API 兼容基线为 Qt 5.12；Windows 开发与打包使用 Qt 5.12.8，与 Linux 侧保持同一 API 面。未来平台扩展集中在 `src/platform`，不改变任务数据模型。
+主要目标是 **银河麒麟 V10 SP1 / 飞腾 FT-2000 / ARM64**，Windows x64 用于开发预览。Linux 固定在 **Ubuntu 20.04** 中构建，两端均使用 **Qt 5.12.8**。系统 Qt 小包已在麒麟 SP1 2503 x86_64 虚拟机实测可用，飞腾 ARM64 真机待用户试用；已确认的环境与日常做法见[兼容性基线](docs/kylin-development-workflow.md)。
 
 ## 可以做什么
 
@@ -33,12 +33,12 @@
 
 | 平台 | 安装包 | 使用方式 |
 |---|---|---|
-| 麒麟 ARM64 离线机 | `kylinnote_<版本>_arm64_bundle.deb` | 携带 Qt、SQLite/xcb/SVG 插件和私有依赖，拷贝后 `sudo dpkg -i 文件名.deb` |
-| 已有系统 Qt 的 ARM64 机 | `kylinnote_<版本>_arm64.deb` | 依赖已安装的 Qt 5.12+，不适合依赖不齐的离线机 |
+| 麒麟 ARM64（默认选择） | `kylinnote_<版本>_arm64.deb` | 复用系统 Qt 5.12.8 或更新的 Qt 5，约几百 KB；`sudo apt install ./文件名.deb` |
+| 缺少 Qt 的 ARM64 离线机 | `kylinnote_<版本>_arm64_bundle.deb` | 携带 Qt 及 SQLite/xcb/SVG 插件，约十几 MB；`sudo dpkg -i 文件名.deb` |
 | Windows x64 | 安装版 `.exe` | 当前用户安装，无需目标机器另装 Qt |
 | Windows x64 | 便携版 `.zip` | 解压到可写目录运行 `kylinnote.exe` |
 
-离线 bundle 不包含内核、glibc、显卡驱动和整个 Linux 图形系统，仍依赖目标桌面已有的系统基础库。当前 Linux CI 使用 Ubuntu 20.04 ARM64 / Qt 5.12 作为参考构建环境，并在不安装系统 Qt 的独立 X11 容器验证 bundle。**发布到实际办公机前仍需在目标麒麟镜像实测**，尤其是基础库、中文输入法、托盘和窗口层位；发行版名称相同并不代表所有 SP/补丁版的 ABI 相同。构建产物附带实际依赖说明，工具链可替换成目标麒麟镜像。
+Linux CI 在 Ubuntu 20.04 ARM64 中构建并检查两个 deb，Windows CI 生成安装版和便携版。固定构建基线后，日常开发沿用现有测试即可。飞腾真机的启动、中文输入和托盘等表现由用户实际试用确认；自带 Qt 的 bundle 仍需系统已有的 glibc、驱动和基础图形库。
 
 完整构建、打包和复现方式见 [构建文档](docs/building.md)。
 

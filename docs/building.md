@@ -1,6 +1,17 @@
 # 构建、测试与离线打包
 
-KylinNote 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。最低 API 基线是 Qt 5.12；Windows 开发使用 Qt 5.12.8 + MinGW 7.3 x64，与 Linux 构建保持同一 API 面。Markdown 解析器 MD4C 0.5.2 已随源码附带，无需 npm、浏览器或在线渲染服务。
+KylinNote 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
+
+## 日常优先使用 CI 产物
+
+普通开发无需自己重复搭建打包环境。推送到 `main` 后打开 [Actions](https://github.com/hualiyexi/kylinnote/actions/workflows/build.yml)，进入对应提交的成功运行，在页面底部的 **Artifacts** 下载：
+
+- `kylinnote-linux-arm64`：解压后包含系统 Qt 小包和自带 Qt 的 bundle。麒麟默认使用没有 `_bundle` 后缀的几百 KB 小包。
+- `kylinnote-windows-x64`：包含安装 EXE 和便携 ZIP。
+
+安装 Linux 小包使用 `sudo apt install ./kylinnote_<版本>_arm64.deb`；系统依赖已齐时也可离线 `sudo dpkg -i 文件名.deb`。目标机无需 qmake 或开发工具。Artifacts 保留 14 天；`v*` 标签对应的构建通过后，产物会放入 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
+
+具体环境、已验证结果及何时需要重新检查见[兼容性基线](kylin-development-workflow.md)。以下为需要本地构建时使用的命令。
 
 ## Windows 本地工具（全部位于仓库 .tools）
 
@@ -80,7 +91,7 @@ Remove-Item .tools/dl/cmake-unpack -Recurse -Force
 & ./.tools/bin/ninja.exe --version
 ```
 
-工具路径（本机已实际安装并验证）：
+本地构建使用的工具路径：
 
 | 工具 | 仓库相对路径 |
 | --- | --- |
@@ -157,22 +168,34 @@ bash packaging/build-deb.sh --arch arm64
 bash packaging/build-deb.sh --arch arm64 --bundle-qt
 ```
 
-脚本核验 Debian 主机架构、内核架构与所有携带 ELF 的 Machine；`--arch` 不用于伪装架构，也不是交叉编译选项。另支持原生 amd64 供 Linux 开发。两种模式默认分别使用 `build-deb-arm64-system` 和 `build-deb-arm64-bundle`，每次配置都显式设置 `KYLINNOTE_BUNDLE_QT=OFF/ON`，避免复用缓存污染产物。`--qt-prefix` / `--qmake` 可指定一套完整 Qt，缺少必要插件会直接失败。
+脚本核对构建环境与包内 ELF 的架构；`--arch` 不能转换 CPU 指令。ARM64 用于目标机，amd64 用于 x86 麒麟虚拟机。系统包和 bundle 使用独立的构建目录，避免缓存混用。打包入口要求 Qt 5.12.8，直接查询系统 qmake 的版本与插件路径。
 
 常规包依赖目标机系统 Qt；bundle 将 Qt 和非基础运行库放在 `/usr/lib/kylinnote`，`/usr/bin/kylinnote` 启动包装脚本设置路径。必须携带 xcb、SQLite、SVG 图片及 SVG 图标插件。依赖闭合检查读取每个 ELF 的 `DT_NEEDED`，要求它实际存在于 bundle 内，或属于明确的基础系统库列表；构建机恰好装有 Qt 不会让遗漏通过。
 
-完整 CI 构建可在原生 ARM64 Docker 主机复现：
+本机已有两份可复用的构建镜像：`kylinnote-builder:focal`（amd64）和 `kylinnote-builder:focal-arm64`（arm64）。它们是在 Ubuntu 20.04 上安装编译器、CMake、Qt 等依赖后保存的本地镜像。Windows PowerShell 下可直接构建小包：
 
-```bash
-docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src \
+```powershell
+docker run --rm --platform linux/arm64 `
+  --mount "type=bind,source=$PWD,target=/src" --workdir /src `
+  kylinnote-builder:focal-arm64 `
+  bash packaging/build-deb.sh --arch arm64 --output-dir /src/dist
+```
+
+测试 x86 麒麟虚拟机时，将平台改为 `linux/amd64`、镜像改为 `kylinnote-builder:focal`、架构改为 `amd64`。脚本拒绝覆盖同名 deb 或校验文件；重建同版本时可用新的 `--output-dir`。Git Bash 执行带 `/src` 等容器路径的 Docker 命令时，需在 `docker` 前加 `MSYS_NO_PATHCONV=1`，避免路径被转换成 Windows 路径。
+
+没有本地构建镜像时，完整 CI 构建会在 Ubuntu 20.04 中安装所需依赖并生成两个包：
+
+```powershell
+docker run --rm --platform linux/arm64 `
+  --mount "type=bind,source=$PWD,target=/src" --workdir /src `
   ubuntu:20.04 bash packaging/ci-build.sh
 ```
 
-Ubuntu 20.04 / glibc 2.31 / Qt 5.12 是兼容性参考基线，不保证所有麒麟版本、桌面、驱动和补丁组合完全兼容。交付前仍应在目标麒麟 ARM64/X11 环境实机验收。离线 bundle 依赖基础 libc/C++、X11/xcb、字体、GL 和 D-Bus 系统库；这些依赖必须由目标机预装，不能承诺在空白系统仅放入 deb 就满足全部图形栈需求。
+ARM64 容器在 Windows x64 上通过 Docker 的模拟能力运行，CI 则使用原生 ARM64 runner。两种方式均在容器内用 ARM64 工具链生成 ARM64 程序。deb 使用 xz 压缩，默认声明 glibc 2.31 和 Qt 5.12.8 的依赖下限；脚本不再生成逐文件 ABI 报告。具体实测状态见[兼容性基线](kylin-development-workflow.md)。
 
-## 独立无系统 Qt 的离线验收
+## bundle 的自动安装启动测试
 
-不要在构建容器里测试 bundle：系统 Qt 可能掩盖漏包。以下命令使用全新的 Ubuntu 20.04，先安装包内声明的基础图形依赖和验证工具，再创建运行镜像；真正安装及启动时断网。
+此流程已由 CI 执行；日常开发直接下载产物即可。修改 bundle 打包逻辑后，需要本地复现时可用以下命令。测试在独立、没有系统 Qt 的 Ubuntu 20.04 容器中进行，避免构建环境掩盖漏包；准备基础依赖后，断网安装并启动应用。
 
 ```bash
 bundle=dist/kylinnote_1.1.0_arm64_bundle.deb
@@ -186,11 +209,11 @@ docker run --rm --platform linux/arm64 --network none \
   bash packaging/test-bundle.sh "$bundle"
 ```
 
-准备和运行阶段都拒绝系统 Qt 包/qmake；运行阶段只执行离线 `dpkg -i`，不执行 apt。测试遍历所有 ELF，核对架构以及每条 `DT_NEEDED` 在 `LD_LIBRARY_PATH` 下的实际解析，并要求 Qt 全部从包内加载。最后经 Xvfb + `dbus-run-session` 启动真正的应用，用 `--smoke-test` 自动退出，检查 SQLite 数据库创建及 xcb/SQLite 插件实际载入。`--timeout-mode` 用于还没有冒烟参数的旧应用，要求存活至超时，CI 使用严格自动退出模式。
+准备阶段安装基础图形依赖；运行阶段断网执行 `dpkg -i`，检查包内动态库解析。随后通过 Xvfb 启动应用，要求 `--smoke-test` 正常退出、SQLite 数据库已创建，且实际加载了 xcb 和 SQLite 插件。
 
 ## CI 与发布
 
-GitHub Actions 的 Linux ARM64 与 Windows x64 job 并行执行，均运行 CTest。ARM64 在 Ubuntu 20.04 容器内构建并用另一个无 Qt、断网的容器验收；Windows 产出便携 ZIP 和当前用户离线安装 EXE。checkout 7.0.1、upload-artifact 7.0.2、download-artifact 8.0.2 是配置时通过公开 GitHub release 与 action.yml 核对的稳定 Node 24 版本。
+GitHub Actions 的 Linux ARM64 与 Windows x64 job 并行执行，均运行 CTest。Linux 构建系统 Qt 小包与 bundle，将产物直接放到 `dist/`，并保留独立容器中的安装与启动测试；Windows 产出便携 ZIP 和当前用户安装 EXE。
 
 默认令牌仅有 `contents: read`。只有已有 `v*` 标签触发、且两个打包 job 都成功后，独立 release job 才获得 `contents: write` 并上传该次产物；普通 push、PR、手工运行不会创建 Release，也不会自动创建标签。
 
