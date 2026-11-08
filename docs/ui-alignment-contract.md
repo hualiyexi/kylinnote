@@ -1,0 +1,58 @@
+# UI 对齐契约：逐区域追踪矩阵
+
+本文件是「按考据文档逐区域对齐滴答清单基础体验」的可验收契约。每个区域记录考据来源、证据等级、目标规格、实施文件与验证方式。`docs/research/**` 是只读证据，不改写。
+
+## 证据等级
+
+沿用考据册分类（`ticktick-windows-6.3.3/01-environment-and-evidence.md:31-43`、`ticktick-webapp/08-evidence-and-coverage.md:25-35`）：
+
+- **①** Web 现场实测截图/DOM
+- **②** 官方旧图
+- **③** BAML 静态资源定义
+- **④** 发布 JS/CSS 代码证据
+- **⑤** 设计建议/文字推断
+
+## 三条硬边界
+
+1. Web 册 16 张图是 2026-11-07、1500×940、Chromium 152、**当前账号自选粉色渐变主题**下的现场脱敏截图；顶部 36px 图注与灰块是研究加工，不是产品 UI。粉色 `#FF79A4→#FFAFA6` 是采样值，不是默认规范。
+2. Windows 6.3.3 册**本机实测截图 0 张、右键菜单展开 0/21**（`README.md:5-9`、`09-live-capture-checklist.md:14-20`）；6 张配图全是官方旧图/本项目示例图/自制色板。只能提供静态资源定义与 Qt 转译建议。
+3. 深色主题**无任何具体色值证据**。深色值由 KylinList 自定，明确标注「非滴答实测」。
+
+## 区域矩阵
+
+| 区域 | 考据来源 | 证据等级 | 目标规格 | 实施文件 | 验证 |
+|---|---|---|---|---|---|
+| R1 设计系统 | `07:86-92`、`01:62-75`、`windows/02:28-57`、`06:68`、`code-evidence.md:67-81` | ①③④⑤ | 语义令牌 + 主题切换（浅/深/跟随系统）+ 字号字体系统 + SVG 图标 + 零硬编码门禁 | `src/ui/design/*`、`src/ui/AppIcons.*`、`src/ui/AppStyle.*` | CTest + 门禁脚本 |
+| R2 三栏几何 | `01:9-30,82`、`01:75`、`01:109-119`、`code-evidence.md:46-51,96-110`、`g01`、`g02` | ①④ | 50px 功能条/249px 组织栏/64px 列表头/40px 任务行/36px 导航行/48px 详情底栏；圆角分层 14/12/10/8 | `TaskPanel.cpp` | 截图对照 g01 |
+| R3 左侧导航 | `02:16-80`、`04:49-63`、`m01/m02/m06`、`windows/03` | ①③ | 单层文件夹+可平铺清单+清单 kind+唯一收集箱；侧栏对象右键按状态生成 | `TaskPanel.cpp` | 截图对照 m01/m02 |
+| R4 搜索/工具栏/快速添加 | `02:96-141`、`n01`、`04:131-142`、`m04`、`component-code-evidence.md:24-34` | ①④ | 搜索面板/视图 overflow 菜单/固定快速添加 | `TaskPanel.cpp` | 截图对照 m04/n01 |
+| R5 任务列表/行内 | `01:27-45`、`03:23-43`、`component-code-evidence.md:16-20`、`04:109-116` | ①④ | MetaRole 拆分/SVG 图标/四态分离/hover 更多按钮/完成框命中区 | `TaskListModel.*`、`TaskDelegate.*` | 截图对照 g01 |
+| R6 右键/二级菜单 | `04-menus.md` 全册、`03:75-166`、`code-evidence.md:67-81`、`m01-m06` | ①④ | R01-R27 项序/属性快捷条/破坏性命令分组/菜单 CSS/子菜单键盘路径 | `EntityCommands.*`、`TaskPanel.cpp` | 截图对照 m03/m05 |
+| R7 日期选择器 | `03:45-73`、`t01`、`g02`、`field-notes.md:29,80-85`、`04:40-41,148-149` | ① | 260×540 浮层/日期|时间段分段/42 格月历/时间·提醒·重复子层/清除·确定 | `DatePickerPopup.*`、`TaskDetailWidget.cpp` | 截图对照 t01 |
+| R8 详情区 | `01:46-48,92-95`、`03:30-39`、`t02`、`m05`、`04:119-129` | ① | 固定顶栏/底栏 48px/正文独立滚动/低频收纳/R11 更多 14 项 | `TaskDetailWidget.cpp` | 截图对照 t02/m05 |
+| R9 编辑器/附件/日志 | `03:168-182`、`code-evidence.md:83-94`、`04:121,129,154-160`、`windows/04:63-67` | ①③④ | 文字按钮→SVG 图标+二级菜单/附件/活动日志/检查清单 | `MarkdownEditor.*`、`AttachmentWidget.*`、`ActivityLogDialog.*` | CTest |
+| R10 设置/主题/快捷键 | `06:11-45,68-70`、`s01`、`code-evidence.md:107`、`windows/07:5-34` | ①③④ | 设置弹窗 800×680/左栏 213px/主题切换 UI/显示设置/快捷键展示 | `SettingsDialog.*`、`TaskPanel.cpp` | 截图对照 s01 |
+| R11 外围一致性 | `windows/06:80-84`、`windows/07:68-71`、`windows/08:40-44`、`01:132-138`、`07:94-108` | ③⑤ | 便签/托盘/提醒弹窗图标与令牌统一/四态/窄窗 | `NoteWidget.*`、`TitleBar.*`、`ReminderPopup.*`、`TrayController.*` | CTest + 截图 |
+| R12 契约收口 | 本文件 | — | 逐区域核对/偏差记录/验收矩阵 | 本文件 | 用户验收 |
+
+## 截图对照索引
+
+| 截图 | 区域 | 状态 |
+|---|---|---|
+| `g01-workspace-redacted.png` | R2 | 待对照 |
+| `g02-detail-and-date-redacted.png` | R2/R7 | 待对照 |
+| `n01-search-empty-result.png` | R4 | 待对照 |
+| `t01-date-picker.png` | R7 | 待对照 |
+| `t02-detail-footer.png` | R8 | 待对照 |
+| `m01-smartlist.png` | R6 | 待对照 |
+| `m02-inbox.png` | R6 | 待对照 |
+| `m03-task.png` | R6 | 待对照 |
+| `m04-workspace.png` | R4/R6 | 待对照 |
+| `m05-detail.png` | R8 | 待对照 |
+| `m06-filter.png` | R3/R6 | 待对照 |
+| `s01-modules.png` | R10 | 待对照 |
+| `static-resource-colors.png` | R1 | 已采用（色板来源） |
+
+## 偏差记录
+
+（随实施逐条追加：考据值 → 实际采用值 + 理由 + 证据等级）
