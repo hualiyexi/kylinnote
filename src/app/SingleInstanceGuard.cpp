@@ -3,7 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 
-namespace kn {
+namespace kl {
 
 SingleInstanceGuard::SingleInstanceGuard(const QString &lockFilePath)
     : m_lock(lockFilePath),
@@ -45,4 +45,4 @@ void SingleInstanceGuard::release()
     }
 }
 
-} // namespace kn
+} // namespace kl

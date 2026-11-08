@@ -2,7 +2,7 @@
 #include <QMap>
 #include <QObject>
 #include <QPointer>
-namespace kn {
+namespace kl {
 class TaskStore;
 class ReminderScheduler;
 class NoteManager;
@@ -12,18 +12,19 @@ class InstanceChannel;
 class ReminderPopup;
 class DbusAdapter;
 // 装配业务服务与各类展示窗口；平台能力通过独立适配器接入。
-class KylinNoteApp : public QObject {
+class KylinListApp : public QObject {
     Q_OBJECT
 public:
-    explicit KylinNoteApp(QObject* parent = nullptr);
-    ~KylinNoteApp() override;
+    explicit KylinListApp(QObject* parent = nullptr);
+    ~KylinListApp() override;
     bool init(QString* error = nullptr, bool startHidden = false);
+    bool importBackup(const QString& path);
 public slots:
     void shutdown();
 
 private:
     void requestQuit();
-    void showReminder(qint64 id);
+    void showReminder(QString entityId, QString reminderId);
     TaskStore* m_store = nullptr;
     ReminderScheduler* m_reminders = nullptr;
     NoteManager* m_notes = nullptr;
@@ -31,7 +32,8 @@ private:
     TrayController* m_tray = nullptr;
     InstanceChannel* m_channel = nullptr;
     DbusAdapter* m_dbus = nullptr;
-    QMap<qint64, QPointer<ReminderPopup>> m_popups;
+    QMap<QString, QPointer<ReminderPopup>> m_popups;
     bool m_shutdown = false;
+    bool m_restoring = false;
 };
-}  // namespace kn
+}  // namespace kl

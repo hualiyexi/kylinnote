@@ -1,7 +1,7 @@
 #pragma once
 #include <QSettings>
 #include "../Common.h"
-namespace kn {
+namespace kl {
 class Settings {
 public:
     static Settings& instance();
@@ -15,4 +15,4 @@ private:
     Settings& operator=(const Settings&) = delete;
     QSettings m_store;
 };
-}  // namespace kn
+}  // namespace kl

@@ -1,9 +1,9 @@
-#ifndef KYLINNOTE_DBUSADAPTER_H
-#define KYLINNOTE_DBUSADAPTER_H
+#ifndef KYLINLIST_DBUSADAPTER_H
+#define KYLINLIST_DBUSADAPTER_H
 
 #include <QObject>
 
-namespace kn {
+namespace kl {
 
 class NoteManager;
 
@@ -11,7 +11,7 @@ class NoteManager;
 class DbusAdapter : public QObject
 {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.kylin.KylinNote")
+    Q_CLASSINFO("D-Bus Interface", "org.kylin.KylinList")
 
 public:
     explicit DbusAdapter(NoteManager *manager, QObject *parent = nullptr);
@@ -35,6 +35,6 @@ private:
     bool m_registered = false;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_DBUSADAPTER_H
+#endif // KYLINLIST_DBUSADAPTER_H
