@@ -1,15 +1,15 @@
 # 构建、测试与离线打包
 
-KylinNote 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
+KylinList 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
 
 ## 日常优先使用 CI 产物
 
 普通开发无需自己重复搭建打包环境。推送到 `main` 后打开 [Actions](https://github.com/hualiyexi/kylinnote/actions/workflows/build.yml)，进入对应提交的成功运行，在页面底部的 **Artifacts** 下载：
 
-- `kylinnote-linux-arm64`：解压后包含系统 Qt 小包和自带 Qt 的 bundle。麒麟默认使用没有 `_bundle` 后缀的几百 KB 小包。
-- `kylinnote-windows-x64`：包含安装 EXE 和便携 ZIP。
+- `kylinlist-linux-arm64`：解压后包含系统 Qt 小包和自带 Qt 的 bundle。麒麟默认使用没有 `_bundle` 后缀的几百 KB 小包。
+- `kylinlist-windows-x64`：包含安装 EXE 和便携 ZIP。
 
-安装 Linux 小包使用 `sudo apt install ./kylinnote_<版本>_arm64.deb`；系统依赖已齐时也可离线 `sudo dpkg -i 文件名.deb`。目标机无需 qmake 或开发工具。Artifacts 保留 14 天；`v*` 标签对应的构建通过后，产物会放入 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
+安装 Linux 小包使用 `sudo apt install ./kylinlist_<版本>_arm64.deb`；系统依赖已齐时也可离线 `sudo dpkg -i 文件名.deb`。目标机无需 qmake 或开发工具。Artifacts 保留 14 天；`v*` 标签对应的构建通过后，产物会放入 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
 
 具体环境、已验证结果及何时需要重新检查见[兼容性基线](kylin-development-workflow.md)。以下为需要本地构建时使用的命令。
 
@@ -104,7 +104,7 @@ Remove-Item .tools/dl/cmake-unpack -Recurse -Force
 
 下载好的归档留在 `.tools/dl`（约 140 MB），重复执行时会重新校验 SHA1；`.tools/` 已在 `.gitignore` 中，不进仓库。
 
-`packaging/build-windows.ps1` 以 **UTF-8 BOM** 保存；PowerShell 5.1 对无 BOM 的 UTF-8 中文注释可能按 ANSI 误解析。脚本内把 `TEMP/TMP` 定向到构建目录（本机默认临时目录不可写），并在 `finally` 恢复 `PATH/TEMP/TMP/QT_PLUGIN_PATH/QT_QPA_PLATFORM_PLUGIN_PATH/QT_QPA_PLATFORM/KYLINNOTE_DATA_DIR`，不写入用户级或机器级环境变量。本机 PowerShell 执行策略禁止直接运行未签名脚本时，用下面命令的进程级 `Bypass`（不修改策略设置）。
+`packaging/build-windows.ps1` 以 **UTF-8 BOM** 保存；PowerShell 5.1 对无 BOM 的 UTF-8 中文注释可能按 ANSI 误解析。脚本内把 `TEMP/TMP` 定向到构建目录（本机默认临时目录不可写），并在 `finally` 恢复 `PATH/TEMP/TMP/QT_PLUGIN_PATH/QT_QPA_PLATFORM_PLUGIN_PATH/QT_QPA_PLATFORM/KYLINLIST_DATA_DIR`，不写入用户级或机器级环境变量。本机 PowerShell 执行策略禁止直接运行未签名脚本时，用下面命令的进程级 `Bypass`（不修改策略设置）。
 
 开发构建、运行 CTest、部署并生成便携 ZIP：
 
@@ -117,12 +117,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.
     -SkipInstaller
 ```
 
-默认编译输出在 `build-windows/bin`，实际部署目录在 `build-windows/package/KylinNote-1.1.0-Windows-x64`，ZIP 在 `dist`。脚本先运行 CTest，再对部署后的程序执行 `--smoke-test --data-dir <独立目录>`；冒烟时移除 PATH 中的 Qt/编译器目录，以发现部署遗漏。它保留 Qt 的 SQLite、SVG、Windows 平台插件，并用 `windeployqt --compiler-runtime` 携带 MinGW 运行时。
+默认编译输出在 `build-windows/bin`，实际部署目录在 `build-windows/package/KylinList-1.1.0-Windows-x64`，ZIP 在 `dist`。脚本先运行 CTest，再对部署后的程序执行 `--smoke-test --data-dir <独立目录>`；冒烟时移除 PATH 中的 Qt/编译器目录，以发现部署遗漏。它保留 Qt 的 SQLite、SVG、Windows 平台插件，并用 `windeployqt --compiler-runtime` 携带 MinGW 运行时。
 
 调试 UI 时运行部署目录中的程序，参数 `--data-dir` 会隔离数据库、设置和单实例通道：
 
 ```powershell
-& './build-windows/package/KylinNote-1.1.0-Windows-x64/kylinnote.exe' `
+& './build-windows/package/KylinList-1.1.0-Windows-x64/kylinlist.exe' `
     --data-dir "$PWD/.tools/dev-data"
 ```
 
@@ -137,7 +137,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.
     -InnoSetupCompiler "$PWD/.tools/InnoSetup/ISCC.exe"
 ```
 
-CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe`。安装器面向 Windows 10/11 x64，默认安装至当前用户的 `%LOCALAPPDATA%\Programs\KylinNote`，无需管理员权限，支持中文/空格路径；Qt 与插件都随包携带，目标机不必安装 Qt。安装器与便携版均不默认开启登录自启。卸载只移除应用文件和指向本安装的登录启动项，保留应用数据目录中的 SQLite 与设置。便携 ZIP 也使用当前用户数据目录，可用 `--data-dir` 指定独立目录。
+CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe`。安装器面向 Windows 10/11 x64，默认安装至当前用户的 `%LOCALAPPDATA%\Programs\KylinList`，无需管理员权限，支持中文/空格路径；Qt 与插件都随包携带，目标机不必安装 Qt。安装器与便携版均不默认开启登录自启。卸载只移除应用文件和指向本安装的登录启动项，保留应用数据目录中的 SQLite 与设置。便携 ZIP 也使用当前用户数据目录，可用 `--data-dir` 指定独立目录。
 
 `-BuildDir`、`-OutputDir`、`-CTest`、`-Parallel` 可显式覆盖；所有工具参数都接受完整路径。`-SkipArchive` 适合重复开发构建，`-SkipTests` 仅用于本地诊断；CI 不跳过测试。MSVC 可直接用 CMake 配置并编译，已启用 `/utf-8`；现有部署脚本固定使用 MinGW，不混用 MSVC 与 MinGW Qt。
 
@@ -152,12 +152,12 @@ sudo apt-get install -y build-essential cmake binutils file dpkg-dev \
   libqt5svg5 libqt5svg5-dev libx11-dev libxext-dev libxrender-dev \
   libxi-dev libgl1-mesa-dev libxcb-xinerama0 libxkbcommon-x11-0
 cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON -DKYLINNOTE_REQUIRE_X11=ON
+  -DBUILD_TESTING=ON -DKYLINLIST_REQUIRE_X11=ON
 cmake --build build-linux --parallel
 (cd build-linux && ctest --output-on-failure)
 ```
 
-`kylinnote_core` 包含数据库、任务领域、调度和跨平台 IPC；`kylinnote_ui` 包含 Qt Widgets 装配，可供 `test_ui` 链接；`test_tasks` 链接 core。Qt Network 的 `QLocalServer`/`QLocalSocket` 负责单实例唤醒。Qt DBus 和旧 D-Bus 适配器仅在 UNIX 且 `KYLINNOTE_WITH_DBUS=ON` 时编译；Windows 不需要 D-Bus。Linux 安装 `libx11-dev` 可保留 X11 平台扩展能力，用户快捷键策略由应用控制。
+`kylinlist_core` 包含数据库、任务领域、调度和跨平台 IPC；`kylinlist_ui` 包含 Qt Widgets 装配，可供 `test_ui` 链接；`test_tasks` 链接 core。Qt Network 的 `QLocalServer`/`QLocalSocket` 负责单实例唤醒。Qt DBus 和可选 D-Bus 适配器仅在 UNIX 且 `KYLINLIST_WITH_DBUS=ON` 时编译；Windows 不需要 D-Bus。Linux 安装 `libx11-dev` 可保留 X11 平台扩展能力，用户快捷键策略由应用控制。
 
 ## ARM64 deb：常规包与离线 bundle
 
@@ -170,18 +170,18 @@ bash packaging/build-deb.sh --arch arm64 --bundle-qt
 
 脚本核对构建环境与包内 ELF 的架构；`--arch` 不能转换 CPU 指令。ARM64 用于目标机，amd64 用于 x86 麒麟虚拟机。系统包和 bundle 使用独立的构建目录，避免缓存混用。打包入口要求 Qt 5.12.8，直接查询系统 qmake 的版本与插件路径。
 
-常规包依赖目标机系统 Qt；bundle 将 Qt 和非基础运行库放在 `/usr/lib/kylinnote`，`/usr/bin/kylinnote` 启动包装脚本设置路径。必须携带 xcb、SQLite、SVG 图片及 SVG 图标插件。依赖闭合检查读取每个 ELF 的 `DT_NEEDED`，要求它实际存在于 bundle 内，或属于明确的基础系统库列表；构建机恰好装有 Qt 不会让遗漏通过。
+常规包依赖目标机系统 Qt；bundle 将 Qt 和非基础运行库放在 `/usr/lib/kylinlist`，`/usr/bin/kylinlist` 启动包装脚本设置路径。必须携带 xcb、SQLite、SVG 图片及 SVG 图标插件。依赖闭合检查读取每个 ELF 的 `DT_NEEDED`，要求它实际存在于 bundle 内，或属于明确的基础系统库列表；构建机恰好装有 Qt 不会让遗漏通过。
 
-本机已有两份可复用的构建镜像：`kylinnote-builder:focal`（amd64）和 `kylinnote-builder:focal-arm64`（arm64）。它们是在 Ubuntu 20.04 上安装编译器、CMake、Qt 等依赖后保存的本地镜像。Windows PowerShell 下可直接构建小包：
+本机已有两份可复用的构建镜像：`kylinlist-builder:focal`（amd64）和 `kylinlist-builder:focal-arm64`（arm64）。它们是在 Ubuntu 20.04 上安装编译器、CMake、Qt 等依赖后保存的本地镜像。Windows PowerShell 下可直接构建小包：
 
 ```powershell
 docker run --rm --platform linux/arm64 `
   --mount "type=bind,source=$PWD,target=/src" --workdir /src `
-  kylinnote-builder:focal-arm64 `
+  kylinlist-builder:focal-arm64 `
   bash packaging/build-deb.sh --arch arm64 --output-dir /src/dist
 ```
 
-测试 x86 麒麟虚拟机时，将平台改为 `linux/amd64`、镜像改为 `kylinnote-builder:focal`、架构改为 `amd64`。脚本拒绝覆盖同名 deb 或校验文件；重建同版本时可用新的 `--output-dir`。Git Bash 执行带 `/src` 等容器路径的 Docker 命令时，需在 `docker` 前加 `MSYS_NO_PATHCONV=1`，避免路径被转换成 Windows 路径。
+测试 x86 麒麟虚拟机时，将平台改为 `linux/amd64`、镜像改为 `kylinlist-builder:focal`、架构改为 `amd64`。脚本拒绝覆盖同名 deb 或校验文件；重建同版本时可用新的 `--output-dir`。Git Bash 执行带 `/src` 等容器路径的 Docker 命令时，需在 `docker` 前加 `MSYS_NO_PATHCONV=1`，避免路径被转换成 Windows 路径。
 
 没有本地构建镜像时，完整 CI 构建会在 Ubuntu 20.04 中安装所需依赖并生成两个包：
 
@@ -198,18 +198,18 @@ ARM64 容器在 Windows x64 上通过 Docker 的模拟能力运行，CI 则使�
 此流程已由 CI 执行；日常开发直接下载产物即可。修改 bundle 打包逻辑后，需要本地复现时可用以下命令。测试在独立、没有系统 Qt 的 Ubuntu 20.04 容器中进行，避免构建环境掩盖漏包；准备基础依赖后，断网安装并启动应用。
 
 ```bash
-bundle=dist/kylinnote_1.1.0_arm64_bundle.deb
-docker run --name kylinnote-runtime-base --platform linux/arm64 \
+bundle=dist/kylinlist_1.1.0_arm64_bundle.deb
+docker run --name kylinlist-runtime-base --platform linux/arm64 \
   -v "$PWD":/src:ro -w /src ubuntu:20.04 \
   bash packaging/test-bundle.sh --prepare "$bundle"
-docker commit kylinnote-runtime-base kylinnote-runtime:test
-docker rm kylinnote-runtime-base
+docker commit kylinlist-runtime-base kylinlist-runtime:test
+docker rm kylinlist-runtime-base
 docker run --rm --platform linux/arm64 --network none \
-  -v "$PWD":/src:ro -w /src kylinnote-runtime:test \
+  -v "$PWD":/src:ro -w /src kylinlist-runtime:test \
   bash packaging/test-bundle.sh "$bundle"
 ```
 
-准备阶段安装基础图形依赖；运行阶段断网执行 `dpkg -i`，检查包内动态库解析。随后通过 Xvfb 启动应用，要求 `--smoke-test` 正常退出、SQLite 数据库已创建，且实际加载了 xcb 和 SQLite 插件。
+准备阶段安装基础图形依赖和 `tzdata` 时区数据；运行阶段断网执行 `dpkg -i`，检查包内动态库解析。随后通过 Xvfb 启动应用，要求 `--smoke-test` 正常退出、SQLite 数据库已创建，且实际加载了 xcb 和 SQLite 插件。
 
 ## CI 与发布
 
