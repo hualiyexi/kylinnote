@@ -8,6 +8,7 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include "../app/TaskStore.h"
+#include "AppIcons.h"
 
 namespace kl {
 namespace {
@@ -51,7 +52,12 @@ ActivityLogDialog::ActivityLogDialog(TaskStore* store, const QString& entityId, 
     m_details = new QTextEdit(this); m_details->setObjectName(QStringLiteral("ActivityDetail")); m_details->setReadOnly(true);
     m_details->setPlaceholderText(QStringLiteral("选择一条事件查看完整旧值与新值")); m_details->setMaximumHeight(170);
     layout->addWidget(m_details);
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this); buttons->button(QDialogButtonBox::Close)->setText(QStringLiteral("关闭"));
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    auto* closeButton = buttons->button(QDialogButtonBox::Close);
+    closeButton->setObjectName(QStringLiteral("CloseActivityLog")); closeButton->setText(QString());
+    closeButton->setIcon(AppIcons::icon(IconId::Close)); closeButton->setIconSize(QSize(16, 16));
+    closeButton->setToolTip(AppIcons::accessibleName(IconId::Close));
+    closeButton->setAccessibleName(AppIcons::accessibleName(IconId::Close)); closeButton->setFixedSize(32, 32);
     layout->addWidget(buttons); connect(buttons, &QDialogButtonBox::rejected, this, &ActivityLogDialog::reject);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, &ActivityLogDialog::showEventDetails);
 

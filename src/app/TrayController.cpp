@@ -6,35 +6,28 @@
 #include <QPainter>
 #include <QPixmap>
 #include "NoteManager.h"
+#include "../ui/AppIcons.h"
+#include "../ui/design/ThemeManager.h"
 namespace kl {
 TrayController::TrayController(NoteManager* manager, QObject* parent) : QObject(parent), m_manager(manager) {
     m_tray = new QSystemTrayIcon(trayIcon(), this);
     m_tray->setToolTip(QStringLiteral("麒麟清单 · 我的待办"));
     m_menu = new QMenu;
     m_menu->setWindowFlags(m_menu->windowFlags() | Qt::WindowStaysOnTopHint);
-    connect(m_menu->addAction(QStringLiteral("打开待办面板")),
-            &QAction::triggered,
-            this,
-            &TrayController::panelRequested);
-    connect(m_menu->addAction(QStringLiteral("新建任务")),
-            &QAction::triggered,
-            this,
-            &TrayController::newTaskRequested);
-    connect(m_menu->addAction(QStringLiteral("新建桌面便签")), &QAction::triggered, this, [this]() {
-        m_manager->createNote();
-    });
+    QAction* openPanel = m_menu->addAction(AppIcons::icon(IconId::TaskList), QStringLiteral("打开待办面板"));
+    connect(openPanel, &QAction::triggered, this, &TrayController::panelRequested);
+    QAction* newTask = m_menu->addAction(AppIcons::icon(IconId::Add), QStringLiteral("新建任务"));
+    connect(newTask, &QAction::triggered, this, &TrayController::newTaskRequested);
+    QAction* newNote = m_menu->addAction(AppIcons::icon(IconId::DesktopNote), QStringLiteral("新建桌面便签"));
+    connect(newNote, &QAction::triggered, this, [this]() { m_manager->createNote(); });
     m_menu->addSeparator();
-    connect(m_menu->addAction(QStringLiteral("显示桌面便签")),
-            &QAction::triggered,
-            m_manager,
-            &NoteManager::showAll);
-    connect(m_menu->addAction(QStringLiteral("隐藏桌面便签")),
-            &QAction::triggered,
-            m_manager,
-            &NoteManager::hideAll);
+    QAction* showNotes = m_menu->addAction(AppIcons::icon(IconId::DesktopNote), QStringLiteral("显示桌面便签"));
+    connect(showNotes, &QAction::triggered, m_manager, &NoteManager::showAll);
+    QAction* hideNotes = m_menu->addAction(AppIcons::icon(IconId::Close), QStringLiteral("隐藏桌面便签"));
+    connect(hideNotes, &QAction::triggered, m_manager, &NoteManager::hideAll);
     m_menu->addSeparator();
-    connect(
-        m_menu->addAction(QStringLiteral("退出")), &QAction::triggered, this, &TrayController::quitRequested);
+    QAction* quit = m_menu->addAction(AppIcons::icon(IconId::Close), QStringLiteral("退出"));
+    connect(quit, &QAction::triggered, this, &TrayController::quitRequested);
     m_tray->setContextMenu(m_menu);
     connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
@@ -78,11 +71,12 @@ QIcon TrayController::trayIcon() {
     QPainter p(&pixmap);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor("#315BA6"));
+    p.setBrush(ThemeManager::instance().color(ds::ColorToken::Primary));
     p.drawRoundedRect(5, 4, 54, 56, 12, 12);
-    p.setPen(QPen(Qt::white, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.drawLine(18, 31, 28, 41);
-    p.drawLine(28, 41, 47, 22);
+    AppIcons::paint(&p,
+                    IconId::Check,
+                    QRectF(13, 13, 38, 38),
+                    ThemeManager::instance().color(ds::ColorToken::OnPrimary));
     return QIcon(pixmap);
 }
 }  // namespace kl

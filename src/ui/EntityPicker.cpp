@@ -1,18 +1,23 @@
 #include "EntityPicker.h"
 
 #include <algorithm>
+#include <QAction>
 #include <QDialogButtonBox>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include "../app/TaskStore.h"
+#include "AppIcons.h"
 
 namespace kl {
 EntityPickerDialog::EntityPickerDialog(TaskStore* store, QWidget* parent) : QDialog(parent), m_store(store) {
     setObjectName(QStringLiteral("EntityPicker")); setWindowTitle(QStringLiteral("选择实体引用")); resize(460, 420);
     auto* layout = new QVBoxLayout(this);
     m_search = new QLineEdit(this); m_search->setObjectName(QStringLiteral("EntityPickerSearch"));
+    QAction* searchAction = m_search->addAction(AppIcons::icon(IconId::Search), QLineEdit::LeadingPosition);
+    searchAction->setToolTip(QStringLiteral("搜索任务或笔记标题"));
+    m_search->setAccessibleName(QStringLiteral("搜索任务或笔记标题"));
     m_search->setPlaceholderText(QStringLiteral("搜索任务或笔记标题")); layout->addWidget(m_search);
     m_list = new QListWidget(this); m_list->setObjectName(QStringLiteral("EntityPickerList")); layout->addWidget(m_list, 1);
     m_buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);

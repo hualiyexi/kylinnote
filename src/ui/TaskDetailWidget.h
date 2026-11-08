@@ -12,6 +12,7 @@ class QDateTimeEdit;
 class QListWidget;
 class QPushButton;
 class QLabel;
+class QToolButton;
 namespace kl {
 class TaskStore;
 class MarkdownEditor;
@@ -37,6 +38,7 @@ private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void beginTextSession();
     bool endTextSession();
+    void showMoreMenu();
     TaskStore* m_store;
     QString m_id;
     bool m_loading = false, m_saving = false;
@@ -55,7 +57,10 @@ private:
     MarkdownEditor* m_description = nullptr;
     AttachmentWidget* m_attachments = nullptr;
     QListWidget* m_checklist = nullptr;
-    QPushButton *m_remove = nullptr, *m_restore = nullptr, *m_convert = nullptr, *m_activity = nullptr;
+    QPushButton *m_remove = nullptr, *m_restore = nullptr;
+    QToolButton *m_moreButton = nullptr;
+    // R8: 底部固定工具栏中的低频动作收纳到更多菜单
+    // m_convert 和 m_activity 移入更多菜单，不再平铺
 };
 }  // namespace kl
 

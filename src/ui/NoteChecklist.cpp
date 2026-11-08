@@ -3,11 +3,13 @@
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QPainterPath>
+
+#include "design/ThemeManager.h"
 
 namespace kl {
 
-NoteChecklist::NoteChecklist(QWidget* parent) : QWidget(parent), m_ink(QStringLiteral("#39352D")) {
+NoteChecklist::NoteChecklist(QWidget* parent)
+    : QWidget(parent), m_ink(ThemeManager::instance().color(ds::ColorToken::Text)) {
     setMouseTracking(true);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setAttribute(Qt::WA_OpaquePaintEvent, false);
@@ -46,7 +48,9 @@ void NoteChecklist::paintEvent(QPaintEvent*) {
         const int y = 5 + row * 27;
         if (row == m_hoverRow) {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(0, 0, 0, 7));
+            QColor hover = ThemeManager::instance().color(ds::ColorToken::Text);
+            hover.setAlpha(7);
+            painter.setBrush(hover);
             painter.drawRoundedRect(QRectF(0, y, width(), 26), 4, 4);
         }
         const QRect box(3, y + 6, 13, 13);

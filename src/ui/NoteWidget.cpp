@@ -17,6 +17,7 @@
 
 #include "AttachmentWidget.h"
 #include "ColorTheme.h"
+#include "design/ThemeManager.h"
 #include "Markdown.h"
 #include "MarkdownEditor.h"
 #include "NoteChecklist.h"
@@ -258,7 +259,8 @@ void NoteWidget::setSaveFailed(bool failed) {
     m_saveFailed = failed;
     m_status->setText(failed ? QStringLiteral("保存失败，内容仍在") : QString());
     if (failed) {
-        m_status->setStyleSheet(QStringLiteral("color:#A84640;"));
+        m_status->setStyleSheet(QStringLiteral("color:%1;")
+                                    .arg(ThemeManager::instance().color(ds::ColorToken::Danger).name()));
         m_saveTimer.start(SaveRetryMs);
     } else {
         m_status->setStyleSheet(QString());

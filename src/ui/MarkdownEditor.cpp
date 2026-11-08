@@ -5,6 +5,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTabBar>
@@ -14,7 +15,9 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 #include "../app/TaskStore.h"
+#include "AppIcons.h"
 #include "AppStyle.h"
 #include "EntityPicker.h"
 #include "Markdown.h"
@@ -25,22 +28,43 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(5);
     m_toolbar = new QFrame(this); auto* toolbar = m_toolbar; toolbar->setObjectName(QStringLiteral("EditorToolbar"));
     auto* grid = new QGridLayout(toolbar); grid->setContentsMargins(3, 3, 3, 3); grid->setSpacing(0);
-    struct Tool { const char* label; const char* before; const char* after; int kind; const char* key; };
-    const Tool tools[] = {{"加粗", "**", "**", 0, "Ctrl+B"},
-                          {"斜体", "*", "*", 1, "Ctrl+I"},
-                          {"删除线", "~~", "~~", 2, "Ctrl+Shift+X"},
-                          {"标题", "## ", "", 3, ""},
-                          {"列表", "- ", "", 4, ""},
-                          {"编号", "1. ", "", 5, ""},
-                          {"块引用", "> ", "", 6, ""},
-                          {"代码", "`", "`", 7, ""},
-                          {"清单", "- [ ] ", "", 8, ""}};
+    auto* more = new QToolButton(toolbar);
+    more->setObjectName(QStringLiteral("moreFormats")); more->setText(QStringLiteral("更多格式"));
+    more->setIcon(AppIcons::icon(IconId::More)); more->setIconSize(QSize(16, 16));
+    more->setToolButtonStyle(Qt::ToolButtonIconOnly); more->setAutoRaise(true);
+    more->setToolTip(QStringLiteral("更多格式")); more->setAccessibleName(QStringLiteral("更多格式"));
+    more->setFocusPolicy(Qt::NoFocus); more->setPopupMode(QToolButton::InstantPopup);
+    auto* moreMenu = new QMenu(more); moreMenu->setObjectName(QStringLiteral("MoreFormatsMenu"));
+    moreMenu->setToolTipsVisible(true); more->setMenu(moreMenu);
+    struct Tool { const char* label; const char* before; const char* after; int kind; const char* key; IconId icon; };
+    const Tool tools[] = {{"加粗", "**", "**", 0, "Ctrl+B", IconId::Bold},
+                          {"斜体", "*", "*", 1, "Ctrl+I", IconId::Italic},
+                          {"删除线", "~~", "~~", 2, "Ctrl+Shift+X", IconId::Strike},
+                          {"标题", "## ", "", 3, "", IconId::Heading},
+                          {"列表", "- ", "", 4, "", IconId::List},
+                          {"编号", "1. ", "", 5, "", IconId::OrderedList},
+                          {"块引用", "> ", "", 6, "", IconId::Quote},
+                          {"代码", "`", "`", 7, "", IconId::Code},
+                          {"清单", "- [ ] ", "", 8, "", IconId::Checklist}};
     for (int i = 0; i < 9; ++i) {
-        const Tool tool = tools[i]; auto* button = new QToolButton(toolbar);
-        button->setText(QString::fromUtf8(tool.label)); button->setObjectName(QStringLiteral("format%1").arg(tool.kind));
-        button->setToolTip(QString::fromUtf8(tool.label) + (QString::fromLatin1(tool.key).isEmpty()
+        const Tool tool = tools[i];
+        const bool primary = tool.kind <= 2;
+        auto* button = new QToolButton(primary ? static_cast<QWidget*>(toolbar) : static_cast<QWidget*>(moreMenu));
+        const QString label = QString::fromUtf8(tool.label);
+        button->setText(label); button->setObjectName(QStringLiteral("format%1").arg(tool.kind));
+        button->setIcon(AppIcons::icon(tool.icon)); button->setIconSize(QSize(16, 16));
+        button->setToolButtonStyle(primary ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+        button->setAutoRaise(true);
+        button->setToolTip(label + (QString::fromLatin1(tool.key).isEmpty()
             ? QString() : QStringLiteral(" (%1)").arg(QString::fromLatin1(tool.key))));
-        button->setFocusPolicy(Qt::NoFocus); grid->addWidget(button, i / 5, i % 5);
+        button->setAccessibleName(AppIcons::accessibleName(tool.icon));
+        button->setFocusPolicy(Qt::NoFocus);
+        if (primary) {
+            grid->addWidget(button, 0, tool.kind);
+        } else {
+            auto* menuItem = new QWidgetAction(moreMenu); menuItem->setDefaultWidget(button);
+            moreMenu->addAction(menuItem); connect(button, &QToolButton::clicked, moreMenu, &QMenu::hide);
+        }
         auto action = [this, tool]() {
             m_tabs->setCurrentIndex(0);
             if ((tool.kind >= 3 && tool.kind <= 6) || tool.kind == 8) applyBlock(QString::fromLatin1(tool.before), tool.kind);
@@ -53,10 +77,19 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
         }
     }
     auto* link = new QToolButton(toolbar); link->setText(QStringLiteral("链接")); link->setObjectName(QStringLiteral("insertLink"));
-    link->setFocusPolicy(Qt::NoFocus); grid->addWidget(link, 1, 4); connect(link, &QToolButton::clicked, this, &MarkdownEditor::insertLink);
-    m_referenceButton = new QToolButton(toolbar); m_referenceButton->setText(QStringLiteral("实体引用"));
-    m_referenceButton->setObjectName(QStringLiteral("insertEntityReference")); m_referenceButton->setFocusPolicy(Qt::NoFocus);
-    m_referenceButton->setEnabled(false); grid->addWidget(m_referenceButton, 2, 0);
+    link->setIcon(AppIcons::icon(IconId::Link)); link->setIconSize(QSize(16, 16));
+    link->setToolButtonStyle(Qt::ToolButtonIconOnly); link->setAutoRaise(true);
+    link->setToolTip(AppIcons::accessibleName(IconId::Link)); link->setAccessibleName(AppIcons::accessibleName(IconId::Link));
+    link->setFocusPolicy(Qt::NoFocus); grid->addWidget(link, 0, 3); grid->addWidget(more, 0, 4);
+    connect(link, &QToolButton::clicked, this, &MarkdownEditor::insertLink);
+    m_referenceButton = new QToolButton(moreMenu); m_referenceButton->setText(QStringLiteral("实体引用"));
+    m_referenceButton->setObjectName(QStringLiteral("insertEntityReference"));
+    m_referenceButton->setIcon(AppIcons::icon(IconId::Link)); m_referenceButton->setIconSize(QSize(16, 16));
+    m_referenceButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); m_referenceButton->setAutoRaise(true);
+    m_referenceButton->setToolTip(QStringLiteral("实体引用")); m_referenceButton->setAccessibleName(QStringLiteral("实体引用"));
+    m_referenceButton->setFocusPolicy(Qt::NoFocus); m_referenceButton->setEnabled(false);
+    auto* referenceItem = new QWidgetAction(moreMenu); referenceItem->setDefaultWidget(m_referenceButton);
+    moreMenu->addAction(referenceItem); connect(m_referenceButton, &QToolButton::clicked, moreMenu, &QMenu::hide);
     connect(m_referenceButton, &QToolButton::clicked, this, &MarkdownEditor::chooseEntityReference);
     layout->addWidget(toolbar);
     m_tabs = new QTabBar(this); m_tabs->addTab(QStringLiteral("编辑")); m_tabs->addTab(QStringLiteral("预览"));
