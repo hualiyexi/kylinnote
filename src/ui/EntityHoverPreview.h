@@ -16,6 +16,7 @@ public:
     void cancel();
     void refresh();
 private:
+    void applyTheme();
     QPointer<TaskStore> m_store;
     QTimer m_timer;
     QLabel *m_title = nullptr, *m_meta = nullptr, *m_summary = nullptr;

@@ -1,5 +1,6 @@
 #include "AttachmentWidget.h"
 
+#include <QAction>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -7,14 +8,17 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVariant>
 
 #include "../app/TaskStore.h"
+#include "AppIcons.h"
 
 namespace kl {
 namespace {
@@ -59,6 +63,8 @@ AttachmentWidget::AttachmentWidget(TaskStore* store, QWidget* parent) : QWidget(
     m_add = new QPushButton(QStringLiteral("添加图片或附件"), m_header);
     m_add->setObjectName(QStringLiteral("AddAttachment"));
     m_add->setProperty("quiet", QVariant(true));
+    m_add->setIcon(AppIcons::icon(IconId::Attachment)); m_add->setIconSize(QSize(16, 16));
+    m_add->setAccessibleName(QStringLiteral("添加图片或附件"));
     m_add->setToolTip(QStringLiteral("复制到本机任务目录，单个文件不超过 2 MB"));
     header->addWidget(m_add);
     root->addWidget(m_header);
@@ -159,20 +165,24 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     text->addWidget(detail);
     layout->addLayout(text, 1);
 
-    auto* open = new QPushButton(QStringLiteral("打开"), row);
-    open->setProperty("quiet", QVariant(true));
-    layout->addWidget(open);
-    auto* remove = new QPushButton(QStringLiteral("移除"), row);
-    remove->setProperty("quiet", QVariant(true));
-    remove->setVisible(!m_readOnly && !m_compact);
-    layout->addWidget(remove);
+    auto* actions = new QToolButton(row);
+    actions->setObjectName(QStringLiteral("AttachmentActions")); actions->setText(QStringLiteral("附件操作"));
+    actions->setIcon(AppIcons::icon(IconId::More)); actions->setIconSize(QSize(16, 16));
+    actions->setToolButtonStyle(Qt::ToolButtonIconOnly); actions->setAutoRaise(true);
+    actions->setToolTip(QStringLiteral("附件操作")); actions->setAccessibleName(QStringLiteral("附件操作"));
+    actions->setFocusPolicy(Qt::NoFocus); actions->setPopupMode(QToolButton::InstantPopup);
+    auto* menu = new QMenu(actions); menu->setObjectName(QStringLiteral("AttachmentMenu"));
+    auto* open = menu->addAction(QStringLiteral("打开")); open->setObjectName(QStringLiteral("OpenAttachment"));
+    auto* remove = menu->addAction(AppIcons::icon(IconId::Delete), QStringLiteral("移除"));
+    remove->setObjectName(QStringLiteral("RemoveAttachment")); remove->setVisible(!m_readOnly && !m_compact);
+    actions->setMenu(menu); layout->addWidget(actions);
     if (m_compact) {
         name->setToolTip(attachment.originalName);
         name->setMaximumWidth(190);
     }
     m_rows->addWidget(row);
 
-    connect(open, &QPushButton::clicked, this, [this, attachment]() {
+    connect(open, &QAction::triggered, this, [this, attachment]() {
         if (attachment.isImage) {
             ImagePreviewDialog dialog(attachment, filePath(attachment), this);
             dialog.exec();
@@ -180,7 +190,7 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
             m_store->openAttachment(attachment.id);
         }
     });
-    connect(remove, &QPushButton::clicked, this, [this, attachment]() {
+    connect(remove, &QAction::triggered, this, [this, attachment]() {
         if (QMessageBox::question(
                 this,
                 QStringLiteral("移除附件"),

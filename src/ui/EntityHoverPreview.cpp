@@ -8,11 +8,13 @@
 #include "../domain/ViewSpec.h"
 #include "AppStyle.h"
 #include "Markdown.h"
+#include "design/ThemeManager.h"
 
 namespace kl {
 EntityHoverPreview::EntityHoverPreview(TaskStore* store, QWidget* parent)
     : QWidget(parent, Qt::ToolTip | Qt::FramelessWindowHint), m_store(store), m_timer(this) {
     setObjectName(QStringLiteral("EntityHoverPreview")); setAttribute(Qt::WA_DeleteOnClose, false);
+    setAttribute(Qt::WA_StyledBackground, true);
     auto* layout = new QVBoxLayout(this); layout->setContentsMargins(14, 10, 14, 10); layout->setSpacing(5);
     m_title = new QLabel(this); m_title->setObjectName(QStringLiteral("HoverTitle")); m_title->setFont(AppStyle::font(AppStyle::Font::Body));
     m_meta = new QLabel(this); m_meta->setObjectName(QStringLiteral("HoverMeta")); m_meta->setFont(AppStyle::font(AppStyle::Font::Small));
@@ -28,7 +30,21 @@ EntityHoverPreview::EntityHoverPreview(TaskStore* store, QWidget* parent)
         connect(m_store, &TaskStore::taskChanged, this, [this](QString) { refresh(); });
         connect(m_store, &TaskStore::tasksReset, this, &EntityHoverPreview::refresh);
     }
+    applyTheme();
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() { applyTheme(); });
     hide();
+}
+void EntityHoverPreview::applyTheme() {
+    const ThemeManager& theme = ThemeManager::instance();
+    setStyleSheet(QStringLiteral(
+                      "#EntityHoverPreview{background:%1;border:1px solid %2;}"
+                      "#EntityHoverPreview QLabel{background:transparent;border:0;}"
+                      "#HoverTitle,#HoverSummary{color:%3;}"
+                      "#HoverMeta{color:%4;}")
+                      .arg(theme.color(ds::ColorToken::TooltipBg).name())
+                      .arg(theme.color(ds::ColorToken::Border).name())
+                      .arg(theme.color(ds::ColorToken::TooltipText).name())
+                      .arg(theme.color(ds::ColorToken::TextSecondary).name()));
 }
 void EntityHoverPreview::schedule(const QString& entityId, const QPoint& globalPosition) {
     if (!m_store || m_store->entity(entityId).id.isEmpty()) { cancel(); return; }

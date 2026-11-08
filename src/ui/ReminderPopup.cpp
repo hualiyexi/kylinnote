@@ -7,6 +7,7 @@
 #include <QScreen>
 #include <QVBoxLayout>
 #include "../domain/ViewSpec.h"
+#include "AppIcons.h"
 namespace kl {
 ReminderPopup::ReminderPopup(const Entity& task, QWidget* parent)
     : ReminderPopup(task, QString(), parent) {
@@ -45,6 +46,10 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     delay->addItem(QStringLiteral("30分钟后"), 30);
     delay->addItem(QStringLiteral("1小时后"), 60);
     auto* snooze = new QPushButton(QStringLiteral("稍后提醒"), this);
+    snooze->setObjectName(QStringLiteral("ReminderSnoozeButton"));
+    snooze->setIcon(AppIcons::icon(IconId::Clock));
+    snooze->setAccessibleName(QStringLiteral("稍后提醒"));
+    snooze->setToolTip(QStringLiteral("按所选时间稍后提醒"));
     row->addWidget(delay);
     row->addWidget(snooze);
     row->addStretch();
@@ -53,7 +58,19 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     auto *open = new QPushButton(QStringLiteral("查看任务"), this),
          *done = new QPushButton(QStringLiteral("标记完成"), this),
          *dismiss = new QPushButton(QStringLiteral("知道了"), this);
+    open->setObjectName(QStringLiteral("ReminderOpenButton"));
+    open->setIcon(AppIcons::icon(IconId::TaskList));
+    open->setAccessibleName(QStringLiteral("查看任务"));
+    open->setToolTip(QStringLiteral("查看任务详情"));
+    done->setObjectName(QStringLiteral("ReminderDoneButton"));
     done->setProperty("primary", true);
+    done->setIcon(AppIcons::icon(IconId::Check, ds::ColorToken::OnPrimary));
+    done->setAccessibleName(QStringLiteral("标记完成"));
+    done->setToolTip(QStringLiteral("标记任务完成"));
+    dismiss->setObjectName(QStringLiteral("ReminderDismissButton"));
+    dismiss->setIcon(AppIcons::icon(IconId::Close));
+    dismiss->setAccessibleName(QStringLiteral("知道了"));
+    dismiss->setToolTip(QStringLiteral("关闭提醒，不修改任务状态"));
     buttons->addWidget(open);
     buttons->addStretch();
     buttons->addWidget(dismiss);

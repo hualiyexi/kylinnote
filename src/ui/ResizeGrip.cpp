@@ -1,6 +1,7 @@
 #include "ResizeGrip.h"
 
 #include "../Common.h"
+#include "design/ThemeManager.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -16,6 +17,7 @@ ResizeGrip::ResizeGrip(QWidget *parent)
     setCursor(Qt::SizeFDiagCursor);
     setAttribute(Qt::WA_StyledBackground, true);
     setToolTip(QStringLiteral("\u62d6\u62fd\u8c03\u6574\u5927\u5c0f"));
+    setAccessibleName(QStringLiteral("调整便签大小"));
 }
 
 void ResizeGrip::paintEvent(QPaintEvent *event)
@@ -24,7 +26,9 @@ void ResizeGrip::paintEvent(QPaintEvent *event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
-    QPen pen(QColor(0, 0, 0, 110), 1);
+    QColor gripColor = ThemeManager::instance().color(ds::ColorToken::TextSecondary);
+    gripColor.setAlpha(110);
+    QPen pen(gripColor, 1);
     pen.setCapStyle(Qt::RoundCap);
     painter.setPen(pen);
 

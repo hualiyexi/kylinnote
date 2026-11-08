@@ -1,5 +1,7 @@
 #include "TitleBar.h"
+#include "AppIcons.h"
 #include "ColorTheme.h"
+#include "design/ThemeManager.h"
 
 #include <QHBoxLayout>
 #include <QIcon>
@@ -22,9 +24,11 @@ TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     layout->setSpacing(4);
     m_openButton = new QToolButton(this);
     m_openButton->setObjectName(QStringLiteral("OpenTaskButton"));
-    m_openButton->setText(QStringLiteral("···"));
+    m_openButton->setIcon(AppIcons::icon(IconId::More));
+    m_openButton->setIconSize(QSize(16, 16));
     m_openButton->setFixedSize(28, 24);
     m_openButton->setToolTip(QStringLiteral("打开待办详情，设置时间、提醒和附件"));
+    m_openButton->setAccessibleName(QStringLiteral("打开待办详情"));
     layout->addWidget(m_openButton);
     connect(m_openButton, &QToolButton::clicked, this, &TitleBar::openClicked);
     layout->addStretch(1);
@@ -34,14 +38,17 @@ TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     m_colorButton->setFixedSize(20, 20);
     m_colorButton->setIconSize(QSize(14, 14));
     m_colorButton->setToolTip(QStringLiteral("\u5207\u6362\u989c\u8272\uff086 \u8272\u5faa\u73af\uff09"));
+    m_colorButton->setAccessibleName(QStringLiteral("切换便签颜色"));
     m_colorButton->setCursor(Qt::ArrowCursor);
     layout->addWidget(m_colorButton);
 
     m_closeButton = new QToolButton(this);
     m_closeButton->setObjectName(QStringLiteral("CloseButton"));
     m_closeButton->setFixedSize(26, 26);
-    m_closeButton->setText(QString::fromUtf8("\xC3\x97"));  // ×
+    m_closeButton->setIcon(AppIcons::icon(IconId::Close));
+    m_closeButton->setIconSize(QSize(16, 16));
     m_closeButton->setToolTip(QStringLiteral("取消贴到桌面（任务会保留在面板中）"));
+    m_closeButton->setAccessibleName(QStringLiteral("取消贴到桌面"));
     m_closeButton->setCursor(Qt::ArrowCursor);
     layout->addWidget(m_closeButton);
 
@@ -60,7 +67,9 @@ void TitleBar::setColorIndicator(NoteColor color) {
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(QPen(QColor(0, 0, 0, 90), 1));
+    QColor outline = ThemeManager::instance().color(ds::ColorToken::TextSecondary);
+    outline.setAlpha(90);
+    painter.setPen(QPen(outline, 1));
     painter.setBrush(QColor(ColorTheme::spec(color).body));
     painter.drawEllipse(1, 1, 12, 12);
     painter.end();
