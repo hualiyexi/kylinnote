@@ -1,9 +1,13 @@
 #pragma once
 #include <QStyledItemDelegate>
+#include "AppIcons.h"
 namespace kl {
-// 侧栏导航的线性小图标，全部用 QPainter 绘制，不依赖图标字体或网页资源。
-enum class NavIcon { None, Inbox, Today, Upcoming, Overdue, Pin, Done, Trash, Folder, Abandoned, Note, TaskList };
-void drawNavIcon(QPainter* painter, NavIcon icon, const QRectF& rect, const QColor& color);
+
+// 保留旧枚举名作为兼容别名，新代码用 IconId。
+using NavIcon = IconId;
+inline void drawNavIcon(QPainter* painter, IconId icon, const QRectF& rect, const QColor& color) {
+    AppIcons::paint(painter, icon, rect, color);
+}
 
 // 任务行：圆角 checkbox + 标题 + 元信息，选中为柔和蓝。
 class TaskDelegate : public QStyledItemDelegate {
@@ -21,7 +25,7 @@ public:
                      const QModelIndex& index) override;
 };
 
-// 侧栏导航行：分区标题、图标、独立右对齐数量。
+// 侧栏导航行：分区标题、SVG 图标、独立右对齐数量。
 class NavigationDelegate : public QStyledItemDelegate {
     Q_OBJECT
 public:
