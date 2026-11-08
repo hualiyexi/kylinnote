@@ -1,10 +1,10 @@
 #include "Settings.h"
-namespace kn {
+namespace kl {
 Settings::Settings()
     : m_store(QSettings::IniFormat,
               QSettings::UserScope,
-              QStringLiteral("kylinnote"),
-              QStringLiteral("kylinnote")) {
+              QStringLiteral("kylinlist"),
+              QStringLiteral("kylinlist")) {
 }
 Settings& Settings::instance() {
     static Settings settings;
@@ -24,4 +24,4 @@ void Settings::setDefaultLayer(NoteLayer layer) {
 void Settings::sync() {
     m_store.sync();
 }
-}  // namespace kn
+}  // namespace kl

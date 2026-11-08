@@ -8,12 +8,12 @@
 #include <QDBusMessage>
 #include <QDebug>
 
-namespace kn {
+namespace kl {
 
 namespace {
-const char *kService   = "org.kylin.KylinNote";
-const char *kPath      = "/KylinNote";
-const char *kInterface = "org.kylin.KylinNote";
+const char *kService   = "org.kylin.KylinList";
+const char *kPath      = "/KylinList";
+const char *kInterface = "org.kylin.KylinList";
 }
 
 const char *DbusAdapter::serviceName()
@@ -104,4 +104,4 @@ void DbusAdapter::newNote()
     }
 }
 
-} // namespace kn
+} // namespace kl

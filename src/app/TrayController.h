@@ -3,7 +3,7 @@
 #include <QSystemTrayIcon>
 #include <QTimer>
 class QMenu;
-namespace kn {
+namespace kl {
 class NoteManager;
 class TrayController : public QObject {
     Q_OBJECT
@@ -12,13 +12,13 @@ public:
     ~TrayController() override;
     void show();
     void notify(const QString& text);
-    void notifyReminder(qint64 taskId, const QString& title);
+    void notifyReminder(QString entityId, const QString& title);
     static QIcon trayIcon();
 signals:
     void quitRequested();
     void panelRequested();
     void newTaskRequested();
-    void taskRequested(qint64 id);
+    void taskRequested(QString id);
 
 private:
     void tryShow();
@@ -26,6 +26,6 @@ private:
     QSystemTrayIcon* m_tray = nullptr;
     QMenu* m_menu = nullptr;
     QTimer m_retryTimer;
-    qint64 m_lastReminderId = 0;
+    QString m_lastReminderId = QString();
 };
-}  // namespace kn
+}  // namespace kl

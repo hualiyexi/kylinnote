@@ -6,10 +6,10 @@
 #include <QPainter>
 #include <QPixmap>
 #include "NoteManager.h"
-namespace kn {
+namespace kl {
 TrayController::TrayController(NoteManager* manager, QObject* parent) : QObject(parent), m_manager(manager) {
     m_tray = new QSystemTrayIcon(trayIcon(), this);
-    m_tray->setToolTip(QStringLiteral("KylinNote · 我的待办"));
+    m_tray->setToolTip(QStringLiteral("麒麟清单 · 我的待办"));
     m_menu = new QMenu;
     m_menu->setWindowFlags(m_menu->windowFlags() | Qt::WindowStaysOnTopHint);
     connect(m_menu->addAction(QStringLiteral("打开待办面板")),
@@ -41,7 +41,7 @@ TrayController::TrayController(NoteManager* manager, QObject* parent) : QObject(
             emit panelRequested();
     });
     connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this]() {
-        if (m_lastReminderId)
+        if (!m_lastReminderId.isEmpty())
             emit taskRequested(m_lastReminderId);
         else
             emit panelRequested();
@@ -63,12 +63,12 @@ void TrayController::tryShow() {
         m_retryTimer.start();
 }
 void TrayController::notify(const QString& text) {
-    m_lastReminderId = 0;
+    m_lastReminderId.clear();
     if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
-        m_tray->showMessage(QStringLiteral("KylinNote"), text, QSystemTrayIcon::Warning, 7000);
+        m_tray->showMessage(QStringLiteral("麒麟清单"), text, QSystemTrayIcon::Warning, 7000);
 }
-void TrayController::notifyReminder(qint64 taskId, const QString& title) {
-    m_lastReminderId = taskId;
+void TrayController::notifyReminder(QString entityId, const QString& title) {
+    m_lastReminderId = entityId;
     if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
         m_tray->showMessage(QStringLiteral("待办提醒"), title, QSystemTrayIcon::Information, 15000);
 }
@@ -85,4 +85,4 @@ QIcon TrayController::trayIcon() {
     p.drawLine(28, 41, 47, 22);
     return QIcon(pixmap);
 }
-}  // namespace kn
+}  // namespace kl

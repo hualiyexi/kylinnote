@@ -1,14 +1,15 @@
-#ifndef KYLINNOTE_TASKSTORE_H
-#define KYLINNOTE_TASKSTORE_H
+#ifndef KYLINLIST_TASKSTORE_H
+#define KYLINLIST_TASKSTORE_H
 
 #include "../db/TaskRepository.h"
 #include "AttachmentStore.h"
+#include "Journal.h"
 
 #include <QObject>
 #include <QSqlDatabase>
 #include <memory>
 
-namespace kn {
+namespace kl {
 
 class TaskStore : public QObject
 {
@@ -16,63 +17,117 @@ class TaskStore : public QObject
 public:
     explicit TaskStore(const QSqlDatabase &database, QObject *parent = nullptr);
     bool load(QString *error = nullptr);
-    QVector<Task> tasks() const;             // 包括回收站任务，由 UI 决定筛选
-    QVector<TaskGroup> groups() const;
-    Task task(qint64 id) const;               // 未找到返回 id=0 的 Task
-    qint64 createTask(const QString &title, qint64 groupId = 0);
-    bool saveTask(Task task);
-    bool setCompleted(qint64 id, bool completed);
-    bool setPinned(qint64 id, bool pinned);
-    bool trashTask(qint64 id);
-    bool restoreTask(qint64 id);
-    bool deletePermanently(qint64 id);
-    qint64 createGroup(const QString &name);
-    bool renameGroup(qint64 id, const QString &name);
-    bool deleteGroup(qint64 id);
-    // 备份导出自 v3 起写入版本化二进制容器（magic/version + JSON 元数据 + 附件内容帧）；
-    // 导入同时兼容旧版纯 JSON（version 1，无附件）。UI 的文件后缀由调用方决定。
-    bool exportBackup(const QString &path);
-    bool importBackup(const QString &path);
 
-    // 附件 API。load 时按 dataDirPath() 创建 AttachmentStore。
-    // importAttachment 失败返回 id 为空的 Attachment；其余接口失败返回 false，
-    // 均可通过 lastError() 取得原因。任务永久删除时先提交 DB 再物理清理文件。
-    QVector<Attachment> attachments(qint64 taskId) const;
-    Attachment importAttachment(qint64 taskId, const QString &sourcePath);
-    bool removeAttachment(qint64 taskId, const QString &attachmentId);
+    QVector<Entity> entities() const;
+    QVector<TaskGroup> groups() const;
+    QVector<TaskList> lists() const;
+    QVector<Folder> folders() const;
+    QVector<Section> sections() const;
+    Entity entity(const QString &id) const;
+    QString createTask(const QString &title, const QString &listId = QString(),
+                       const QString &sectionId = QString(), const QString &parentId = QString());
+    QString createNote(const QString &title, const QString &listId = QString(),
+                       const QString &sectionId = QString());
+    bool saveTask(Entity task);
+    QString cloneTask(const QString &id);
+    bool convertKind(const QString &id, EntityKind kind);
+    bool setCompleted(const QString &id, bool completed);
+    bool setStatus(const QString &id, TaskStatus status);
+    bool abandonTask(const QString &id);
+    bool setPinnedAt(const QString &id, const QDateTime &pinnedAt);
+    bool trashTask(const QString &id);
+    bool restoreTask(const QString &id);
+    bool deletePermanently(const QString &id);
+
+    QString createFolder(const QString &name);
+    bool renameFolder(const QString &id, const QString &name);
+    bool deleteFolder(const QString &id);
+    QString createList(const QString &name, const QString &folderId = QString(), EntityKind kind = EntityKind::Task);
+    bool renameList(const QString &id, const QString &name);
+    bool setListFolder(const QString &id, const QString &folderId);
+    bool deleteList(const QString &id);
+    QString createGroup(const QString &name) { return createList(name); }
+    bool renameGroup(const QString &id, const QString &name) { return renameList(id, name); }
+    bool deleteGroup(const QString &id) { return deleteList(id); }
+    QString createSection(const QString &listId, const QString &name);
+    bool renameSection(const QString &id, const QString &name);
+    bool deleteSection(const QString &id);
+
+    QString addChecklistItem(const QString &entityId, const QString &text);
+    bool setChecklistDone(const QString &itemId, bool done);
+    bool removeChecklistItem(const QString &itemId);
+    QVector<TaskReminder> reminders(const QString &entityId) const;
+    TaskReminder addReminder(const QString &entityId, const QDateTime &triggerAt);
+    bool removeReminder(const QString &reminderId);
+    bool markReminderDelivered(const QString &reminderId, const QDateTime &expectedTrigger, const QDateTime &now);
+    bool markReminderNotified(const QString &entityId, const QDateTime &expectedReminder, const QDateTime &now);
+    bool isReminderDelivered(const QString &reminderId) const;
+    QString installationId() const;
+    QString deviceId() const;
+    QString inboxListId() const;
+
+    // 桌面状态按 device_id 独立；不再存放在 entities 表。
+    DesktopNote desktopNote(const QString &entityId, const QString &device = QString()) const;
+    bool saveDesktopNote(DesktopNote note);
+    bool saveDesktopState(const QString &entityId, NoteColor color, const QRect &geometry,
+                          int zOrder, NoteLayer layer, bool open = true);
+    bool removeDesktopNote(const QString &entityId, const QString &device = QString());
+
+    QVector<Attachment> attachments(const QString &entityId) const;
+    QString attachmentFilePath(const Attachment &attachment) const;
+    Attachment importAttachment(const QString &entityId, const QString &sourcePath);
+    bool removeAttachment(const QString &entityId, const QString &attachmentId);
+    bool refreshAttachmentState(const QString &attachmentId);
     bool openAttachment(const QString &attachmentId);
     bool copyAttachmentTo(const QString &attachmentId, const QString &destinationPath);
 
+    QVector<EntityEvent> events(const QString &entityId);
+    QString beginEditSession(const QString &entityId);
+    bool endEditSession(const QString &sessionId);
+    bool endAllSessions();
+
+    QString localMeta(const QString &key) const;
+    bool setLocalMeta(const QString &key, const QString &value);
+    QVector<OutboxItem> outbox() const { return m_snapshot.outbox; }
+
+    // 仅接受 KylinList.Entities v2 + KLB1 magic 的新 .klb 容器；不兼容旧备份。
+    bool exportBackup(const QString &path);
+    bool importBackup(const QString &path);
     QString lastError() const { return m_lastError; }
-    // 调度器的持久 claim：只在当前 reminder 仍匹配且尚未通知时保存标记。
-    // 返回 true 才能发 reminderDue。此函数不负责 UI。
-    bool markReminderNotified(qint64 id, const QDateTime &expectedReminder, const QDateTime &now);
 
 signals:
-    void taskChanged(qint64 id);
+    void taskChanged(QString id);
     void tasksReset();
     void groupsChanged();
-    void attachmentsChanged(qint64 taskId);
+    void attachmentsChanged(QString entityId);
+    void desktopNoteChanged(QString entityId);
     void errorOccurred(const QString &message);
 
 private:
-    const StoredTask *find(qint64 id) const;
-    const RecurrenceLink *linkFor(qint64 sourceId) const;
-    const Attachment *findAttachment(const QString &attachmentId) const;
-    int nextAttachmentSortOrder(qint64 taskId) const;
-    bool hasGroup(qint64 id) const;
+    const StoredEntity *find(const QString &id) const;
+    const RecurrenceLink *linkFor(const QString &sourceId) const;
+    const Attachment *findAttachment(const QString &id) const;
+    const TaskReminder *findReminder(const QString &id) const;
+    const ChecklistItem *findChecklistItem(const QString &id) const;
+    int nextAttachmentSortOrder(const QString &entityId) const;
+    bool hasGroup(const QString &id) const;
+    bool hasFolder(const QString &id) const;
+    bool hasSection(const QString &id) const;
     bool fail(const QString &message, QString *error = nullptr);
     bool ensureLoaded();
-    bool commit(TaskChanges *changes, bool reset = false);
-    bool prepareSave(Task task, TaskChanges *changes);
+    bool commit(EntityChanges *changes, bool reset = false);
+    bool prepareSave(Entity task, EntityChanges *changes);
+    void recordSaveEvents(const StoredEntity *previous, const Entity &value, EntityChanges *changes, const QDateTime &now);
+    void applyDesktopFacade(Entity *task) const;
 
     TaskRepository m_repository;
-    TaskSnapshot m_snapshot;
+    EntitySnapshot m_snapshot;
+    Journal m_journal;
     std::unique_ptr<AttachmentStore> m_attachmentStore;
     QString m_lastError;
     bool m_loaded = false;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_TASKSTORE_H
+#endif // KYLINLIST_TASKSTORE_H

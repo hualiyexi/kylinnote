@@ -1,10 +1,10 @@
-#ifndef KYLINNOTE_SINGLEINSTANCEGUARD_H
-#define KYLINNOTE_SINGLEINSTANCEGUARD_H
+#ifndef KYLINLIST_SINGLEINSTANCEGUARD_H
+#define KYLINLIST_SINGLEINSTANCEGUARD_H
 
 #include <QLockFile>
 #include <QString>
 
-namespace kn {
+namespace kl {
 
 // 进程级独占锁，与 D-Bus 配合使用；锁文件过期时间用于处理崩溃残留
 class SingleInstanceGuard
@@ -29,6 +29,6 @@ private:
     bool m_locked = false;
 };
 
-} // namespace kn
+} // namespace kl
 
-#endif // KYLINNOTE_SINGLEINSTANCEGUARD_H
+#endif // KYLINLIST_SINGLEINSTANCEGUARD_H
