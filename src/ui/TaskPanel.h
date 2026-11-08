@@ -11,6 +11,7 @@ class QComboBox;
 class QSplitter;
 class QStackedWidget;
 class QCloseEvent;
+class QToolButton;
 namespace kl {
 class TaskStore;
 class TaskListModel;
@@ -39,6 +40,7 @@ private:
     void organizationMenu(const QPoint& position);
     void groupMenu();
     void backupMenu();
+    void workspaceMenu();
     void showError(const QString& message);
     TaskStore* m_store;
     TaskListModel* m_model = nullptr;
@@ -48,6 +50,7 @@ private:
     QLineEdit *m_search = nullptr, *m_quick = nullptr;
     QLabel* m_quickKind = nullptr;
     QComboBox* m_renderer = nullptr;
+    QToolButton* m_workspaceMore = nullptr;
     QLabel *m_heading = nullptr, *m_count = nullptr, *m_empty = nullptr, *m_error = nullptr;
     QSplitter* m_splitter = nullptr;
     QStackedWidget* m_listStack = nullptr;

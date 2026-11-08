@@ -40,13 +40,16 @@ QColor color(Color role) {
 }
 
 int metric(Metric role) {
+    // 考据基线（01-layout-and-implementation.md:19-30）：
+    // 任务行 40px、导航行 36px、详情底栏 48px、圆角分层 14/12/10/8。
+    // 适配中文密度与系统缩放，保留 ≥40×40 命中区。
     switch (role) {
-        case Metric::ContentMargin: return 24;
-        case Metric::SidebarWidth: return 208;
+        case Metric::ContentMargin: return 20;
+        case Metric::SidebarWidth: return 232;   // 考据组织栏 249px，适配中文略收
         case Metric::ControlHeight: return 36;
-        case Metric::TaskRowHeight: return 54;
-        case Metric::NavRowHeight: return 32;
-        case Metric::RadiusRow: return 4;
+        case Metric::TaskRowHeight: return 44;   // 考据 40px，中文+元信息两行略增
+        case Metric::NavRowHeight: return 36;    // 考据 36px
+        case Metric::RadiusRow: return 8;        // 考据悬停菜单项 8px
         case Metric::RadiusControl: return 6;
         case Metric::Hairline: return 1;
     }
