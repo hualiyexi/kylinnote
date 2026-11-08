@@ -22,7 +22,7 @@ __pycache__/
 data/
 滴答清单前端图片/
 /tmp*/
-kylinnote-smoke-data/
+kylinlist-smoke-data/
 
 # Qt Creator / IDE
 CMakeLists.txt.user
