@@ -114,6 +114,18 @@ const char* svgSource(IconId id) {
             return "<path d='M5 17L12 3l7 14M8 12h8M4 21h16'/>";
         case IconId::Comment:
             return "<path d='M6 4h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-7l-5 3v-3a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM7 9h10M7 13h7'/>";
+        case IconId::WindowMinimize:
+            return "<path d='M5 12h14'/>";
+        case IconId::WindowMaximize:
+            return "<rect x='6' y='6' width='12' height='12' rx='.5'/>";
+        case IconId::WindowClose:
+            return "<path d='M7 7l10 10M17 7L7 17'/>";
+        case IconId::Sort:
+            return "<path d='M7 5v14M4 8l3-3 3 3M17 19V5M14 16l3 3 3-3'/>";
+        case IconId::Help:
+            return "<circle cx='12' cy='12' r='8'/><path d='M9.5 9a2.5 2.5 0 0 1 5 .5c0 2-2.5 2-2.5 4'/><circle cx='12' cy='17' r='.7' fill='currentColor' stroke='none'/>";
+        case IconId::Sync:
+            return "<path d='M20 7a9 9 0 0 0-15-1L3 9M3 4v5h5M4 17a9 9 0 0 0 15 1l2-3M21 20v-5h-5'/>";
         default:
             return "";
     }
@@ -223,6 +235,12 @@ QString accessibleName(IconId id) {
         case IconId::FormatClear: return QStringLiteral("清除格式");
         case IconId::Format: return QStringLiteral("文本格式");
         case IconId::Comment: return QStringLiteral("活动记录");
+        case IconId::WindowMinimize: return QStringLiteral("最小化");
+        case IconId::WindowMaximize: return QStringLiteral("最大化");
+        case IconId::WindowClose: return QStringLiteral("关闭窗口");
+        case IconId::Sort: return QStringLiteral("排序与视图");
+        case IconId::Help: return QStringLiteral("帮助");
+        case IconId::Sync: return QStringLiteral("本机数据");
         default: return QString();
     }
 }

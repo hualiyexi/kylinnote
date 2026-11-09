@@ -21,6 +21,7 @@
 #include <QSettings>
 #include <QSet>
 #include <QSqlQuery>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCharFormat>
@@ -63,6 +64,7 @@
 #include "ui/TaskDelegate.h"
 #include "ui/TaskListModel.h"
 #include "ui/TaskPanel.h"
+#include "ui/WindowChrome.h"
 #include "ui/design/TypeSystem.h"
 using namespace kl;
 
@@ -670,6 +672,49 @@ private slots:
         QCOMPARE(reminder->dateTime().date(), QDate(2026, 11, 6));
         QCOMPARE(reminder->dateTime().time(), QTime(0, 15));
     }
+    void workspaceUsesFourColumnsAndNoPermanentStatusBar() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1240, 820);
+        panel.show();
+        auto* rail = panel.findChild<QFrame*>(QStringLiteral("ActivityRail"));
+        auto* navigationPane = panel.findChild<QFrame*>(QStringLiteral("Sidebar"));
+        auto* listPane = panel.findChild<QFrame*>(QStringLiteral("ListPane"));
+        auto* detailPane = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        auto* controls = panel.findChild<WindowControls*>();
+        QVERIFY(rail && navigationPane && listPane && detailPane && controls);
+        QVERIFY(panel.windowFlags() & Qt::FramelessWindowHint);
+        QVERIFY(panel.windowFlags() & Qt::NoDropShadowWindowHint);
+        QVERIFY(!panel.findChild<QStatusBar*>());
+        QVERIFY(!panel.findChild<QPushButton*>(QStringLiteral("QuickAddButton"))->isVisible());
+        QVERIFY(!panel.findChild<QLineEdit*>(QStringLiteral("TaskSearch"))->isVisible());
+        QCOMPARE(rail->width(), 52);
+        QCOMPARE(rectIn(rail, &panel).left(), 0);
+        QCOMPARE(rectIn(navigationPane, &panel).left(), rail->width());
+        QCOMPARE(rectIn(listPane, &panel).left(), rectIn(navigationPane, &panel).right() + 1);
+        QVERIFY(!detailPane->isVisible());
+        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right());
+        QCOMPARE(rectIn(controls, &panel).top(), 0);
+        QCOMPARE(rectIn(controls, &panel).right(), panel.rect().right());
+
+        const QString id = m_store->createTask(QStringLiteral("展开第四列"));
+        panel.showTask(id);
+        QTRY_VERIFY(detailPane->isVisible());
+        QCOMPARE(rectIn(detailPane, &panel).left(), rectIn(listPane, &panel).right() + 1);
+        QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right());
+        auto* info = detailPane->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
+        QVERIFY(info);
+        QVERIFY(rectIn(info, &panel).right() < rectIn(controls, &panel).left());
+        QTest::mouseClick(detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose")), Qt::LeftButton);
+        QTRY_VERIFY(!detailPane->isVisible());
+        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right());
+        panel.showTask(id);
+        QTRY_VERIFY(detailPane->isVisible());
+        QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
+        QTRY_VERIFY(panel.isMaximized());
+        QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
+        QTRY_VERIFY(!panel.isMaximized());
+    }
+
     void quickAddAndDetailPersistWithoutLosingPresentation() {
         TaskPanel panel(m_store.get());
         panel.show();
@@ -1079,7 +1124,7 @@ private slots:
         for (QPushButton* button : header->findChildren<QPushButton*>())
             if (button->isVisible()) QCOMPARE(button, date);
         for (QToolButton* button : header->findChildren<QToolButton*>())
-            if (button->isVisible() && button != info)
+            if (button->isVisible() && button != info && button->objectName() != QLatin1String("DetailClose"))
                 QVERIFY(button->accessibleName().contains(QStringLiteral("提醒")) || button->toolTip().contains(QStringLiteral("提醒")));
         for (QLineEdit* field : header->findChildren<QLineEdit*>()) QVERIFY(!field->isVisible());
         for (QComboBox* field : header->findChildren<QComboBox*>()) QVERIFY(!field->isVisible());
@@ -1516,6 +1561,15 @@ private slots:
         if (!dir.isEmpty()) {
             QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
+            panel.showTask();
+            QTest::qWait(30);
+            auto* closeDetail = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));
+            QVERIFY(closeDetail);
+            QTest::mouseClick(closeDetail, Qt::LeftButton);
+            QTRY_VERIFY(!panel.findChild<QFrame*>(QStringLiteral("DetailFrame"))->isVisible());
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-three-columns.png")));
+            panel.showTask(id);
+            QTest::qWait(30);
             QVERIFY(detail->grab().save(dir + QStringLiteral("/task-detail.png")));
             NoteWidget note(m_store->entity(id)); note.setStore(m_store.get());
             note.show();

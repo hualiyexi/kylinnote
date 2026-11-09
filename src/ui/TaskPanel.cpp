@@ -17,6 +17,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QScreen>
@@ -38,7 +39,13 @@
 #include "TaskDelegate.h"
 #include "TaskDetailWidget.h"
 #include "TaskListModel.h"
+#include "WindowChrome.h"
 #include "design/ThemeManager.h"
+#include "design/TypeSystem.h"
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <windowsx.h>
+#endif
 
 namespace kl {
 namespace {
@@ -47,12 +54,6 @@ const int FolderIdRole = Qt::UserRole + 6;
 QPixmap brandMark(int size) {
     return AppIcons::icon(IconId::TaskList, ds::ColorToken::Primary, size)
         .pixmap(size, size);
-}
-
-QPixmap kindIcon(EntityKind kind) {
-    return AppIcons::icon(kind == EntityKind::Note ? IconId::Note : IconId::TaskList,
-                          ds::ColorToken::TextSecondary, 24)
-        .pixmap(24, 24);
 }
 
 bool supportsTime(ViewScope scope) {
@@ -91,7 +92,11 @@ IconId scopeIcon(ViewScope scope) {
 
 TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m_store(store) {
     setObjectName(QStringLiteral("TaskPanel"));
-    setWindowTitle(QStringLiteral("麒麟清单 · 我的待办"));
+    setWindowTitle(QStringLiteral("麒麟清单"));
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+    setAttribute(Qt::WA_StyledBackground, true);
+    if (auto* oldStatusBar = findChild<QStatusBar*>(QString(), Qt::FindDirectChildrenOnly))
+        delete oldStatusBar;
     setMinimumSize(960, 620); resize(1240, 820);
     buildUi();
     connect(m_detail, &TaskDetailWidget::internalLinkRequested, this, &TaskPanel::showTask);
@@ -114,176 +119,327 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
     connect(store, &TaskStore::errorOccurred, this, &TaskPanel::showError);
     auto* clock = new QTimer(this); clock->setInterval(60000);
     connect(clock, &QTimer::timeout, m_model, &TaskListModel::refresh); clock->start();
-    // 主题切换时刷新品牌图标和导航
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
+        refreshWorkspaceIcons();
         rebuildNavigation();
     });
 }
 
 void TaskPanel::buildUi() {
-    auto* central = new QWidget(this); setCentralWidget(central);
-    auto* root = new QVBoxLayout(central); root->setContentsMargins(0, 0, 0, 0); root->setSpacing(0);
+    auto* central = new QWidget(this);
+    central->setObjectName(QStringLiteral("WorkspaceRoot"));
+    setCentralWidget(central);
+    auto* root = new QVBoxLayout(central);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    // 错误横幅
-    auto* errorHost = new QWidget(this); auto* errorLayout = new QHBoxLayout(errorHost);
-    errorLayout->setContentsMargins(24, 12, 24, 0);
-    m_error = new QLabel(errorHost); m_error->setTextFormat(Qt::PlainText);
+    // 错误只在发生时占位，不再使用常驻状态栏。
+    auto* errorHost = new QWidget(central);
+    auto* errorLayout = new QHBoxLayout(errorHost);
+    errorLayout->setContentsMargins(72, 8, 12, 8);
+    m_error = new QLabel(errorHost);
+    m_error->setTextFormat(Qt::PlainText);
     m_error->setObjectName(QStringLiteral("ErrorBanner"));
-    m_error->setWordWrap(true); m_error->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    errorLayout->addWidget(m_error); errorHost->hide(); root->addWidget(errorHost);
+    m_error->setWordWrap(true);
+    m_error->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    errorLayout->addWidget(m_error);
+    errorHost->hide();
+    root->addWidget(errorHost);
 
-    auto* body = new QHBoxLayout; body->setContentsMargins(0, 0, 0, 0); body->setSpacing(0);
+    auto* body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(0);
     root->addLayout(body, 1);
 
-    // ========== R3: 左侧导航与组织 ==========
-    auto* sidebar = new QFrame(this); sidebar->setObjectName(QStringLiteral("Sidebar"));
-    sidebar->setFixedWidth(AppStyle::metric(AppStyle::Metric::SidebarWidth));
-    auto* side = new QVBoxLayout(sidebar);
-    side->setContentsMargins(8, 14, 8, 8); side->setSpacing(2);
+    // 第一列：窄功能按钮列。顶部头像区域同时是窗口拖动区。
+    m_activityRail = new QFrame(central);
+    m_activityRail->setObjectName(QStringLiteral("ActivityRail"));
+    m_activityRail->setFixedWidth(52);
+    auto* rail = new QVBoxLayout(m_activityRail);
+    rail->setContentsMargins(6, 8, 6, 10);
+    rail->setSpacing(8);
+    auto* account = new QToolButton(m_activityRail);
+    account->setObjectName(QStringLiteral("AccountButton"));
+    account->setFixedSize(36, 36);
+    account->setIconSize(QSize(30, 30));
+    account->setToolTip(QStringLiteral("本机工作区"));
+    account->setAccessibleName(QStringLiteral("本机工作区"));
+    account->setCursor(Qt::PointingHandCursor);
+    connect(account, &QToolButton::clicked, this, &TaskPanel::backupMenu);
+    rail->addWidget(account, 0, Qt::AlignHCenter);
+    rail->addSpacing(12);
+    const auto railButton = [this, rail](QToolButton*& target, const QString& name,
+                                        IconId icon, const QString& tooltip) {
+        target = new QToolButton(m_activityRail);
+        target->setObjectName(name);
+        target->setFixedSize(40, 40);
+        target->setIconSize(QSize(20, 20));
+        target->setAutoRaise(true);
+        target->setToolTip(tooltip);
+        target->setAccessibleName(tooltip);
+        target->setCursor(Qt::PointingHandCursor);
+        rail->addWidget(target, 0, Qt::AlignHCenter);
+    };
+    railButton(m_railTasks, QStringLiteral("RailTasks"), IconId::Checklist, QStringLiteral("任务"));
+    m_railTasks->setCheckable(true);
+    m_railTasks->setChecked(true);
+    connect(m_railTasks, &QToolButton::clicked, this, [this]() {
+        selectNavigation(ViewScope::AllLists);
+        focusQuickAdd();
+    });
+    railButton(m_railSearch, QStringLiteral("RailSearch"), IconId::Search, QStringLiteral("搜索"));
+    connect(m_railSearch, &QToolButton::clicked, this, [this]() {
+        m_search->setVisible(true);
+        m_search->setFocus();
+        m_search->selectAll();
+    });
+    auto* railNotes = new QToolButton(m_activityRail);
+    railNotes->setObjectName(QStringLiteral("RailNotes"));
+    railNotes->setFixedSize(40, 40);
+    railNotes->setIconSize(QSize(20, 20));
+    railNotes->setAutoRaise(true);
+    railNotes->setToolTip(QStringLiteral("笔记清单"));
+    railNotes->setAccessibleName(QStringLiteral("笔记清单"));
+    connect(railNotes, &QToolButton::clicked, this, [this]() {
+        for (const TaskList& list : m_store->lists()) {
+            if (list.kind == EntityKind::Note) {
+                selectNavigation(ViewScope::List, list.id);
+                return;
+            }
+        }
+        showNotice(QStringLiteral("可在文件夹菜单中新建笔记清单。"));
+    });
+    rail->addWidget(railNotes, 0, Qt::AlignHCenter);
+    rail->addStretch(1);
+    auto* sync = new QToolButton(m_activityRail);
+    sync->setObjectName(QStringLiteral("RailSync"));
+    sync->setFixedSize(40, 40);
+    sync->setAutoRaise(true);
+    sync->setToolTip(QStringLiteral("数据仅保存在本机"));
+    sync->setAccessibleName(QStringLiteral("本机数据说明"));
+    connect(sync, &QToolButton::clicked, this, [this]() {
+        showNotice(QStringLiteral("任务、笔记与附件仅保存在本机，无需联网。"));
+    });
+    rail->addWidget(sync, 0, Qt::AlignHCenter);
+    railButton(m_railSettings, QStringLiteral("RailSettings"), IconId::Settings, QStringLiteral("备份与设置"));
+    connect(m_railSettings, &QToolButton::clicked, this, &TaskPanel::backupMenu);
+    body->addWidget(m_activityRail);
 
-    // 品牌行
-    auto* brandRow = new QHBoxLayout; brandRow->setContentsMargins(8, 4, 8, 14); brandRow->setSpacing(8);
-    auto* mark = new QLabel(sidebar); mark->setFixedSize(22, 22); mark->setPixmap(brandMark(22));
-    brandRow->addWidget(mark);
-    auto* brand = new QLabel(QStringLiteral("麒麟清单"), sidebar);
-    brand->setFont(AppStyle::font(AppStyle::Font::Brand));
-    brandRow->addWidget(brand); brandRow->addStretch(1); side->addLayout(brandRow);
+    // 第二列：筛选与组织。顶部没有独立标题条。
+    m_sidebar = new QFrame(central);
+    m_sidebar->setObjectName(QStringLiteral("Sidebar"));
+    m_sidebar->setFixedWidth(AppStyle::metric(AppStyle::Metric::SidebarWidth));
+    auto* side = new QVBoxLayout(m_sidebar);
+    side->setContentsMargins(8, 0, 8, 8);
+    side->setSpacing(2);
+    auto* sideTop = new QHBoxLayout;
+    sideTop->setContentsMargins(0, 0, 0, 0);
+    auto* sideDrag = new WindowDragArea(m_sidebar);
+    sideDrag->setFixedHeight(48);
+    sideTop->addWidget(sideDrag, 1);
+    auto* addList = new QToolButton(m_sidebar);
+    addList->setObjectName(QStringLiteral("GroupMenuButton"));
+    addList->setFixedSize(32, 32);
+    addList->setToolTip(QStringLiteral("新建文件夹或清单"));
+    addList->setAccessibleName(QStringLiteral("文件夹与清单管理"));
+    addList->setAutoRaise(true);
+    connect(addList, &QToolButton::clicked, this, &TaskPanel::groupMenu);
+    sideTop->addWidget(addList, 0, Qt::AlignVCenter);
+    side->addLayout(sideTop);
 
-    // 导航列表
-    m_navigation = new QListWidget(sidebar); m_navigation->setObjectName(QStringLiteral("Navigation"));
-    m_navigation->setItemDelegate(new NavigationDelegate(m_navigation)); m_navigation->setMouseTracking(true);
+    m_navigation = new QListWidget(m_sidebar);
+    m_navigation->setObjectName(QStringLiteral("Navigation"));
+    m_navigation->setItemDelegate(new NavigationDelegate(m_navigation));
+    m_navigation->setMouseTracking(true);
     m_navigation->viewport()->setAttribute(Qt::WA_Hover, true);
     m_navigation->setAccessibleName(QStringLiteral("任务导航"));
     m_navigation->setContextMenuPolicy(Qt::CustomContextMenu);
     side->addWidget(m_navigation, 1);
-
-    // R3: 底部按钮改为图标+溢出菜单
-    auto* bottomRow = new QHBoxLayout; bottomRow->setSpacing(4);
-    auto* groups = new QToolButton(sidebar);
-    groups->setIcon(AppIcons::icon(IconId::Folder, 18));
-    groups->setToolTip(QStringLiteral("文件夹与清单"));
-    groups->setAccessibleName(QStringLiteral("文件夹与清单管理"));
-    groups->setObjectName(QStringLiteral("GroupMenuButton"));
-    groups->setAutoRaise(true); groups->setCursor(Qt::PointingHandCursor);
-    groups->setFixedSize(36, 36);
-    connect(groups, &QToolButton::clicked, this, &TaskPanel::groupMenu);
-    bottomRow->addWidget(groups);
-
-    auto* backup = new QToolButton(sidebar);
-    backup->setIcon(AppIcons::icon(IconId::Settings, 18));
+    auto* backup = new QToolButton(m_sidebar);
+    backup->setObjectName(QStringLiteral("BackupMenuButton"));
+    backup->setFixedSize(32, 32);
     backup->setToolTip(QStringLiteral("备份与设置"));
     backup->setAccessibleName(QStringLiteral("备份与设置"));
-    backup->setObjectName(QStringLiteral("BackupMenuButton"));
-    backup->setAutoRaise(true); backup->setCursor(Qt::PointingHandCursor);
-    backup->setFixedSize(36, 36);
+    backup->setAutoRaise(true);
+    backup->hide();
     connect(backup, &QToolButton::clicked, this, &TaskPanel::backupMenu);
-    bottomRow->addWidget(backup);
-    bottomRow->addStretch(1);
-    side->addLayout(bottomRow);
+    side->addWidget(backup, 0, Qt::AlignLeft);
+    body->addWidget(m_sidebar);
 
-    body->addWidget(sidebar);
-
-    // ========== 中间列表区 ==========
-    m_splitter = new QSplitter(Qt::Horizontal, this);
+    // 第三列与可选第四列共用分隔器；详情隐藏时清单自然占满余宽。
+    m_splitter = new QSplitter(Qt::Horizontal, central);
     m_splitter->setObjectName(QStringLiteral("WorkspaceSplitter"));
     m_splitter->setHandleWidth(1);
     body->addWidget(m_splitter, 1);
-    auto* middle = new QFrame(this); middle->setObjectName(QStringLiteral("ListPane"));
-    middle->setMinimumWidth(300);
-    auto* center = new QVBoxLayout(middle);
-    const int margin = AppStyle::metric(AppStyle::Metric::ContentMargin);
-    center->setContentsMargins(margin, 16, margin, 8); center->setSpacing(10);
+    m_middle = new QFrame(m_splitter);
+    m_middle->setObjectName(QStringLiteral("ListPane"));
+    m_middle->setMinimumWidth(320);
+    auto* center = new QVBoxLayout(m_middle);
+    center->setContentsMargins(0, 0, 0, 0);
+    center->setSpacing(0);
 
-    // R4: 列表头部 —— 标题 + 计数 + 视图操作收进 overflow
-    auto* header = new QHBoxLayout; header->setSpacing(10);
-    m_heading = new QLabel(QStringLiteral("全部待办"), middle);
-    m_heading->setFont(AppStyle::font(AppStyle::Font::Heading));
-    header->addWidget(m_heading, 0, Qt::AlignBottom);
-    m_count = new QLabel(middle); m_count->setProperty("muted", true);
+    auto* listHeader = new QFrame(m_middle);
+    listHeader->setObjectName(QStringLiteral("ListHeader"));
+    listHeader->setFixedHeight(64);
+    auto* header = new QHBoxLayout(listHeader);
+    header->setContentsMargins(22, 0, 10, 0);
+    header->setSpacing(4);
+    auto* headingIcon = new QLabel(listHeader);
+    headingIcon->setObjectName(QStringLiteral("ListHeadingIcon"));
+    headingIcon->setFixedSize(20, 24);
+    header->addWidget(headingIcon, 0, Qt::AlignVCenter);
+    m_heading = new QLabel(QStringLiteral("全部待办"), listHeader);
+    m_heading->setFont(ds::qfont(ds::FontScene::Section));
+    header->addWidget(m_heading, 0, Qt::AlignVCenter);
+    m_count = new QLabel(listHeader);
+    m_count->setObjectName(QStringLiteral("ListCount"));
+    m_count->setProperty("muted", true);
     m_count->setFont(AppStyle::font(AppStyle::Font::Small));
-    m_count->setContentsMargins(0, 0, 0, 5);
-    header->addWidget(m_count, 0, Qt::AlignBottom); header->addStretch(1);
-
-    // R4: 视图切换收进 overflow 菜单（考据 m04：工作区更多只管「怎么看」）
-    m_renderer = new QComboBox(middle); m_renderer->setObjectName(QStringLiteral("ViewRenderer"));
+    header->addWidget(m_count, 0, Qt::AlignVCenter);
+    header->addStretch(1);
+    m_renderer = new QComboBox(listHeader);
+    m_renderer->setObjectName(QStringLiteral("ViewRenderer"));
     m_renderer->setAccessibleName(QStringLiteral("视图呈现方式"));
     m_renderer->addItem(QStringLiteral("清单视图"), static_cast<int>(ViewRenderer::List));
     m_renderer->addItem(QStringLiteral("时间视图"), static_cast<int>(ViewRenderer::Time));
     m_renderer->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    m_renderer->setMinimumWidth(112); m_renderer->setFixedHeight(32);
-    header->addWidget(m_renderer, 0, Qt::AlignVCenter);
-
-    // 工作区更多按钮（考据 m04）
-    m_workspaceMore = new QToolButton(middle);
-    m_workspaceMore->setIcon(AppIcons::icon(IconId::More, 18));
+    m_renderer->setFixedHeight(32);
+    m_renderer->hide();
+    header->addWidget(m_renderer);
+    auto* sort = new QToolButton(listHeader);
+    sort->setObjectName(QStringLiteral("ListSort"));
+    sort->setFixedSize(32, 32);
+    sort->setAutoRaise(true);
+    sort->setToolTip(QStringLiteral("排序与视图"));
+    sort->setAccessibleName(QStringLiteral("排序与视图"));
+    connect(sort, &QToolButton::clicked, this, &TaskPanel::workspaceMenu);
+    header->addWidget(sort);
+    m_workspaceMore = new QToolButton(listHeader);
     m_workspaceMore->setToolTip(QStringLiteral("视图选项"));
     m_workspaceMore->setAccessibleName(QStringLiteral("工作区视图选项"));
     m_workspaceMore->setObjectName(QStringLiteral("WorkspaceMore"));
-    m_workspaceMore->setAutoRaise(true); m_workspaceMore->setFixedSize(32, 32);
+    m_workspaceMore->setAutoRaise(true);
+    m_workspaceMore->setFixedSize(32, 32);
     m_workspaceMore->setCursor(Qt::PointingHandCursor);
     connect(m_workspaceMore, &QToolButton::clicked, this, &TaskPanel::workspaceMenu);
-    header->addWidget(m_workspaceMore, 0, Qt::AlignVCenter);
-    center->addLayout(header);
+    header->addWidget(m_workspaceMore);
+    center->addWidget(listHeader);
 
-    // R4: 搜索框
-    m_search = new QLineEdit(middle); m_search->setObjectName(QStringLiteral("TaskSearch"));
-    m_search->setPlaceholderText(QStringLiteral("搜索标题、说明、标签和清单条目  Ctrl+F"));
+    auto* content = new QVBoxLayout;
+    content->setContentsMargins(22, 8, 22, 12);
+    content->setSpacing(12);
+    center->addLayout(content, 1);
+
+    // 快速添加是一整条轻边框输入行，不再附加搜索框和独立添加按钮。
+    auto* quickFrame = new QFrame(m_middle);
+    quickFrame->setObjectName(QStringLiteral("QuickAddFrame"));
+    quickFrame->setFixedHeight(40);
+    auto* quick = new QHBoxLayout(quickFrame);
+    quick->setContentsMargins(12, 0, 8, 0);
+    quick->setSpacing(8);
+    m_quickKind = new QLabel(quickFrame);
+    m_quickKind->setFixedSize(20, 24);
+    quick->addWidget(m_quickKind);
+    m_quick = new QLineEdit(quickFrame);
+    m_quick->setObjectName(QStringLiteral("QuickAdd"));
+    m_quick->setMaxLength(500);
+    m_quick->setFixedHeight(36);
+    quick->addWidget(m_quick, 1);
+    m_quickDate = new QToolButton(quickFrame);
+    m_quickDate->setObjectName(QStringLiteral("QuickAddDate"));
+    m_quickDate->setToolTip(QStringLiteral("新任务默认安排到今天"));
+    m_quickDate->setAccessibleName(QStringLiteral("切换新任务默认日期"));
+    m_quickDate->setCheckable(true);
+    m_quickDate->setAutoRaise(true);
+    m_quickDate->setFixedSize(68, 30);
+    quick->addWidget(m_quickDate);
+    auto* add = new QPushButton(QStringLiteral("添加"), quickFrame);
+    add->setObjectName(QStringLiteral("QuickAddButton"));
+    add->hide();
+    connect(add, &QPushButton::clicked, this, &TaskPanel::createTask);
+    connect(m_quick, &QLineEdit::returnPressed, this, &TaskPanel::createTask);
+    content->addWidget(quickFrame);
+
+    m_search = new QLineEdit(m_middle);
+    m_search->setObjectName(QStringLiteral("TaskSearch"));
+    m_search->setPlaceholderText(QStringLiteral("搜索标题、说明、标签和清单条目"));
     m_search->setClearButtonEnabled(true);
     m_search->setFixedHeight(AppStyle::metric(AppStyle::Metric::ControlHeight));
     m_search->setAccessibleName(QStringLiteral("搜索任务与笔记"));
-    center->addWidget(m_search);
+    m_search->hide();
+    content->addWidget(m_search);
 
-    // R4: 快速添加（固定入口，明确落点）
-    auto* quick = new QHBoxLayout; quick->setSpacing(8);
-    m_quickKind = new QLabel(middle); m_quickKind->setFixedSize(24, 24); quick->addWidget(m_quickKind);
-    m_quick = new QLineEdit(middle); m_quick->setObjectName(QStringLiteral("QuickAdd"));
-    m_quick->setMaxLength(500);
-    m_quick->setFixedHeight(AppStyle::metric(AppStyle::Metric::ControlHeight));
-    auto* add = new QPushButton(QStringLiteral("添加"), middle); add->setProperty("primary", true);
-    add->setObjectName(QStringLiteral("QuickAddButton")); add->setFixedHeight(32); add->setMinimumWidth(68);
-    add->setCursor(Qt::PointingHandCursor);
-    quick->addWidget(m_quick, 1); quick->addWidget(add); center->addLayout(quick);
-    connect(add, &QPushButton::clicked, this, &TaskPanel::createTask);
-    connect(m_quick, &QLineEdit::returnPressed, this, &TaskPanel::createTask);
-
-    // 任务列表
     m_model = new TaskListModel(m_store, this);
-    m_list = new QListView(middle); m_list->setObjectName(QStringLiteral("TaskList"));
+    m_list = new QListView(m_middle);
+    m_list->setObjectName(QStringLiteral("TaskList"));
     m_list->setModel(m_model);
-    m_list->setItemDelegate(new TaskDelegate(m_list)); m_list->setMouseTracking(true);
-    m_list->viewport()->setAttribute(Qt::WA_Hover, true); m_list->setUniformItemSizes(true);
+    m_list->setItemDelegate(new TaskDelegate(m_list));
+    m_list->setMouseTracking(true);
+    m_list->viewport()->setAttribute(Qt::WA_Hover, true);
+    m_list->setUniformItemSizes(true);
     m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->setAccessibleName(QStringLiteral("任务与笔记列表"));
-    m_empty = new QLabel(QStringLiteral("这里还没有内容\n在上方输入一件要做的事或一条笔记。"), middle);
-    m_empty->setProperty("muted", true); m_empty->setWordWrap(true);
+    m_empty = new QLabel(QStringLiteral("这里还没有内容\n在上方输入一件要做的事或一条笔记。"), m_middle);
+    m_empty->setProperty("muted", true);
+    m_empty->setWordWrap(true);
     m_empty->setAlignment(Qt::AlignCenter);
-    m_listStack = new QStackedWidget(middle);
-    m_listStack->addWidget(m_list); m_listStack->addWidget(m_empty);
-    center->addWidget(m_listStack, 1); m_splitter->addWidget(middle);
+    m_listStack = new QStackedWidget(m_middle);
+    m_listStack->addWidget(m_list);
+    m_listStack->addWidget(m_empty);
+    content->addWidget(m_listStack, 1);
+    m_splitter->addWidget(m_middle);
 
-    // ========== 右侧详情区 ==========
-    auto* detailFrame = new QFrame(this); detailFrame->setObjectName(QStringLiteral("DetailFrame"));
-    detailFrame->setMinimumWidth(370);
-    auto* detailLayout = new QVBoxLayout(detailFrame); detailLayout->setContentsMargins(0, 0, 0, 0);
-    m_detail = new TaskDetailWidget(m_store, detailFrame); detailLayout->addWidget(m_detail);
-    m_splitter->addWidget(detailFrame); m_splitter->setSizes({560, 440});
-    m_splitter->setStretchFactor(0, 1); m_splitter->setStretchFactor(1, 1);
+    m_detailFrame = new QFrame(m_splitter);
+    m_detailFrame->setObjectName(QStringLiteral("DetailFrame"));
+    m_detailFrame->setMinimumWidth(370);
+    auto* detailLayout = new QVBoxLayout(m_detailFrame);
+    detailLayout->setContentsMargins(0, 0, 0, 0);
+    m_detail = new TaskDetailWidget(m_store, m_detailFrame);
+    detailLayout->addWidget(m_detail);
+    m_splitter->addWidget(m_detailFrame);
+    m_splitter->setSizes({560, 440});
+    m_splitter->setStretchFactor(0, 1);
+    m_splitter->setStretchFactor(1, 1);
     m_splitter->setChildrenCollapsible(false);
+    m_splitter->setCollapsible(1, true);
+
+    // 窗口按钮悬浮在最右列顶部；三列时属于清单，四列时属于详情。
+    m_windowControls = new WindowControls(this);
+    m_windowControls->setAttribute(Qt::WA_StyledBackground, true);
+    m_windowControls->raise();
     connect(m_detail, &TaskDetailWidget::focusModeRequested, this,
-            [this, sidebar, middle, normalSizes = QList<int>()](bool enabled) mutable {
-        if (enabled) normalSizes = m_splitter->sizes();
-        sidebar->setVisible(!enabled);
-        middle->setVisible(!enabled);
-        if (!enabled && !normalSizes.isEmpty()) m_splitter->setSizes(normalSizes);
+            [this](bool enabled) {
+        if (enabled) {
+            m_activityRail->hide();
+            m_sidebar->hide();
+            m_middle->hide();
+            m_detailFrame->show();
+            if (m_windowControls) m_windowControls->raise();
+        } else {
+            m_activityRail->show();
+            m_sidebar->show();
+            m_middle->show();
+            setDetailVisible(!m_selectedId.isEmpty());
+        }
+    });
+    connect(m_detail, &TaskDetailWidget::taskRemoved, this, [this]() {
+        m_selectedId.clear();
+        setDetailVisible(false);
+    });
+    connect(m_detail, &TaskDetailWidget::closeRequested, this, [this]() {
+        m_detail->setTask(QString());
+        m_selectedId.clear();
+        m_list->clearSelection();
+        m_list->setCurrentIndex(QModelIndex());
+        setDetailVisible(false);
     });
 
-    // ========== 信号连接 ==========
     connect(m_model, &QAbstractItemModel::modelAboutToBeReset, this, [this]() { m_resetting = true; });
     connect(m_model, &QAbstractItemModel::modelReset, this, [this]() {
         const QModelIndex index = m_model->indexForTask(m_selectedId);
         if (index.isValid()) m_list->setCurrentIndex(index);
-        m_count->setText(QStringLiteral("%1 项").arg(m_model->entityCount()));
+        m_count->setText(m_model->entityCount() > 0 ? QString::number(m_model->entityCount()) : QString());
         m_listStack->setCurrentWidget(m_model->entityCount() == 0
             ? static_cast<QWidget*>(m_empty) : static_cast<QWidget*>(m_list));
         m_resetting = false;
@@ -292,8 +448,10 @@ void TaskPanel::buildUi() {
             [this](const QModelIndex& current) {
                 if (m_resetting) return;
                 const QString id = m_model->entityId(current);
-                if (m_detail->setTask(id)) m_selectedId = id;
-                else {
+                if (m_detail->setTask(id)) {
+                    m_selectedId = id;
+                    setDetailVisible(!id.isEmpty());
+                } else {
                     const QSignalBlocker blocker(m_list->selectionModel());
                     m_list->setCurrentIndex(m_model->indexForTask(m_selectedId));
                 }
@@ -305,29 +463,46 @@ void TaskPanel::buildUi() {
     connect(m_navigation, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_rebuilding || row < 0) return;
         if (!m_detail->flush()) { rebuildNavigation(); return; }
-        auto* item = m_navigation->item(row); if (!item) return;
-        if (item->data(NavigationDelegate::SectionRole).toBool()) return;
+        auto* item = m_navigation->item(row);
+        if (!item || item->data(NavigationDelegate::SectionRole).toBool()) return;
         m_filter.scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
         m_filter.listId = item->data(Qt::UserRole + 1).toString();
         if (!supportsTime(m_filter.scope)) {
             m_filter.renderer = ViewRenderer::List;
-            const QSignalBlocker blocker(m_renderer); m_renderer->setCurrentIndex(0);
+            const QSignalBlocker blocker(m_renderer);
+            m_renderer->setCurrentIndex(0);
         }
-        m_heading->setText(item->data(Qt::UserRole + 2).toString());
+        m_heading->setText(item->data(Qt::UserRole + 2).toString().trimmed());
         applyFilter();
     });
 
-    // 快捷键
     auto* newShortcut = new QShortcut(QKeySequence::New, this);
     connect(newShortcut, &QShortcut::activated, this, &TaskPanel::focusQuickAdd);
     auto* findShortcut = new QShortcut(QKeySequence::Find, this);
-    connect(findShortcut, &QShortcut::activated, m_search, QOverload<>::of(&QWidget::setFocus));
+    connect(findShortcut, &QShortcut::activated, m_railSearch, &QToolButton::click);
     auto* saveShortcut = new QShortcut(QKeySequence::Save, this);
     connect(saveShortcut, &QShortcut::activated, m_detail, &TaskDetailWidget::flush);
+    auto* closeDetail = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    closeDetail->setContext(Qt::WindowShortcut);
+    connect(closeDetail, &QShortcut::activated, this, [this]() {
+        if (m_search->hasFocus() && !m_search->text().isEmpty()) {
+            m_search->clear();
+            return;
+        }
+        if (m_detail->entityId().isEmpty() || !m_detail->flush()) return;
+        m_detail->setTask(QString());
+        m_selectedId.clear();
+        m_list->clearSelection();
+        m_list->setCurrentIndex(QModelIndex());
+        setDetailVisible(false);
+    });
 
-    statusBar()->setSizeGripEnabled(false);
-    statusBar()->setFont(AppStyle::font(AppStyle::Font::Small));
-    statusBar()->showMessage(QStringLiteral("本机保存 · 无需联网"));
+    m_notice = new QLabel(central);
+    m_notice->setObjectName(QStringLiteral("WorkspaceNotice"));
+    m_notice->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_notice->hide();
+    refreshWorkspaceIcons();
+    setDetailVisible(false);
     applyFilter();
 }
 
@@ -366,23 +541,14 @@ void TaskPanel::rebuildNavigation() {
         item->setToolTip(QStringLiteral("文件夹：%1（右键管理）").arg(row.name));
     };
 
-    // R3: 智能列表分区
-    section(QStringLiteral("智能列表"));
+    // R3: 智能列表直接置顶，不额外占用分区标题行。
     add(QStringLiteral("全部待办"), ViewScope::AllLists);
     add(QStringLiteral("今天"), ViewScope::Today);
     add(QStringLiteral("七天内"), ViewScope::Next7Days);
-    add(QStringLiteral("已逾期"), ViewScope::Overdue);
-
-    // R3: 历史与回收站分区（考据：历史与恢复操作不混在常规清单里）
-    section(QStringLiteral("历史"));
-    add(QStringLiteral("已完成"), ViewScope::Completed);
-    add(QStringLiteral("已放弃"), ViewScope::Abandoned);
-    add(QStringLiteral("回收站"), ViewScope::Trash);
-
-    // R3: 文件夹与清单分区（单层文件夹 + 可平铺清单 + 清单 kind）
-    section(QStringLiteral("文件夹与清单"));
     for (const TaskList& list : m_store->lists())
         if (list.inbox) add(QStringLiteral("收集箱"), ViewScope::List, list.id);
+
+    section(QStringLiteral("清单"));
     for (const TaskList& list : m_store->lists())
         if (!list.inbox && list.folderId.isEmpty())
             add(list.name, ViewScope::List, list.id);
@@ -393,8 +559,14 @@ void TaskPanel::rebuildNavigation() {
                 add(QStringLiteral("    ") + list.name, ViewScope::List, list.id);
     }
 
+    section(QStringLiteral("历史"));
+    add(QStringLiteral("已完成"), ViewScope::Completed);
+    add(QStringLiteral("已放弃"), ViewScope::Abandoned);
+    add(QStringLiteral("已逾期"), ViewScope::Overdue);
+    add(QStringLiteral("回收站"), ViewScope::Trash);
+
     m_navigation->setCurrentRow(selected); m_rebuilding = false;
-    m_count->setText(QStringLiteral("%1 项").arg(m_model->entityCount()));
+    m_count->setText(m_model->entityCount() > 0 ? QString::number(m_model->entityCount()) : QString());
     m_listStack->setCurrentWidget(m_model->entityCount() == 0
         ? static_cast<QWidget*>(m_empty) : static_cast<QWidget*>(m_list));
 }
@@ -418,10 +590,10 @@ void TaskPanel::updateQuickAddKind() {
     if (m_filter.scope == ViewScope::List)
         for (const TaskList& list : m_store->lists())
             if (list.id == m_filter.listId) kind = list.kind;
-    m_quickKind->setPixmap(kindIcon(kind));
+    m_quickKind->setPixmap(AppIcons::icon(IconId::Add, ds::ColorToken::TextTertiary, 18).pixmap(18, 18));
     m_quick->setPlaceholderText(kind == EntityKind::Note
-        ? QStringLiteral("添加一条笔记，按回车确认")
-        : QStringLiteral("添加一项待办，按回车确认"));
+        ? QStringLiteral("添加笔记")
+        : QStringLiteral("添加任务"));
     m_quick->setAccessibleName(kind == EntityKind::Note
         ? QStringLiteral("快速添加笔记") : QStringLiteral("快速添加任务"));
 }
@@ -440,6 +612,11 @@ void TaskPanel::createTask() {
                                       : m_store->createTask(title, m_filter.listId);
     } else id = m_store->createTask(title);
     if (id.isEmpty()) return;
+    if (m_quickDate->isChecked()) {
+        Entity created = m_store->entity(id);
+        created.allDayDate = toAppTime(appNow()).date();
+        if (!m_store->saveTask(created)) return;
+    }
     m_quick->clear(); showTask(id); m_detail->focusTitle();
 }
 
@@ -463,8 +640,13 @@ void TaskPanel::showTask(QString id) {
         }
         m_selectedId = id; const auto index = m_model->indexForTask(id);
         m_list->setCurrentIndex(index); m_list->scrollTo(index); m_detail->setTask(id);
+        setDetailVisible(true);
     }
     showNormal(); raise(); activateWindow();
+    if (m_windowControls) {
+        updateWindowControlsPosition();
+        m_windowControls->raise();
+    }
 }
 
 void TaskPanel::focusQuickAdd() { showTask(); m_quick->setFocus(); }
@@ -479,12 +661,134 @@ void TaskPanel::resetAfterRestore() {
     { const QSignalBlocker blocker(m_renderer); m_renderer->setCurrentIndex(0); }
     m_detail->setTask(QString()); m_heading->setText(scopeLabel(ViewScope::AllLists));
     rebuildNavigation(); applyFilter();
-    statusBar()->showMessage(QStringLiteral("覆盖恢复完成"), 8000);
 }
 void TaskPanel::showError(const QString& message) {
     m_error->setText(message); m_error->show();
     if (QWidget* host = m_error->parentWidget()) host->show();
-    statusBar()->showMessage(message);
+}
+
+void TaskPanel::showNotice(const QString& message) {
+    m_notice->setText(message);
+    m_notice->adjustSize();
+    const int widthHint = qMin(460, qMax(240, m_notice->sizeHint().width() + 28));
+    m_notice->setFixedWidth(widthHint);
+    m_notice->adjustSize();
+    m_notice->move((width() - m_notice->width()) / 2, height() - m_notice->height() - 28);
+    m_notice->show();
+    m_notice->raise();
+    QTimer::singleShot(4500, m_notice, &QWidget::hide);
+}
+
+void TaskPanel::setDetailVisible(bool visible) {
+    if (!m_detailFrame) return;
+    m_detailFrame->setVisible(visible);
+    if (visible) {
+        const int detailWidth = qBound(370, m_splitter->sizes().value(1), qMax(370, m_splitter->width() - 320));
+        m_splitter->setSizes({qMax(320, m_splitter->width() - detailWidth - 1), detailWidth});
+        QTimer::singleShot(0, this, [this]() {
+            updateWindowControlsPosition();
+            if (m_windowControls) m_windowControls->raise();
+        });
+    } else {
+        m_splitter->setSizes({m_splitter->width(), 0});
+    }
+    if (m_windowControls) {
+        updateWindowControlsPosition();
+        m_windowControls->raise();
+    }
+}
+
+void TaskPanel::updateWindowControlsPosition() {
+    if (!m_windowControls) return;
+    m_windowControls->setGeometry(width() - m_windowControls->width(), 0,
+                                 m_windowControls->width(), m_windowControls->height());
+    if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
+        const int right = m_detailFrame->isVisible() ? m_windowControls->width() + 16 : 16;
+        if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
+            layout->setContentsMargins(20, 6, right, 6);
+            layout->invalidate();
+            layout->activate();
+        }
+    }
+}
+
+void TaskPanel::refreshWorkspaceIcons() {
+    if (auto* account = findChild<QToolButton*>(QStringLiteral("AccountButton")))
+        account->setIcon(brandMark(30));
+    if (m_railTasks) m_railTasks->setIcon(AppIcons::icon(IconId::Checklist, 20));
+    if (m_railSearch) m_railSearch->setIcon(AppIcons::icon(IconId::Search, 20));
+    if (m_railSettings) m_railSettings->setIcon(AppIcons::icon(IconId::Settings, 20));
+    if (auto* notes = findChild<QToolButton*>(QStringLiteral("RailNotes")))
+        notes->setIcon(AppIcons::icon(IconId::Note, 20));
+    if (auto* sync = findChild<QToolButton*>(QStringLiteral("RailSync")))
+        sync->setIcon(AppIcons::icon(IconId::Sync, 18));
+    if (auto* add = findChild<QToolButton*>(QStringLiteral("GroupMenuButton")))
+        add->setIcon(AppIcons::icon(IconId::Add, 18));
+    if (auto* backup = findChild<QToolButton*>(QStringLiteral("BackupMenuButton")))
+        backup->setIcon(AppIcons::icon(IconId::Settings, 18));
+    if (m_workspaceMore) m_workspaceMore->setIcon(AppIcons::icon(IconId::More, 18));
+    if (auto* sort = findChild<QToolButton*>(QStringLiteral("ListSort")))
+        sort->setIcon(AppIcons::icon(IconId::Sort, 18));
+    if (m_quickDate) {
+        m_quickDate->setIcon(AppIcons::icon(IconId::Calendar, 15));
+        m_quickDate->setText(QStringLiteral("今天"));
+        m_quickDate->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
+    if (auto* icon = findChild<QLabel*>(QStringLiteral("ListHeadingIcon")))
+        icon->setPixmap(AppIcons::icon(IconId::TaskList, ds::ColorToken::Text, 18).pixmap(18, 18));
+}
+
+void TaskPanel::selectNavigation(ViewScope scope, const QString& listId) {
+    for (int row = 0; row < m_navigation->count(); ++row) {
+        const auto* item = m_navigation->item(row);
+        if (item->data(NavigationDelegate::SectionRole).toBool()) continue;
+        if (static_cast<ViewScope>(item->data(Qt::UserRole).toInt()) == scope
+            && (scope != ViewScope::List || item->data(Qt::UserRole + 1).toString() == listId)) {
+            m_navigation->setCurrentRow(row);
+            return;
+        }
+    }
+}
+
+void TaskPanel::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    if (m_windowControls)
+        updateWindowControlsPosition();
+    if (m_notice && m_notice->isVisible())
+        m_notice->move((width() - m_notice->width()) / 2, height() - m_notice->height() - 28);
+}
+
+void TaskPanel::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && event->pos().y() < 48 && !isMaximized()) {
+        m_windowDragOffset = event->globalPos() - frameGeometry().topLeft();
+        m_windowDragging = true;
+        event->accept();
+        return;
+    }
+    QMainWindow::mousePressEvent(event);
+}
+
+void TaskPanel::mouseMoveEvent(QMouseEvent* event) {
+    if (m_windowDragging && (event->buttons() & Qt::LeftButton)) {
+        move(event->globalPos() - m_windowDragOffset);
+        event->accept();
+        return;
+    }
+    QMainWindow::mouseMoveEvent(event);
+}
+
+void TaskPanel::mouseReleaseEvent(QMouseEvent* event) {
+    m_windowDragging = false;
+    QMainWindow::mouseReleaseEvent(event);
+}
+
+void TaskPanel::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && event->pos().y() < 48) {
+        setWindowState(isMaximized() ? Qt::WindowNoState : Qt::WindowMaximized);
+        event->accept();
+        return;
+    }
+    QMainWindow::mouseDoubleClickEvent(event);
 }
 
 // ========== R6: 任务右键菜单（暂时保留现有逻辑，待 EntityCommands 集成） ==========
@@ -678,7 +982,7 @@ void TaskPanel::backupMenu() {
             QStringLiteral("KylinList-%1.klb").arg(toAppTime(appNow()).date().toString(Qt::ISODate)),
             QStringLiteral("麒麟清单备份（含附件） (*.klb)"));
         if (!path.isEmpty() && m_store->exportBackup(path))
-            statusBar()->showMessage(QStringLiteral("备份已保存：") + path, 10000);
+            showNotice(QStringLiteral("备份已保存：") + path);
     });
     auto* importAction = menu.addAction(AppIcons::icon(IconId::Restore, 16), QStringLiteral("导入备份…"));
     importAction->setObjectName(QStringLiteral("CmdImportBackup"));
@@ -781,6 +1085,48 @@ void TaskPanel::workspaceMenu() {
     // TODO: 接入显示设置
 
     menu.exec(QCursor::pos());
+}
+
+bool TaskPanel::nativeEvent(const QByteArray& eventType, void* message, long* result) {
+#ifdef Q_OS_WIN
+    if (eventType == QByteArrayLiteral("windows_generic_MSG")) {
+        auto* msg = static_cast<MSG*>(message);
+        if (msg->message == WM_NCCALCSIZE) {
+            // 去掉原生标题栏和非客户区，但保留 Windows 的边框命中与最大化管理。
+            *result = 0;
+            return true;
+        }
+        if (msg->message == WM_NCHITTEST && !isMaximized()) {
+            const qreal scale = devicePixelRatioF();
+            RECT frame;
+            GetWindowRect(msg->hwnd, &frame);
+            const int x = int((GET_X_LPARAM(msg->lParam) - frame.left) / scale);
+            const int y = int((GET_Y_LPARAM(msg->lParam) - frame.top) / scale);
+            const int w = int((frame.right - frame.left) / scale);
+            const int h = int((frame.bottom - frame.top) / scale);
+            const int border = 6;
+            const bool left = x < border;
+            const bool right = x >= w - border;
+            const bool top = y < border;
+            const bool bottom = y >= h - border;
+            if (top && left) *result = HTTOPLEFT;
+            else if (top && right) *result = HTTOPRIGHT;
+            else if (bottom && left) *result = HTBOTTOMLEFT;
+            else if (bottom && right) *result = HTBOTTOMRIGHT;
+            else if (left) *result = HTLEFT;
+            else if (right) *result = HTRIGHT;
+            else if (top) *result = HTTOP;
+            else if (bottom) *result = HTBOTTOM;
+            else return false;
+            return true;
+        }
+    }
+#else
+    Q_UNUSED(eventType);
+    Q_UNUSED(message);
+    Q_UNUSED(result);
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 void TaskPanel::closeEvent(QCloseEvent* event) {

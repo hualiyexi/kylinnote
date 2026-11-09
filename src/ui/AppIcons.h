@@ -24,6 +24,8 @@ enum class IconId {
     // 编辑器
     Bold, Italic, Strike, Heading, List, OrderedList, Quote, Code, Checklist, Link,
     Underline, Highlight, Expand, Info, ChevronDown, FormatClear, Format, Comment,
+    // 主窗口
+    WindowMinimize, WindowMaximize, WindowClose, Sort, Help, Sync,
     Count
 };
 

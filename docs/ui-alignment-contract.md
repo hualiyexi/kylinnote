@@ -120,3 +120,25 @@
 - 原生 Windows 平台生成并检查详情、信息浮层、清单选择、格式岛、360px 窄栏及长文底部截图；位于忽略目录 `.tools/ui-screenshots-detail-refinement/`。offscreen 默认屏幕较小，不能据此判断 1240px 窗口的屏幕边界弹层定位。截图仅含合成内容及本地生成的参考图片。
 - 新回归覆盖格式安全与序列化、特殊字符重选／改色／下划线、撤销重做、重开实体、标题及正文共滚动、检查项 UUID、清单移动、日期状态、信息统计和长文收缩。截图发现的「标题字体串入下一普通段落」另由 `markdownBlocksKeepIndependentFonts` 固定回归。
 - 本轮是原生 Qt Widgets UI，无浏览器界面。以上结果不等同于银河麒麟 V10 SP 目标机验收，目标机桌面验证仍须实际执行。
+
+## 2026-11-09 整体窗口与四列精细对齐
+
+本轮以用户提供的真实 Windows 整体窗口截图为直接参照，优先处理窗口骨架，不把此前的三列实现当作精细对齐验收。截图含用户内容，不复制进仓库；截图测试继续使用合成数据。
+
+| 细节 | 本轮规格 | 实现 |
+|---|---|---|
+| 融合标题区 | 不显示系统标题栏或独立应用标题条；各列背景延伸到窗口顶边，仅最右侧保留最小化／最大化／关闭按钮 | `TaskPanel`、`WindowChrome` |
+| 窗口操作 | 顶部空白拖动、双击最大化／还原；Windows 边缘和角落可缩放；关闭仍遵循托盘语义 | `WindowDragArea`、`TaskPanel::nativeEvent()` |
+| 第一列 | 52px 窄功能栏：本机工作区、任务、搜索、笔记、数据说明、设置 | `ActivityRail` |
+| 第二列 | 232px 筛选与组织栏：智能筛选、收集箱、文件夹／清单、历史；新建入口收在顶部 | `Sidebar`、`NavigationDelegate` |
+| 第三列 | 清单标题、计数、排序与更多；40px 整行快速添加；搜索由功能栏按需展开 | `ListPane`、`QuickAddFrame` |
+| 第四列 | 选中实体才显示；详情关闭按钮收起后第三列占满余宽；窗口按钮不与详情信息按钮重叠 | `WorkspaceSplitter`、`DetailClose` |
+| 底部状态栏 | 完全移除，不保留空白条；临时反馈使用轻提示，错误仍就地显示 | `TaskPanel::showNotice()` |
+| 系统阴影 | 主窗口也声明 `Qt::NoDropShadowWindowHint`，沿用全局原生阴影禁用策略 | `TaskPanel`、`SystemShadow` |
+
+### 本轮验证记录
+
+- Windows x64、Qt 5.12.8、MinGW 7.3：Release 构建与 CTest `tasks`／`ui` 2/2 通过；新增四列几何、详情显隐、无状态栏、窗口最大化／还原与控件避让回归。
+- Ubuntu 20.04 x86_64、发行版 Qt 5.12.8：构建及 CTest 2/2 通过。临时容器补充既有 SVG 开发依赖，宿主系统未修改。
+- 原生 Windows 截图分别核对三列与四列状态，位于忽略目录 `.tools/ui-screenshots-detail-refinement/`。本轮未改变数据模型、保存语义或托盘行为。
+- 以上是 Windows 预览与 Ubuntu 容器验证，不是银河麒麟 V10 SP 目标机验收。
