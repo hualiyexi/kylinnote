@@ -686,41 +686,43 @@ private slots:
         QVERIFY(panel.windowFlags() & Qt::FramelessWindowHint);
         QVERIFY(panel.windowFlags() & Qt::NoDropShadowWindowHint);
         QVERIFY(panel.testAttribute(Qt::WA_TranslucentBackground));
-        QVERIFY(!panel.mask().isEmpty());
-        QCOMPARE(rectIn(rail, &panel).top(), 0);
-        QCOMPARE(rectIn(navigationPane, &panel).top(), 0);
-        QCOMPARE(rectIn(listPane, &panel).top(), 0);
+        QVERIFY(panel.mask().isEmpty());
+        QCOMPARE(rectIn(rail, &panel).top(), 12);
+        QCOMPARE(rectIn(navigationPane, &panel).top(), 12);
+        QCOMPARE(rectIn(listPane, &panel).top(), 12);
         QVERIFY(!panel.findChild<QStatusBar*>());
         QVERIFY(!panel.findChild<QPushButton*>(QStringLiteral("QuickAddButton"))->isVisible());
         QVERIFY(!panel.findChild<QLineEdit*>(QStringLiteral("TaskSearch"))->isVisible());
         QCOMPARE(rail->width(), 52);
-        QCOMPARE(rectIn(rail, &panel).left(), 0);
-        QCOMPARE(rectIn(navigationPane, &panel).left(), rail->width());
+        QCOMPARE(rectIn(rail, &panel).left(), 12);
+        QCOMPARE(rectIn(navigationPane, &panel).left(), rectIn(rail, &panel).right() + 1);
         QCOMPARE(rectIn(listPane, &panel).left(), rectIn(navigationPane, &panel).right() + 1);
         QVERIFY(!detailPane->isVisible());
-        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right());
-        QCOMPARE(rectIn(controls, &panel).top(), 0);
-        QCOMPARE(rectIn(controls, &panel).right(), panel.rect().right());
+        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 12);
+        QCOMPARE(rectIn(controls, &panel).top(), 12);
+        QCOMPARE(rectIn(controls, &panel).right(), panel.rect().right() - 12);
 
         const QString id = m_store->createTask(QStringLiteral("展开第四列"));
         panel.showTask(id);
         QTRY_VERIFY(detailPane->isVisible());
         QCOMPARE(rectIn(detailPane, &panel).left(), rectIn(listPane, &panel).right() + 1);
-        QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right());
+        QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right() - 12);
         auto* info = detailPane->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
         QVERIFY(info);
         QVERIFY(rectIn(info, &panel).top() >= rectIn(controls, &panel).bottom());
         QTest::mouseClick(detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose")), Qt::LeftButton);
         QTRY_VERIFY(!detailPane->isVisible());
-        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right());
+        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 12);
         panel.showTask(id);
         QTRY_VERIFY(detailPane->isVisible());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
-        QTRY_VERIFY(panel.isMaximized());
+        QApplication::processEvents();
+        QVERIFY(panel.windowState() & Qt::WindowMaximized);
         QVERIFY(panel.mask().isEmpty());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
-        QTRY_VERIFY(!panel.isMaximized());
-        QVERIFY(!panel.mask().isEmpty());
+        QApplication::processEvents();
+        QVERIFY(!(panel.windowState() & Qt::WindowMaximized));
+        QVERIFY(panel.mask().isEmpty());
     }
 
     void toastIslandSupportsUndoAndHoverLifetime() {

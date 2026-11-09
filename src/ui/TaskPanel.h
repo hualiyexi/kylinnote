@@ -19,6 +19,7 @@ class TaskStore;
 class TaskListModel;
 class TaskDetailWidget;
 class WindowControls;
+class WorkspaceSurface;
 class ToastIsland;
 class TaskPanel : public QMainWindow {
     Q_OBJECT
@@ -78,6 +79,7 @@ private:
     QFrame* m_middle = nullptr;
     QFrame* m_activityRail = nullptr;
     WindowControls* m_windowControls = nullptr;
+    WorkspaceSurface* m_surface = nullptr;
     QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
     QToolButton* m_quickDate = nullptr;
     ToastIsland* m_toast = nullptr;

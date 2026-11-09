@@ -42,6 +42,7 @@
 #include "TaskListModel.h"
 #include "ToastIsland.h"
 #include "WindowChrome.h"
+#include "WorkspaceSurface.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
 #ifdef Q_OS_WIN
@@ -140,11 +141,12 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
 }
 
 void TaskPanel::buildUi() {
-    auto* central = new QWidget(this);
+    auto* central = new WorkspaceSurface(this);
+    m_surface = central;
     central->setObjectName(QStringLiteral("WorkspaceRoot"));
     setCentralWidget(central);
     auto* root = new QVBoxLayout(central);
-    root->setContentsMargins(0, 0, 0, 0);
+    root->setContentsMargins(12, 12, 12, 12);
     root->setSpacing(0);
 
     // 错误只在发生时占位，不再使用常驻状态栏。
@@ -417,8 +419,8 @@ void TaskPanel::buildUi() {
     m_splitter->setCollapsible(1, true);
 
     // 窗口按钮悬浮在最右列顶部；三列时属于清单，四列时属于详情。
-    m_windowControls = new WindowControls(this);
-    m_windowControls->setAttribute(Qt::WA_StyledBackground, true);
+    m_windowControls = new WindowControls(central);
+    m_windowControls->setAttribute(Qt::WA_StyledBackground, false);
     m_windowControls->raise();
     connect(m_detail, &TaskDetailWidget::focusModeRequested, this,
             [this](bool enabled) {
@@ -730,7 +732,8 @@ void TaskPanel::setDetailVisible(bool visible) {
 
 void TaskPanel::updateWindowControlsPosition() {
     if (!m_windowControls) return;
-    m_windowControls->setGeometry(width() - m_windowControls->width(), 0,
+    const int inset = (isMaximized() || isFullScreen()) ? 0 : 12;
+    m_windowControls->setGeometry(width() - m_windowControls->width() - inset, inset,
                                  m_windowControls->width(), m_windowControls->height());
     if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
         if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
@@ -783,36 +786,26 @@ void TaskPanel::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     if (m_windowControls)
         updateWindowControlsPosition();
-    if (!isMaximized() && !isFullScreen()) {
-        QPainterPath path;
-        path.addRoundedRect(QRectF(rect()), 10.0, 10.0);
-        setMask(path.toFillPolygon().toPolygon());
-    } else {
-        clearMask();
-    }
 }
 
 void TaskPanel::changeEvent(QEvent* event) {
     QMainWindow::changeEvent(event);
     if (event->type() == QEvent::WindowStateChange) {
-        if (isMaximized() || isFullScreen()) clearMask();
-        else {
-            QPainterPath path;
-            path.addRoundedRect(QRectF(rect()), 10.0, 10.0);
-            setMask(path.toFillPolygon().toPolygon());
+        const bool maximized = isMaximized() || isFullScreen();
+        if (m_surface) {
+            m_surface->setFramelessCorners(!maximized);
+            if (auto* layout = m_surface->layout()) {
+                const int inset = maximized ? 0 : 12;
+                layout->setContentsMargins(inset, inset, inset, inset);
+            }
         }
+        updateWindowControlsPosition();
         update();
     }
 }
 
 void TaskPanel::paintEvent(QPaintEvent* event) {
     QMainWindow::paintEvent(event);
-    if (isMaximized() || isFullScreen()) return;
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(ThemeManager::instance().color(ds::ColorToken::Border), 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
 }
 
 void TaskPanel::mousePressEvent(QMouseEvent* event) {
