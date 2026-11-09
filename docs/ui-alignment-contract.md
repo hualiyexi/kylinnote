@@ -153,3 +153,5 @@
 | 窗口按钮层级 | 顶部 36px 为无独立标题背景的窗口控制区；详情日期／提醒／信息栏位于其下，不共行 | `TaskPanel`、`WindowControls` |
 
 验证：提示岛自动消失、悬停暂停、动作关闭、完成／放弃撤销、第三列定位与窗口控制区上下层级均有 QtTest 回归；原生截图核对 `task-panel-toast.png`。
+
+补充修正：四列背景与分割线贯穿顶部 36px 窗口控制区，不再出现独立色带；普通窗口使用 10px 圆角与细轮廓，最大化／全屏时取消圆角。`workspaceUsesFourColumnsAndNoPermanentStatusBar` 固定列顶边、透明背景、圆角遮罩与最大化还原行为。
