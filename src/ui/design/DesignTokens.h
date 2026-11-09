@@ -94,6 +94,7 @@ enum class ColorToken : int {
     TooltipBg, TooltipText,
     DetailDivider,
     HighlightYellow, HighlightGreen, HighlightBlue, HighlightPink, HighlightPurple,
+    WindowBorder,
     Count
 };
 
