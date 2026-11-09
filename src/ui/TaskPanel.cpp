@@ -19,6 +19,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -96,6 +97,7 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
     setWindowTitle(QStringLiteral("麒麟清单"));
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
     setAttribute(Qt::WA_StyledBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
     if (auto* oldStatusBar = findChild<QStatusBar*>(QString(), Qt::FindDirectChildrenOnly))
         delete oldStatusBar;
     setMinimumSize(960, 620); resize(1240, 820);
@@ -159,7 +161,7 @@ void TaskPanel::buildUi() {
     root->addWidget(errorHost);
 
     auto* body = new QHBoxLayout;
-    body->setContentsMargins(0, 36, 0, 0);
+    body->setContentsMargins(0, 0, 0, 0);
     body->setSpacing(0);
     root->addLayout(body, 1);
 
@@ -168,7 +170,7 @@ void TaskPanel::buildUi() {
     m_activityRail->setObjectName(QStringLiteral("ActivityRail"));
     m_activityRail->setFixedWidth(52);
     auto* rail = new QVBoxLayout(m_activityRail);
-    rail->setContentsMargins(6, 8, 6, 10);
+    rail->setContentsMargins(6, 44, 6, 10);
     rail->setSpacing(8);
     auto* account = new QToolButton(m_activityRail);
     account->setObjectName(QStringLiteral("AccountButton"));
@@ -242,7 +244,7 @@ void TaskPanel::buildUi() {
     m_sidebar->setObjectName(QStringLiteral("Sidebar"));
     m_sidebar->setFixedWidth(AppStyle::metric(AppStyle::Metric::SidebarWidth));
     auto* side = new QVBoxLayout(m_sidebar);
-    side->setContentsMargins(8, 0, 8, 8);
+    side->setContentsMargins(8, 36, 8, 8);
     side->setSpacing(2);
     auto* sideTop = new QHBoxLayout;
     sideTop->setContentsMargins(0, 0, 0, 0);
@@ -285,7 +287,7 @@ void TaskPanel::buildUi() {
     m_middle->setObjectName(QStringLiteral("ListPane"));
     m_middle->setMinimumWidth(320);
     auto* center = new QVBoxLayout(m_middle);
-    center->setContentsMargins(0, 0, 0, 0);
+    center->setContentsMargins(0, 36, 0, 0);
     center->setSpacing(0);
 
     auto* listHeader = new QFrame(m_middle);
@@ -404,7 +406,7 @@ void TaskPanel::buildUi() {
     m_detailFrame->setObjectName(QStringLiteral("DetailFrame"));
     m_detailFrame->setMinimumWidth(370);
     auto* detailLayout = new QVBoxLayout(m_detailFrame);
-    detailLayout->setContentsMargins(0, 0, 0, 0);
+    detailLayout->setContentsMargins(0, 36, 0, 0);
     m_detail = new TaskDetailWidget(m_store, m_detailFrame);
     detailLayout->addWidget(m_detail);
     m_splitter->addWidget(m_detailFrame);
@@ -781,6 +783,36 @@ void TaskPanel::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     if (m_windowControls)
         updateWindowControlsPosition();
+    if (!isMaximized() && !isFullScreen()) {
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()), 10.0, 10.0);
+        setMask(path.toFillPolygon().toPolygon());
+    } else {
+        clearMask();
+    }
+}
+
+void TaskPanel::changeEvent(QEvent* event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange) {
+        if (isMaximized() || isFullScreen()) clearMask();
+        else {
+            QPainterPath path;
+            path.addRoundedRect(QRectF(rect()), 10.0, 10.0);
+            setMask(path.toFillPolygon().toPolygon());
+        }
+        update();
+    }
+}
+
+void TaskPanel::paintEvent(QPaintEvent* event) {
+    QMainWindow::paintEvent(event);
+    if (isMaximized() || isFullScreen()) return;
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(ThemeManager::instance().color(ds::ColorToken::Border), 1));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
 }
 
 void TaskPanel::mousePressEvent(QMouseEvent* event) {

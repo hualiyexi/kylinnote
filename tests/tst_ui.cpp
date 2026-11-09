@@ -685,6 +685,11 @@ private slots:
         QVERIFY(rail && navigationPane && listPane && detailPane && controls);
         QVERIFY(panel.windowFlags() & Qt::FramelessWindowHint);
         QVERIFY(panel.windowFlags() & Qt::NoDropShadowWindowHint);
+        QVERIFY(panel.testAttribute(Qt::WA_TranslucentBackground));
+        QVERIFY(!panel.mask().isEmpty());
+        QCOMPARE(rectIn(rail, &panel).top(), 0);
+        QCOMPARE(rectIn(navigationPane, &panel).top(), 0);
+        QCOMPARE(rectIn(listPane, &panel).top(), 0);
         QVERIFY(!panel.findChild<QStatusBar*>());
         QVERIFY(!panel.findChild<QPushButton*>(QStringLiteral("QuickAddButton"))->isVisible());
         QVERIFY(!panel.findChild<QLineEdit*>(QStringLiteral("TaskSearch"))->isVisible());
@@ -712,8 +717,10 @@ private slots:
         QTRY_VERIFY(detailPane->isVisible());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
         QTRY_VERIFY(panel.isMaximized());
+        QVERIFY(panel.mask().isEmpty());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
         QTRY_VERIFY(!panel.isMaximized());
+        QVERIFY(!panel.mask().isEmpty());
     }
 
     void toastIslandSupportsUndoAndHoverLifetime() {
