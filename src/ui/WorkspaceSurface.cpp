@@ -61,7 +61,7 @@ QImage blurredShadow(const QSize& size, bool rounded) {
         auto* row = reinterpret_cast<QRgb*>(shadow.scanLine(y));
         for (int x = 0; x < width; ++x) {
             QColor pixel(color);
-            pixel.setAlphaF(qMin(1.0, output[y * width + x] * 0.28));
+            pixel.setAlphaF(qMin(1.0, output[y * width + x] * 0.42));
             row[x] = pixel.rgba();
         }
     }
@@ -88,6 +88,15 @@ void WorkspaceSurface::resizeEvent(QResizeEvent* event) {
 
 void WorkspaceSurface::updateClip() {
     updateShadow();
+    if (m_rounded) {
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(kShadowMargin, kShadowMargin,
+                                                    -kShadowMargin, -kShadowMargin),
+                            kCornerRadius, kCornerRadius);
+        setMask(path.toFillPolygon().toPolygon());
+    } else {
+        clearMask();
+    }
     update();
 }
 
@@ -100,14 +109,6 @@ void WorkspaceSurface::paintEvent(QPaintEvent*) {
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
     if (!m_shadow.isNull()) painter.drawImage(0, 0, m_shadow);
-    const QRectF bounds = QRectF(rect()).adjusted(kShadowMargin, kShadowMargin,
-                                                  -kShadowMargin, -kShadowMargin);
-    QPainterPath outline;
-    if (m_rounded) outline.addRoundedRect(bounds, kCornerRadius, kCornerRadius);
-    else outline.addRect(bounds);
-    painter.setPen(QPen(ThemeManager::instance().color(ds::ColorToken::WindowBorder), 1.2));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawPath(outline);
 }
 
 }  // namespace kl

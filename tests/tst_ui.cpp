@@ -687,6 +687,8 @@ private slots:
         QVERIFY(panel.windowFlags() & Qt::NoDropShadowWindowHint);
         QVERIFY(panel.testAttribute(Qt::WA_TranslucentBackground));
         QVERIFY(panel.mask().isEmpty());
+        auto* surface = panel.findChild<QWidget*>(QStringLiteral("WorkspaceRoot"));
+        QVERIFY(surface && !surface->mask().isEmpty());
         QCOMPARE(rectIn(rail, &panel).top(), 18);
         QCOMPARE(rectIn(navigationPane, &panel).top(), 18);
         QCOMPARE(rectIn(listPane, &panel).top(), 18);
@@ -719,6 +721,7 @@ private slots:
         QApplication::processEvents();
         QVERIFY(panel.windowState() & Qt::WindowMaximized);
         QVERIFY(panel.mask().isEmpty());
+        QVERIFY(surface->mask().isEmpty());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
         QApplication::processEvents();
         QVERIFY(!(panel.windowState() & Qt::WindowMaximized));
@@ -1633,8 +1636,15 @@ private slots:
             QPainter cornerPainter(&onLight);
             cornerPainter.drawImage(0, 0, corner);
             cornerPainter.end();
-            QVERIFY(onLight.scaled(760, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-                .save(dir + QStringLiteral("/window-corner-detail.png")));
+            QVERIFY(corner.save(dir + QStringLiteral("/window-corner-detail.png")));
+            QImage bottom = panel.grab().toImage().copy(panel.width() - 190, panel.height() - 150, 190, 150);
+            QImage bottomOnLight(bottom.size(), QImage::Format_ARGB32_Premultiplied);
+            bottomOnLight.fill(QColor(QStringLiteral("#E9E9E9")));
+            QPainter bottomPainter(&bottomOnLight);
+            bottomPainter.drawImage(0, 0, bottom);
+            bottomPainter.end();
+            QVERIFY(bottomOnLight.scaled(760, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(dir + QStringLiteral("/window-bottom-corner-detail.png")));
             QVERIFY(m_store->setCompleted(id, true));
             auto* toast = panel.findChild<ToastIsland*>(QStringLiteral("WorkspaceToast"));
             QVERIFY(toast);
