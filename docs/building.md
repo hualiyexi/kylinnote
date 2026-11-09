@@ -141,6 +141,16 @@ CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe
 
 `-BuildDir`、`-OutputDir`、`-CTest`、`-Parallel` 可显式覆盖；所有工具参数都接受完整路径。`-SkipArchive` 适合重复开发构建，`-SkipTests` 仅用于本地诊断；CI 不跳过测试。MSVC 可直接用 CMake 配置并编译，已启用 `/utf-8`；现有部署脚本固定使用 MinGW，不混用 MSVC 与 MinGW Qt。
 
+### 桌面便携预览包
+
+`packaging/publish-desktop.ps1` 在 `build-windows.ps1` 之上做两步：先完整构建并跑 CTest 与部署冒烟，再把 `package/KylinList-<版本>-Windows-x64` 用 `robocopy /MIR` 整体镜像到桌面固定目录 `KylinList-Test`。路径固定，每次改完代码重跑一次即可在桌面同一点启动最新构建：
+
+```powershell
+pwsh -File packaging/publish-desktop.ps1
+```
+
+默认工具路径与 `build-windows.ps1` 相同，可用 `-TargetDir`、`-SkipTests`、`-SkipBuild` 调整。覆盖前有两道保护：目标目录必须带首次运行写入的 `.kylinlist-portable` 标记，且程序未在运行；镜像后比对源/目标 `kylinlist.exe` 的 SHA256。该包用于 Windows 开发预览，不代表银河麒麟 V10 SP 验收。
+
 ## Linux 原生构建
 
 Ubuntu 20.04 的主要开发依赖：
