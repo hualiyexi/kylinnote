@@ -147,7 +147,7 @@ void TaskPanel::buildUi() {
     central->setObjectName(QStringLiteral("WorkspaceRoot"));
     setCentralWidget(central);
     auto* root = new QVBoxLayout(central);
-    root->setContentsMargins(18, 18, 18, 18);
+    root->setContentsMargins(21, 21, 21, 21);
     root->setSpacing(0);
 
     // 错误只在发生时占位，不再使用常驻状态栏。
@@ -424,7 +424,7 @@ void TaskPanel::buildUi() {
     m_windowControls = new WindowControls(central);
     m_windowControls->setAttribute(Qt::WA_StyledBackground, false);
     m_border = new WindowBorderOverlay(central);
-    m_border->setGeometry(18, 18, central->width() - 36, central->height() - 36);
+    m_border->setGeometry(21, 21, central->width() - 42, central->height() - 42);
     m_border->raise();
     m_windowControls->raise();
     m_surface->updateContentClip();
@@ -738,7 +738,7 @@ void TaskPanel::setDetailVisible(bool visible) {
 
 void TaskPanel::updateWindowControlsPosition() {
     if (!m_windowControls) return;
-    const int inset = (isMaximized() || isFullScreen()) ? 0 : 18;
+    const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
     m_windowControls->setGeometry(width() - m_windowControls->width() - inset, inset,
                                  m_windowControls->width(), m_windowControls->height());
     if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
@@ -793,7 +793,7 @@ void TaskPanel::resizeEvent(QResizeEvent* event) {
     if (m_windowControls)
         updateWindowControlsPosition();
     if (m_border) {
-        const int inset = (isMaximized() || isFullScreen()) ? 0 : 18;
+        const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
         m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
         m_border->raise();
         if (m_windowControls) m_windowControls->raise();
@@ -808,7 +808,7 @@ void TaskPanel::changeEvent(QEvent* event) {
         if (m_surface) {
             m_surface->setFramelessCorners(!maximized);
             if (auto* layout = m_surface->layout()) {
-                const int inset = maximized ? 0 : 18;
+                const int inset = maximized ? 0 : 21;
                 layout->setContentsMargins(inset, inset, inset, inset);
             }
         }
