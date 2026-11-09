@@ -20,6 +20,7 @@ namespace kl {
 
 // 日期弹层的值均为 UTC；只有显示与用户输入使用 Asia/Shanghai 墙上时间。
 // accepted() 使用 QDialog 已有信号，cleared() 表示用户明确点击了“清除”。
+// 给定接口中信号与 const getter 同名；在非 const 对象上查询状态需通过 const 引用调用 getter。
 class DatePickerPopup : public QDialog {
     Q_OBJECT
 public:

@@ -12,7 +12,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
+#include <QPixmap>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScreen>
@@ -39,6 +42,54 @@ constexpr int kCalendarCell = 30;
 QString color(ds::ColorToken token)
 {
     return ThemeManager::instance().color(token).name();
+}
+
+QIcon quickIcon(int index)
+{
+    // 带点日历复用集中图标；其余三个图形在 AppIcons 中无对应项，局部绘制以对齐截图。
+    if (index == 2) return AppIcons::icon(IconId::Today, ds::ColorToken::TextSecondary, 20);
+    QPixmap pixmap(40, 40);
+    pixmap.setDevicePixelRatio(2.0);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.scale(20.0 / 24.0, 20.0 / 24.0);
+    QPen pen(ThemeManager::instance().color(ds::ColorToken::TextSecondary), 1.5);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    if (index == 0) {
+        painter.drawEllipse(QPointF(12, 12), 4, 4);
+        const QLineF rays[] = {
+            QLineF(12, 2, 12, 5), QLineF(12, 19, 12, 22),
+            QLineF(2, 12, 5, 12), QLineF(19, 12, 22, 12),
+            QLineF(4.9, 4.9, 6.9, 6.9), QLineF(17.1, 17.1, 19.1, 19.1),
+            QLineF(4.9, 19.1, 6.9, 17.1), QLineF(17.1, 6.9, 19.1, 4.9)
+        };
+        for (const auto& ray : rays) painter.drawLine(ray);
+    } else if (index == 1) {
+        QPainterPath arrow;
+        arrow.moveTo(12, 16);
+        arrow.lineTo(12, 4);
+        arrow.moveTo(8, 8);
+        arrow.lineTo(12, 4);
+        arrow.lineTo(16, 8);
+        arrow.moveTo(3, 14);
+        arrow.lineTo(3, 19);
+        arrow.lineTo(21, 19);
+        arrow.lineTo(21, 14);
+        painter.drawPath(arrow);
+    } else {
+        QPainterPath moon;
+        moon.moveTo(15.5, 3.5);
+        moon.cubicTo(9.5, 4.2, 5.5, 9, 5.5, 14);
+        moon.cubicTo(5.5, 18, 9, 20.5, 13, 20.5);
+        moon.cubicTo(16, 20.5, 19, 18.5, 20.5, 15.5);
+        moon.cubicTo(14, 17, 9, 10, 15.5, 3.5);
+        painter.drawPath(moon);
+    }
+    return QIcon(pixmap);
 }
 
 int configuredFirstDay()
@@ -167,18 +218,17 @@ QWidget* DatePickerPopup::buildMainPage(QWidget* parent)
     datePage->setObjectName(QStringLiteral("DatePickerDatePage"));
     auto* dateLayout = new QVBoxLayout(datePage);
     dateLayout->setContentsMargins(0, 0, 0, 0);
-    dateLayout->setSpacing(4);
+    dateLayout->setSpacing(8);
 
     auto* quickRow = new QHBoxLayout;
     quickRow->setContentsMargins(0, 0, 0, 0);
     quickRow->setSpacing(12);
     quickRow->addStretch();
-    // 复用现有线性图标语言；截图中的四个 tooltip 与执行效果均未验证，不绑定推断命令。
-    const IconId quickIcons[] = {IconId::Settings, IconId::Pin, IconId::Today, IconId::Theme};
+    // 四个 tooltip 与执行效果均未验证，不绑定推断命令。
     for (int i = 0; i < 4; ++i) {
         auto* button = new QToolButton(datePage);
         button->setObjectName(QStringLiteral("DatePickerQuick"));
-        button->setProperty("iconId", static_cast<int>(quickIcons[i]));
+        button->setProperty("quickIndex", i);
         button->setIconSize(QSize(20, 20));
         button->setFixedSize(40, 32);
         button->setToolTip(QStringLiteral("快捷选项（含义与行为未验证）"));
@@ -190,7 +240,7 @@ QWidget* DatePickerPopup::buildMainPage(QWidget* parent)
     dateLayout->addLayout(quickRow);
 
     auto* monthRow = new QHBoxLayout;
-    monthRow->setContentsMargins(0, 0, 0, 0);
+    monthRow->setContentsMargins(0, 12, 0, 0);
     monthRow->setSpacing(2);
     m_monthLabel = new QLabel(datePage);
     m_monthLabel->setFixedHeight(28);
@@ -234,7 +284,7 @@ QWidget* DatePickerPopup::buildMainPage(QWidget* parent)
     dateLayout->addLayout(weekdays);
 
     auto* grid = new QGridLayout;
-    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setContentsMargins(0, 8, 0, 0);
     grid->setHorizontalSpacing(4);
     grid->setVerticalSpacing(0);
     for (int index = 0; index < 42; ++index) {
@@ -654,10 +704,8 @@ QCheckBox#DatePickerCheck { color: %TEXT%; background: transparent; spacing: 6px
         qss.replace(QLatin1String(replacement.key), color(replacement.token));
     m_card->setStyleSheet(qss);
 
-    for (QToolButton* button : m_quickButtons) {
-        const IconId id = static_cast<IconId>(button->property("iconId").toInt());
-        button->setIcon(AppIcons::icon(id, 20));
-    }
+    for (QToolButton* button : m_quickButtons)
+        button->setIcon(quickIcon(button->property("quickIndex").toInt()));
     const auto labels = m_card->findChildren<QLabel*>();
     for (QLabel* label : labels) {
         if (!label->property("iconId").isValid()) continue;
