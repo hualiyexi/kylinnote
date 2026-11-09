@@ -115,6 +115,7 @@ void TaskDetailWidget::buildUi() {
     root->setSpacing(0);
 
     m_empty = new QLabel(QStringLiteral("选择一项任务或笔记\n\n在这里编辑内容与检查清单。"), this);
+    m_empty->hide();
     m_empty->setAlignment(Qt::AlignCenter);
     m_empty->setWordWrap(true);
     m_empty->setProperty("muted", true);
@@ -162,6 +163,17 @@ void TaskDetailWidget::buildUi() {
     m_infoButton->setCursor(Qt::PointingHandCursor);
     connect(m_infoButton, &QToolButton::clicked, this, &TaskDetailWidget::showInfoPopup);
     headerLayout->addWidget(m_infoButton);
+
+    m_closeButton = new QToolButton(header);
+    m_closeButton->setObjectName(QStringLiteral("DetailClose"));
+    m_closeButton->setFixedSize(28, 28);
+    m_closeButton->setAutoRaise(true);
+    m_closeButton->setToolTip(QStringLiteral("关闭详情"));
+    m_closeButton->setAccessibleName(QStringLiteral("关闭详情"));
+    connect(m_closeButton, &QToolButton::clicked, this, [this]() {
+        if (finishEditing()) emit closeRequested();
+    });
+    headerLayout->addWidget(m_closeButton);
 
     // 保留值控件供字段级保存使用；入口统一放在更多菜单。
     m_completed = new QCheckBox(header);
@@ -713,6 +725,7 @@ void TaskDetailWidget::setStatus(const QString& text, bool error) {
 
 void TaskDetailWidget::refreshIcons() {
     m_infoButton->setIcon(AppIcons::icon(IconId::Info, 16));
+    m_closeButton->setIcon(AppIcons::icon(IconId::Close, 15));
     m_reminderButton->setIcon(AppIcons::icon(IconId::Reminder, 14));
     m_formatButton->setIcon(AppIcons::icon(IconId::Format, 16));
     m_commentButton->setIcon(AppIcons::icon(IconId::Comment, 16));

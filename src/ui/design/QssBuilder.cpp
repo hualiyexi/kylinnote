@@ -148,7 +148,7 @@ QString buildStyleSheet(Theme theme) {
             "text-align:left;color:%3;}"
             "QPushButton#DateChip:hover,QPushButton#DateChip:focus{background:%4;}"
             "QPushButton#DateChip[overdue=\"true\"]{color:%7;}"
-            "QToolButton#DetailInfo,QToolButton#DetailReminder{padding:0;border:0;}"
+            "QToolButton#DetailInfo,QToolButton#DetailReminder,QToolButton#DetailClose{padding:0;border:0;}"
             "QToolButton#GroupChip{padding:4px 6px;border:0;}"
             "QToolButton#FooterFormat,QToolButton#FooterComment,QToolButton#DetailMore{"
             "padding:0;border:0;}"
@@ -162,9 +162,34 @@ QString buildStyleSheet(Theme theme) {
             "QToolButton#AttachmentActions{min-width:24px;max-width:24px;"
             "min-height:24px;max-height:24px;padding:0;}"
             "QToolButton#AttachmentActions::menu-indicator{image:none;width:0;height:0;}"
-            "QLabel#DetailStatus{color:%7;padding:6px 0;}")
+            "QLabel#DetailStatus{color:%7;padding:6px 0;}"
+            "QMainWindow#TaskPanel,QWidget#WorkspaceRoot{background:%1;}"
+            "QFrame#ActivityRail{background:%8;border:0;border-right:1px solid %2;}"
+            "QFrame#ActivityRail QToolButton{border:0;border-radius:8px;padding:0;}"
+            "QFrame#ActivityRail QToolButton:hover{background:%4;}"
+            "QFrame#ActivityRail QToolButton:checked{background:%5;}"
+            "QToolButton#AccountButton{border-radius:9px;}"
+            "QFrame#Sidebar{background:%8;border:0;border-right:1px solid %2;}"
+            "QFrame#ListPane,QFrame#ListHeader{background:%1;border:0;}"
+            "QFrame#DetailFrame{background:%1;border:0;border-left:1px solid %2;}"
+            "QFrame#QuickAddFrame{background:%1;border:1px solid %3;border-radius:7px;}"
+            "QFrame#QuickAddFrame:focus-within{border:1px solid %5;}"
+            "QFrame#QuickAddFrame QLineEdit#QuickAdd,"
+            "QFrame#QuickAddFrame QLineEdit#QuickAdd:hover,"
+            "QFrame#QuickAddFrame QLineEdit#QuickAdd:focus{background:transparent;border:0;padding:0;}"
+            "QToolButton#QuickAddDate{color:%3;padding:0 4px;border:0;}"
+            "QToolButton#QuickAddDate:checked{color:%5;}"
+            "QWidget#WindowControls{background:%1;}"
+            "QWidget#WindowControls QToolButton{border:0;border-radius:0;padding:0;}"
+            "QWidget#WindowControls QToolButton:hover{background:%4;}"
+            "QWidget#WindowControls QToolButton#WindowClose:hover{background:%7;color:%9;}"
+            "QWidget#WindowDragArea{background:transparent;}"
+            "QLabel#WorkspaceNotice{background:%10;color:%6;border:1px solid %2;"
+            "border-radius:8px;padding:9px 14px;}"
+            "QListView#TaskList{background:transparent;}")
             .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
-            .arg(hover).arg(selection).arg(text).arg(danger);
+            .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar)
+            .arg(onPrimary).arg(menuBg);
 }
 
 QString buildPreviewCss(Theme theme) {

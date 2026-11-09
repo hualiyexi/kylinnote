@@ -34,6 +34,7 @@ signals:
     void taskRemoved(QString id);
     void internalLinkRequested(QString entityId);
     void focusModeRequested(bool enabled);
+    void closeRequested();
 private:
     void buildUi();
     void loadFields(bool resetEditor = false);
@@ -77,7 +78,7 @@ private:
     QToolButton* m_formatButton = nullptr;  // 底栏「A」格式按钮 → 悬浮格式面板
     QToolButton* m_commentButton = nullptr;
     QToolButton* m_moreButton = nullptr;
-    QToolButton *m_infoButton = nullptr, *m_reminderButton = nullptr;
+    QToolButton *m_infoButton = nullptr, *m_reminderButton = nullptr, *m_closeButton = nullptr;
     EntityInfoPopup* m_infoPopup = nullptr;
     ListSelectPopup* m_groupPopup = nullptr;
     bool m_focusMode = false;

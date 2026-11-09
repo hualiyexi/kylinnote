@@ -12,10 +12,12 @@ class QSplitter;
 class QStackedWidget;
 class QCloseEvent;
 class QToolButton;
+class QFrame;
 namespace kl {
 class TaskStore;
 class TaskListModel;
 class TaskDetailWidget;
+class WindowControls;
 class TaskPanel : public QMainWindow {
     Q_OBJECT
 public:
@@ -30,6 +32,12 @@ signals:
     void importBackupRequested(QString path);
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, long* result) override;
 private:
     void buildUi();
     void rebuildNavigation();
@@ -42,6 +50,11 @@ private:
     void backupMenu();
     void workspaceMenu();
     void showError(const QString& message);
+    void showNotice(const QString& message);
+    void setDetailVisible(bool visible);
+    void refreshWorkspaceIcons();
+    void updateWindowControlsPosition();
+    void selectNavigation(ViewScope scope, const QString& listId = QString());
     TaskStore* m_store;
     TaskListModel* m_model = nullptr;
     TaskDetailWidget* m_detail = nullptr;
@@ -54,9 +67,19 @@ private:
     QLabel *m_heading = nullptr, *m_count = nullptr, *m_empty = nullptr, *m_error = nullptr;
     QSplitter* m_splitter = nullptr;
     QStackedWidget* m_listStack = nullptr;
+    QFrame* m_detailFrame = nullptr;
+    QFrame* m_sidebar = nullptr;
+    QFrame* m_middle = nullptr;
+    QFrame* m_activityRail = nullptr;
+    WindowControls* m_windowControls = nullptr;
+    QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
+    QToolButton* m_quickDate = nullptr;
+    QLabel* m_notice = nullptr;
     ViewSpec m_filter;
     QString m_selectedId = QString();
     bool m_resetting = false, m_rebuilding = false, m_restoreFrozen = false;
+    bool m_windowDragging = false;
+    QPoint m_windowDragOffset;
 };
 }  // namespace kl
 
