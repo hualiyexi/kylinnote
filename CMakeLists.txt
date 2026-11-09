@@ -88,6 +88,7 @@ set(KYLINLIST_UI_SOURCES
     src/ui/DetailPopups.cpp
     src/ui/FormatToolbar.cpp
     src/ui/WindowChrome.cpp
+    src/ui/ToastIsland.cpp
 )
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     list(APPEND KYLINLIST_UI_SOURCES src/app/DbusAdapter.cpp)

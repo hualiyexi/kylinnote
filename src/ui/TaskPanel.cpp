@@ -39,6 +39,7 @@
 #include "TaskDelegate.h"
 #include "TaskDetailWidget.h"
 #include "TaskListModel.h"
+#include "ToastIsland.h"
 #include "WindowChrome.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
@@ -99,6 +100,7 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
         delete oldStatusBar;
     setMinimumSize(960, 620); resize(1240, 820);
     buildUi();
+    for (const Entity& entity : m_store->entities()) m_taskStates.insert(entity.id, entity.status);
     connect(m_detail, &TaskDetailWidget::internalLinkRequested, this, &TaskPanel::showTask);
     rebuildNavigation();
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("kylinlist"), QStringLiteral("panel"));
@@ -109,13 +111,23 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
         resize(size().boundedTo(available.size()));
         if (!available.intersects(frameGeometry())) move(available.topLeft() + QPoint(20, 20));
     }
-    connect(store, &TaskStore::taskChanged, this, [this]() {
+    connect(store, &TaskStore::taskChanged, this, [this](const QString& id) {
         m_error->hide(); if (QWidget* host = m_error->parentWidget()) host->hide();
         rebuildNavigation();
+        const Entity current = m_store->entity(id);
+        const auto previous = m_taskStates.constFind(id);
+        if (previous != m_taskStates.constEnd() && previous.value() != current.status)
+            showUndoableStatus(id, previous.value());
+        if (!current.id.isEmpty()) m_taskStates.insert(id, current.status);
+        else m_taskStates.remove(id);
     });
     connect(store, &TaskStore::desktopNoteChanged, this, [this]() { rebuildNavigation(); });
     connect(store, &TaskStore::groupsChanged, this, &TaskPanel::rebuildNavigation);
-    connect(store, &TaskStore::tasksReset, this, &TaskPanel::rebuildNavigation);
+    connect(store, &TaskStore::tasksReset, this, [this]() {
+        rebuildNavigation();
+        m_taskStates.clear();
+        for (const Entity& entity : m_store->entities()) m_taskStates.insert(entity.id, entity.status);
+    });
     connect(store, &TaskStore::errorOccurred, this, &TaskPanel::showError);
     auto* clock = new QTimer(this); clock->setInterval(60000);
     connect(clock, &QTimer::timeout, m_model, &TaskListModel::refresh); clock->start();
@@ -147,7 +159,7 @@ void TaskPanel::buildUi() {
     root->addWidget(errorHost);
 
     auto* body = new QHBoxLayout;
-    body->setContentsMargins(0, 0, 0, 0);
+    body->setContentsMargins(0, 36, 0, 0);
     body->setSpacing(0);
     root->addLayout(body, 1);
 
@@ -234,9 +246,7 @@ void TaskPanel::buildUi() {
     side->setSpacing(2);
     auto* sideTop = new QHBoxLayout;
     sideTop->setContentsMargins(0, 0, 0, 0);
-    auto* sideDrag = new WindowDragArea(m_sidebar);
-    sideDrag->setFixedHeight(48);
-    sideTop->addWidget(sideDrag, 1);
+    sideTop->addStretch(1);
     auto* addList = new QToolButton(m_sidebar);
     addList->setObjectName(QStringLiteral("GroupMenuButton"));
     addList->setFixedSize(32, 32);
@@ -280,7 +290,7 @@ void TaskPanel::buildUi() {
 
     auto* listHeader = new QFrame(m_middle);
     listHeader->setObjectName(QStringLiteral("ListHeader"));
-    listHeader->setFixedHeight(64);
+    listHeader->setFixedHeight(40);
     auto* header = new QHBoxLayout(listHeader);
     header->setContentsMargins(22, 0, 10, 0);
     header->setSpacing(4);
@@ -326,7 +336,7 @@ void TaskPanel::buildUi() {
     center->addWidget(listHeader);
 
     auto* content = new QVBoxLayout;
-    content->setContentsMargins(22, 8, 22, 12);
+    content->setContentsMargins(22, 16, 22, 12);
     content->setSpacing(12);
     center->addLayout(content, 1);
 
@@ -434,6 +444,12 @@ void TaskPanel::buildUi() {
         m_list->setCurrentIndex(QModelIndex());
         setDetailVisible(false);
     });
+    m_toast = new ToastIsland(m_middle);
+    m_toast->setObjectName(QStringLiteral("WorkspaceToast"));
+    m_middle->installEventFilter(this);
+    connect(m_toast, &ToastIsland::actionFinished, this, [this](bool succeeded) {
+        if (!succeeded) showNotice(QStringLiteral("撤销失败，请稍后重试。"));
+    });
 
     connect(m_model, &QAbstractItemModel::modelAboutToBeReset, this, [this]() { m_resetting = true; });
     connect(m_model, &QAbstractItemModel::modelReset, this, [this]() {
@@ -497,10 +513,6 @@ void TaskPanel::buildUi() {
         setDetailVisible(false);
     });
 
-    m_notice = new QLabel(central);
-    m_notice->setObjectName(QStringLiteral("WorkspaceNotice"));
-    m_notice->setAttribute(Qt::WA_TransparentForMouseEvents);
-    m_notice->hide();
     refreshWorkspaceIcons();
     setDetailVisible(false);
     applyFilter();
@@ -668,15 +680,31 @@ void TaskPanel::showError(const QString& message) {
 }
 
 void TaskPanel::showNotice(const QString& message) {
-    m_notice->setText(message);
-    m_notice->adjustSize();
-    const int widthHint = qMin(460, qMax(240, m_notice->sizeHint().width() + 28));
-    m_notice->setFixedWidth(widthHint);
-    m_notice->adjustSize();
-    m_notice->move((width() - m_notice->width()) / 2, height() - m_notice->height() - 28);
-    m_notice->show();
-    m_notice->raise();
-    QTimer::singleShot(4500, m_notice, &QWidget::hide);
+    m_toast->showMessage(message);
+    m_toast->move((m_middle->width() - m_toast->width()) / 2,
+                  m_middle->height() - m_toast->height() - 28);
+}
+
+void TaskPanel::showUndoableStatus(const QString& id, TaskStatus previous) {
+    const Entity before = m_store->entity(id);
+    if (before.id.isEmpty() || before.kind != EntityKind::Task) return;
+    const TaskStatus current = before.status;
+    if (current == previous || (current != TaskStatus::Completed && current != TaskStatus::Abandoned)) return;
+    const QString message = current == TaskStatus::Completed ? QStringLiteral("任务已完成")
+                                                             : QStringLiteral("任务已放弃");
+    m_toast->showAction(message, QStringLiteral("撤销"), [this, id, previous]() {
+        return m_store->setStatus(id, previous);
+    });
+    m_toast->move((m_middle->width() - m_toast->width()) / 2,
+                  m_middle->height() - m_toast->height() - 28);
+}
+
+bool TaskPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_middle && event->type() == QEvent::Resize && m_toast) {
+        m_toast->move((m_middle->width() - m_toast->width()) / 2,
+                      m_middle->height() - m_toast->height() - 28);
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void TaskPanel::setDetailVisible(bool visible) {
@@ -703,9 +731,8 @@ void TaskPanel::updateWindowControlsPosition() {
     m_windowControls->setGeometry(width() - m_windowControls->width(), 0,
                                  m_windowControls->width(), m_windowControls->height());
     if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
-        const int right = m_detailFrame->isVisible() ? m_windowControls->width() + 16 : 16;
         if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
-            layout->setContentsMargins(20, 6, right, 6);
+            layout->setContentsMargins(20, 6, 16, 6);
             layout->invalidate();
             layout->activate();
         }
@@ -754,8 +781,6 @@ void TaskPanel::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     if (m_windowControls)
         updateWindowControlsPosition();
-    if (m_notice && m_notice->isVisible())
-        m_notice->move((width() - m_notice->width()) / 2, height() - m_notice->height() - 28);
 }
 
 void TaskPanel::mousePressEvent(QMouseEvent* event) {
@@ -851,6 +876,12 @@ void TaskPanel::showTaskMenu(const QPoint& position) {
             if (!flush()) return;
             const QString newId = m_store->cloneTask(id);
             if (!newId.isEmpty()) showTask(newId);
+        });
+        auto* abandon = menu.addAction(AppIcons::icon(IconId::Abandoned, 16), QStringLiteral("放弃任务"));
+        abandon->setObjectName(QStringLiteral("CmdAbandon"));
+        abandon->setEnabled(entity.status == TaskStatus::Active);
+        connect(abandon, &QAction::triggered, this, [this, id]() {
+            if (flush()) m_store->abandonTask(id);
         });
         menu.addSeparator();
         auto* trash = menu.addAction(AppIcons::icon(IconId::Trash, 16), QStringLiteral("移到回收站"));

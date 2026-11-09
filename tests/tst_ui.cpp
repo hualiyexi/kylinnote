@@ -64,6 +64,7 @@
 #include "ui/TaskDelegate.h"
 #include "ui/TaskListModel.h"
 #include "ui/TaskPanel.h"
+#include "ui/ToastIsland.h"
 #include "ui/WindowChrome.h"
 #include "ui/design/TypeSystem.h"
 using namespace kl;
@@ -703,7 +704,7 @@ private slots:
         QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right());
         auto* info = detailPane->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
         QVERIFY(info);
-        QVERIFY(rectIn(info, &panel).right() < rectIn(controls, &panel).left());
+        QVERIFY(rectIn(info, &panel).top() >= rectIn(controls, &panel).bottom());
         QTest::mouseClick(detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose")), Qt::LeftButton);
         QTRY_VERIFY(!detailPane->isVisible());
         QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right());
@@ -713,6 +714,62 @@ private slots:
         QTRY_VERIFY(panel.isMaximized());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
         QTRY_VERIFY(!panel.isMaximized());
+    }
+
+    void toastIslandSupportsUndoAndHoverLifetime() {
+        ToastIsland toast;
+        toast.showMessage(QStringLiteral("普通提示"), 120);
+        QVERIFY(toast.isVisible());
+        QVERIFY(!toast.findChild<QToolButton*>(QStringLiteral("ToastAction"))->isVisible());
+        QTest::qWait(180);
+        QVERIFY(!toast.isVisible());
+
+        int calls = 0;
+        toast.showAction(QStringLiteral("任务已完成"), QStringLiteral("撤销"), [&calls]() {
+            ++calls;
+            return true;
+        }, 180);
+        auto* action = toast.findChild<QToolButton*>(QStringLiteral("ToastAction"));
+        QVERIFY(action && action->isVisible());
+        QTest::qWait(60);
+        QEvent enter(QEvent::Enter);
+        QApplication::sendEvent(&toast, &enter);
+        const int paused = toast.remainingTime();
+        QTest::qWait(230);
+        QVERIFY(toast.isVisible());
+        QVERIFY(toast.remainingTime() <= paused);
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(&toast, &leave);
+        QTest::qWait(70);
+        QVERIFY(toast.isVisible());
+        QTest::mouseClick(action, Qt::LeftButton);
+        QCOMPARE(calls, 1);
+        QVERIFY(!toast.isVisible());
+        toast.showMessage(QStringLiteral("再次提示"), 100);
+        QTest::qWait(150);
+        QVERIFY(!toast.isVisible());
+    }
+
+    void taskStatusToastRestoresPreviousState() {
+        const QString id = m_store->createTask(QStringLiteral("可撤销的任务状态"));
+        TaskPanel panel(m_store.get());
+        panel.showTask(id);
+        auto* toast = panel.findChild<ToastIsland*>(QStringLiteral("WorkspaceToast"));
+        auto* listPane = panel.findChild<QFrame*>(QStringLiteral("ListPane"));
+        QVERIFY(toast && listPane);
+        QVERIFY(m_store->setCompleted(id, true));
+        QTRY_VERIFY(toast->isVisible());
+        QCOMPARE(toast->findChild<QLabel*>(QStringLiteral("ToastText"))->text(), QStringLiteral("任务已完成"));
+        QVERIFY(toast->parentWidget() == listPane);
+        QVERIFY(rectIn(toast, listPane).bottom() < listPane->rect().bottom());
+        QTest::mouseClick(toast->findChild<QToolButton*>(QStringLiteral("ToastAction")), Qt::LeftButton);
+        QTRY_COMPARE(m_store->entity(id).status, TaskStatus::Active);
+        QVERIFY(!m_store->entity(id).completed);
+        QVERIFY(m_store->abandonTask(id));
+        QTRY_VERIFY(toast->isVisible());
+        QCOMPARE(toast->findChild<QLabel*>(QStringLiteral("ToastText"))->text(), QStringLiteral("任务已放弃"));
+        QTest::mouseClick(toast->findChild<QToolButton*>(QStringLiteral("ToastAction")), Qt::LeftButton);
+        QTRY_COMPARE(m_store->entity(id).status, TaskStatus::Active);
     }
 
     void quickAddAndDetailPersistWithoutLosingPresentation() {
@@ -1561,6 +1618,13 @@ private slots:
         if (!dir.isEmpty()) {
             QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
+            QVERIFY(m_store->setCompleted(id, true));
+            auto* toast = panel.findChild<ToastIsland*>(QStringLiteral("WorkspaceToast"));
+            QVERIFY(toast);
+            QTRY_VERIFY(toast->isVisible());
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-toast.png")));
+            QVERIFY(m_store->setStatus(id, TaskStatus::Active));
+            toast->hide();
             panel.showTask();
             QTest::qWait(30);
             auto* closeDetail = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));

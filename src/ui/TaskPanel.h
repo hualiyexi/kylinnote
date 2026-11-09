@@ -2,6 +2,7 @@
 #define KYLINLIST_TASKPANEL_H
 
 #include <QMainWindow>
+#include <QHash>
 #include "../domain/ViewSpec.h"
 class QListWidget;
 class QListView;
@@ -18,6 +19,7 @@ class TaskStore;
 class TaskListModel;
 class TaskDetailWidget;
 class WindowControls;
+class ToastIsland;
 class TaskPanel : public QMainWindow {
     Q_OBJECT
 public:
@@ -51,6 +53,8 @@ private:
     void workspaceMenu();
     void showError(const QString& message);
     void showNotice(const QString& message);
+    void showUndoableStatus(const QString& id, TaskStatus previous);
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void setDetailVisible(bool visible);
     void refreshWorkspaceIcons();
     void updateWindowControlsPosition();
@@ -74,9 +78,10 @@ private:
     WindowControls* m_windowControls = nullptr;
     QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
     QToolButton* m_quickDate = nullptr;
-    QLabel* m_notice = nullptr;
+    ToastIsland* m_toast = nullptr;
     ViewSpec m_filter;
     QString m_selectedId = QString();
+    QHash<QString, TaskStatus> m_taskStates;
     bool m_resetting = false, m_rebuilding = false, m_restoreFrozen = false;
     bool m_windowDragging = false;
     QPoint m_windowDragOffset;

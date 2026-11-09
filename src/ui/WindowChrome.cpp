@@ -49,7 +49,7 @@ void WindowDragArea::mouseDoubleClickEvent(QMouseEvent* event) {
 WindowControls::WindowControls(QWidget* parent) : QWidget(parent), m_window(parent) {
     setObjectName(QStringLiteral("WindowControls"));
     setAttribute(Qt::WA_StyledBackground, true);
-    setFixedSize(138, 48);
+    setFixedSize(138, 36);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -57,7 +57,7 @@ WindowControls::WindowControls(QWidget* parent) : QWidget(parent), m_window(pare
                                       const QString& tooltip, const QString& accessible) {
         target = new QToolButton(this);
         target->setObjectName(name);
-        target->setFixedSize(46, 48);
+        target->setFixedSize(46, 36);
         target->setAutoRaise(true);
         target->setToolTip(tooltip);
         target->setAccessibleName(accessible);

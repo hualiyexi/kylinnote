@@ -186,7 +186,8 @@ QString buildStyleSheet(Theme theme) {
             "QWidget#WindowDragArea{background:transparent;}"
             "QLabel#WorkspaceNotice{background:%10;color:%6;border:1px solid %2;"
             "border-radius:8px;padding:9px 14px;}"
-            "QListView#TaskList{background:transparent;}")
+            "QListView#TaskList{background:transparent;}"
+            "QFrame#ToastIsland{background:transparent;border:0;}")
             .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
             .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar)
             .arg(onPrimary).arg(menuBg);
