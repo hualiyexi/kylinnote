@@ -146,7 +146,7 @@ void TaskPanel::buildUi() {
     central->setObjectName(QStringLiteral("WorkspaceRoot"));
     setCentralWidget(central);
     auto* root = new QVBoxLayout(central);
-    root->setContentsMargins(16, 16, 16, 16);
+    root->setContentsMargins(18, 18, 18, 18);
     root->setSpacing(0);
 
     // 错误只在发生时占位，不再使用常驻状态栏。
@@ -732,7 +732,7 @@ void TaskPanel::setDetailVisible(bool visible) {
 
 void TaskPanel::updateWindowControlsPosition() {
     if (!m_windowControls) return;
-    const int inset = (isMaximized() || isFullScreen()) ? 0 : 16;
+    const int inset = (isMaximized() || isFullScreen()) ? 0 : 18;
     m_windowControls->setGeometry(width() - m_windowControls->width() - inset, inset,
                                  m_windowControls->width(), m_windowControls->height());
     if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
