@@ -687,32 +687,32 @@ private slots:
         QVERIFY(panel.windowFlags() & Qt::NoDropShadowWindowHint);
         QVERIFY(panel.testAttribute(Qt::WA_TranslucentBackground));
         QVERIFY(panel.mask().isEmpty());
-        QCOMPARE(rectIn(rail, &panel).top(), 16);
-        QCOMPARE(rectIn(navigationPane, &panel).top(), 16);
-        QCOMPARE(rectIn(listPane, &panel).top(), 16);
+        QCOMPARE(rectIn(rail, &panel).top(), 18);
+        QCOMPARE(rectIn(navigationPane, &panel).top(), 18);
+        QCOMPARE(rectIn(listPane, &panel).top(), 18);
         QVERIFY(!panel.findChild<QStatusBar*>());
         QVERIFY(!panel.findChild<QPushButton*>(QStringLiteral("QuickAddButton"))->isVisible());
         QVERIFY(!panel.findChild<QLineEdit*>(QStringLiteral("TaskSearch"))->isVisible());
         QCOMPARE(rail->width(), 52);
-        QCOMPARE(rectIn(rail, &panel).left(), 16);
+        QCOMPARE(rectIn(rail, &panel).left(), 18);
         QCOMPARE(rectIn(navigationPane, &panel).left(), rectIn(rail, &panel).right() + 1);
         QCOMPARE(rectIn(listPane, &panel).left(), rectIn(navigationPane, &panel).right() + 1);
         QVERIFY(!detailPane->isVisible());
-        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 16);
-        QCOMPARE(rectIn(controls, &panel).top(), 16);
-        QCOMPARE(rectIn(controls, &panel).right(), panel.rect().right() - 16);
+        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 18);
+        QCOMPARE(rectIn(controls, &panel).top(), 18);
+        QCOMPARE(rectIn(controls, &panel).right(), panel.rect().right() - 18);
 
         const QString id = m_store->createTask(QStringLiteral("展开第四列"));
         panel.showTask(id);
         QTRY_VERIFY(detailPane->isVisible());
         QCOMPARE(rectIn(detailPane, &panel).left(), rectIn(listPane, &panel).right() + 1);
-        QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right() - 16);
+        QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right() - 18);
         auto* info = detailPane->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
         QVERIFY(info);
         QVERIFY(rectIn(info, &panel).top() >= rectIn(controls, &panel).bottom());
         QTest::mouseClick(detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose")), Qt::LeftButton);
         QTRY_VERIFY(!detailPane->isVisible());
-        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 16);
+        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 18);
         panel.showTask(id);
         QTRY_VERIFY(detailPane->isVisible());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
@@ -1627,9 +1627,14 @@ private slots:
         if (!dir.isEmpty()) {
             QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
-            QImage corner = panel.grab().toImage().copy(panel.width() - 190, 0, 190, 150)
-                .scaled(760, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-            QVERIFY(corner.save(dir + QStringLiteral("/window-corner-detail.png")));
+            QImage corner = panel.grab().toImage().copy(panel.width() - 190, 0, 190, 150);
+            QImage onLight(corner.size(), QImage::Format_ARGB32_Premultiplied);
+            onLight.fill(QColor(QStringLiteral("#E9E9E9")));
+            QPainter cornerPainter(&onLight);
+            cornerPainter.drawImage(0, 0, corner);
+            cornerPainter.end();
+            QVERIFY(onLight.scaled(760, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(dir + QStringLiteral("/window-corner-detail.png")));
             QVERIFY(m_store->setCompleted(id, true));
             auto* toast = panel.findChild<ToastIsland*>(QStringLiteral("WorkspaceToast"));
             QVERIFY(toast);

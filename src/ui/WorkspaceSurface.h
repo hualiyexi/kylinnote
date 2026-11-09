@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QImage>
 
 namespace kl {
 
@@ -17,6 +18,8 @@ protected:
 
 private:
     void updateClip();
+    void updateShadow();
+    QImage m_shadow;
     bool m_rounded = true;
 };
 

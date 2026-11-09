@@ -54,7 +54,7 @@ ColorTable makeLight() {
     set(ColorToken::HighlightBlue, 0xFFCFE6FA);
     set(ColorToken::HighlightPink, 0xFFF9D6DF);
     set(ColorToken::HighlightPurple, 0xFFE7DAF7);
-    set(ColorToken::WindowBorder, 0xFFC9CDD3);
+    set(ColorToken::WindowBorder, 0xFFADB3BC);
     return t;
 }
 
