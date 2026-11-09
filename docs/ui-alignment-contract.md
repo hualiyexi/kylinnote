@@ -72,6 +72,7 @@
 | 格式按钮位置 | 底栏「A」图标 → 悬浮格式面板 + 选中文字气泡条 | 用户确认；考据 `field-notes:87` `td-footer-markdown` + `03:36` + t02 + 官方旧图；气泡条为 KylinList 补设计（Web 现场未采到选区气泡，Windows 册 `editormenuex.baml` 仅静态线索） | ①③⑤ |
 | 底栏按钮 | 清单名(左) + A/评论/···(右) | 对齐 t02/官方旧图；去掉「立即保存」「更多设置」平铺 | ①② |
 | 日期/时间/提醒/重复 | 全部走 DatePickerPopup 浮层子页面 | 考据 `01:11` 临时操作层；移除折叠区三行 QDateTimeEdit 平铺 | ① |
+| 编辑/预览分区 | 去掉，改为行内所见即所得（WYSIWYG） | 用户要求「离开这一行就要渲染好」；当前行显示 Markdown 源码，其他行渲染富文本；类似 Typora/Notion/滴答 ProseMirror | ⑤ |
 
 ## 实施状态
 
