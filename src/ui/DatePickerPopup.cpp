@@ -130,7 +130,7 @@ QToolButton* makeBackButton(QWidget* parent)
 } // namespace
 
 DatePickerPopup::DatePickerPopup(QWidget* parent)
-    : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint)
+    : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint)
     , m_dateTime(appNow())
     , m_visibleMonth(QDate(toAppTime(m_dateTime).date().year(), toAppTime(m_dateTime).date().month(), 1))
 {

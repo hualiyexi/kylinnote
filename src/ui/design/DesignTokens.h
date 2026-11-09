@@ -92,6 +92,8 @@ enum class ColorToken : int {
     Overdue,
     Scrollbar, ScrollbarHover,
     TooltipBg, TooltipText,
+    DetailDivider,
+    HighlightYellow, HighlightGreen, HighlightBlue, HighlightPink, HighlightPurple,
     Count
 };
 

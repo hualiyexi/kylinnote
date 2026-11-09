@@ -131,7 +131,40 @@ QString buildStyleSheet(Theme theme) {
         .arg(menuDisabled)  // %23
         .arg(scrollbar)     // %24
         .arg(scrollbarHover)// %25
-        ;
+        + QStringLiteral(
+            "QWidget#TaskDetailHost,QWidget#TaskDetailForm,QScrollArea#DetailScroll,"
+            "QScrollArea#DetailScroll>QWidget{background:%1;}"
+            "QFrame#DetailHeader{background:%1;border:0;border-bottom:1px solid %2;}"
+            "QFrame#DetailFooter{background:%1;border:0;}"
+            "QFrame#DetailFrame{background:%1;border:0;}"
+            "QSplitter#WorkspaceSplitter::handle{background:%2;}"
+            "QSplitter#WorkspaceSplitter::handle:hover{background:%5;}"
+            "QLineEdit#TaskTitle,QLineEdit#TaskTitle:hover,QLineEdit#TaskTitle:focus{"
+            "background:transparent;border:0;border-radius:0;padding:0;color:%6;}"
+            "QWidget#TaskDetailForm QTextEdit#DescriptionEditor,"
+            "QWidget#TaskDetailForm QTextEdit#DescriptionEditor:focus{"
+            "background:transparent;border:0;border-radius:0;padding:0;}"
+            "QPushButton#DateChip{background:transparent;border:0;padding:4px;"
+            "text-align:left;color:%3;}"
+            "QPushButton#DateChip:hover,QPushButton#DateChip:focus{background:%4;}"
+            "QPushButton#DateChip[overdue=\"true\"]{color:%7;}"
+            "QToolButton#DetailInfo,QToolButton#DetailReminder{padding:0;border:0;}"
+            "QToolButton#GroupChip{padding:4px 6px;border:0;}"
+            "QToolButton#FooterFormat,QToolButton#FooterComment,QToolButton#DetailMore{"
+            "padding:0;border:0;}"
+            "QToolButton#FooterFormat:checked{background:%4;}"
+            "QListWidget#TaskChecklist{background:transparent;border:0;border-radius:0;padding:0;}"
+            "QListWidget#TaskChecklist::item{min-height:24px;padding:2px 0;border:0;}"
+            "QListWidget#TaskChecklist::item:selected{background:%5;color:%6;}"
+            "QLineEdit#ChecklistInput,QLineEdit#ChecklistInput:hover,QLineEdit#ChecklistInput:focus{"
+            "background:transparent;border:0;padding:4px 0;}"
+            "QWidget#AttachmentRow[inlineAttachment=\"true\"]{background:transparent;min-height:28px;}"
+            "QToolButton#AttachmentActions{min-width:24px;max-width:24px;"
+            "min-height:24px;max-height:24px;padding:0;}"
+            "QToolButton#AttachmentActions::menu-indicator{image:none;width:0;height:0;}"
+            "QLabel#DetailStatus{color:%7;padding:6px 0;}")
+            .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
+            .arg(hover).arg(selection).arg(text).arg(danger);
 }
 
 QString buildPreviewCss(Theme theme) {

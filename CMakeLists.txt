@@ -59,6 +59,7 @@ set(KYLINLIST_UI_SOURCES
     src/app/NoteManager.cpp
     src/app/TrayController.cpp
     src/platform/ScreenFit.cpp
+    src/platform/SystemShadow.cpp
     src/platform/GlobalHotkey.cpp
     src/ui/NoteWidget.cpp
     src/ui/TitleBar.cpp
@@ -84,6 +85,7 @@ set(KYLINLIST_UI_SOURCES
     src/ui/ReminderPopup.cpp
     src/ui/EntityCommands.cpp
     src/ui/DatePickerPopup.cpp
+    src/ui/DetailPopups.cpp
     src/ui/FormatToolbar.cpp
 )
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)

@@ -184,7 +184,9 @@ void TaskPanel::buildUi() {
     body->addWidget(sidebar);
 
     // ========== 中间列表区 ==========
-    m_splitter = new QSplitter(Qt::Horizontal, this); m_splitter->setHandleWidth(4);
+    m_splitter = new QSplitter(Qt::Horizontal, this);
+    m_splitter->setObjectName(QStringLiteral("WorkspaceSplitter"));
+    m_splitter->setHandleWidth(1);
     body->addWidget(m_splitter, 1);
     auto* middle = new QFrame(this); middle->setObjectName(QStringLiteral("ListPane"));
     middle->setMinimumWidth(300);
@@ -268,6 +270,13 @@ void TaskPanel::buildUi() {
     m_splitter->addWidget(detailFrame); m_splitter->setSizes({560, 440});
     m_splitter->setStretchFactor(0, 1); m_splitter->setStretchFactor(1, 1);
     m_splitter->setChildrenCollapsible(false);
+    connect(m_detail, &TaskDetailWidget::focusModeRequested, this,
+            [this, sidebar, middle, normalSizes = QList<int>()](bool enabled) mutable {
+        if (enabled) normalSizes = m_splitter->sizes();
+        sidebar->setVisible(!enabled);
+        middle->setVisible(!enabled);
+        if (!enabled && !normalSizes.isEmpty()) m_splitter->setSizes(normalSizes);
+    });
 
     // ========== 信号连接 ==========
     connect(m_model, &QAbstractItemModel::modelAboutToBeReset, this, [this]() { m_resetting = true; });

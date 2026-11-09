@@ -17,6 +17,7 @@ enum class TypeScale : int {
     Subtitle,     // 次级标题/菜单
     Title,        // 面板标题
     Display,      // 大标题
+    DetailTitle,  // 文档内的实体标题
     Count
 };
 qreal pointSize(TypeScale scale);
@@ -29,6 +30,7 @@ enum class FontScene : int {
     Section,    // 分区小标题
     Caption,    // 辅助/计数
     Mono,       // 等宽/代码
+    DetailTitle,// 与正文融为一体的实体标题
     Count
 };
 

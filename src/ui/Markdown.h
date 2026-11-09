@@ -1,9 +1,11 @@
 #ifndef KYLINLIST_MARKDOWN_H
 #define KYLINLIST_MARKDOWN_H
 
+#include <QColor>
 #include <QHash>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QTextBrowser>
 #include "../domain/Entity.h"
 namespace kl {
@@ -12,6 +14,10 @@ class EntityHoverPreview;
 namespace Markdown {
 using EntityMap = QHash<QString, Entity>;
 EntityMap entityMap(const QVector<Entity>& entities);
+// Persist only semantic color names in <mark data-color="…">; theme colors stay in the renderer.
+QStringList highlightColors();
+QString highlightLabel(const QString& name);
+QColor highlightColor(const QString& name);
 QString toHtml(const QString& source, const EntityMap& targets = EntityMap());
 QString displayHtml(const Entity& task, const EntityMap& targets = EntityMap());
 QString plainText(const Entity& task, const EntityMap& targets = EntityMap());
