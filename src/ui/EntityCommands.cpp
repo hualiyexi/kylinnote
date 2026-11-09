@@ -144,8 +144,9 @@ CommandInfo commandInfo(EntityCommand cmd)
 void setActionText(QAction *action, const QString &text)
 {
     action->setText(text);
-    action->setToolTip(text); action->setStatusTip(text);
+    action->setProperty("accessibleName", text);
     action->setToolTip(text);
+    action->setStatusTip(text);
 }
 
 QMenu *newMenu(const QString &objectName, QWidget *parent)
@@ -162,7 +163,7 @@ QAction *addSeparator(QMenu *menu)
 {
     QAction *separator = menu->addSeparator();
     separator->setObjectName(QStringLiteral("separator%1").arg(menu->actions().size()));
-    separator->setToolTip(QStringLiteral("命令分组"));
+    separator->setProperty("accessibleName", QStringLiteral("命令分组"));
     separator->setToolTip(QStringLiteral("命令分组"));
     separator->setIcon(AppIcons::icon(IconId::None));
     return separator;
@@ -173,8 +174,9 @@ QWidgetAction *addWidgetAction(QMenu *menu, QWidget *widget, const QString &obje
 {
     QWidgetAction *action = new QWidgetAction(menu);
     action->setObjectName(objectName);
-    action->setToolTip(accessibleName); action->setStatusTip(accessibleName);
+    action->setProperty("accessibleName", accessibleName);
     action->setToolTip(accessibleName);
+    action->setStatusTip(accessibleName);
     action->setIcon(AppIcons::icon(icon));
     action->setDefaultWidget(widget);
     menu->addAction(action);
@@ -253,6 +255,10 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
         setActionText(convert, isTask ? QStringLiteral("转换为笔记") : QStringLiteral("转换为任务"));
         menu->addAction(convert);
         menu->addAction(makeAction(EntityCommand::Delete, entityId, menu));
+        // entityId 只是代表项；批量写操作必须由持有完整选中集合的宿主执行。
+        const QList<QAction *> batchActions = menu->findChildren<QAction *>();
+        for (QAction *action : batchActions)
+            action->setProperty("batchCommand", true);
         return menu;
     }
 
@@ -426,8 +432,9 @@ QAction *EntityCommands::makeAction(EntityCommand cmd, const QString &entityId, 
     const CommandInfo info = commandInfo(cmd);
     QAction *action = new QAction(AppIcons::icon(info.icon), info.text, parent);
     action->setObjectName(QString::fromLatin1(info.objectName));
-    action->setToolTip(info.text); action->setStatusTip(info.text);
+    action->setProperty("accessibleName", info.text);
     action->setToolTip(info.text);
+    action->setStatusTip(info.text);
     action->setProperty("entityCommand", static_cast<int>(cmd));
     action->setProperty("entityId", entityId);
     action->setIconVisibleInMenu(true);
@@ -471,6 +478,7 @@ void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const 
         button->setIconSize(QSize(18, 18));
         button->setFocusPolicy(Qt::StrongFocus);
         button->setDefaultAction(action);
+        button->setAccessibleName(action->property("accessibleName").toString());
         connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
         layout->addWidget(button);
     };
@@ -487,7 +495,7 @@ void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const 
         // R06 无日期样本的省略号为 disabled 溢出项，不可点击。
         QAction *overflow = new QAction(AppIcons::icon(IconId::More), QStringLiteral("更多日期"), host);
         overflow->setObjectName(QStringLiteral("dateOverflowAction"));
-        overflow->setToolTip(QStringLiteral("更多日期"));
+        overflow->setProperty("accessibleName", QStringLiteral("更多日期"));
         overflow->setToolTip(QStringLiteral("更多日期"));
         overflow->setEnabled(false);
         QToolButton *button = new QToolButton(host);
@@ -497,6 +505,7 @@ void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const 
         button->setFixedSize(34, 34);
         button->setIconSize(QSize(18, 18));
         button->setDefaultAction(overflow);
+        button->setAccessibleName(overflow->property("accessibleName").toString());
         layout->addWidget(button);
     }
 
@@ -523,6 +532,7 @@ void EntityCommands::addPriorityBar(QMenu *menu, const MenuContext &ctx, const Q
         button->setIconSize(QSize(18, 18));
         button->setFocusPolicy(Qt::StrongFocus);
         button->setDefaultAction(action);
+        button->setAccessibleName(action->property("accessibleName").toString());
         connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
         layout->addWidget(button);
     };
@@ -553,6 +563,7 @@ void EntityCommands::addViewBar(QMenu *menu)
         button->setIconSize(QSize(18, 18));
         button->setFocusPolicy(Qt::StrongFocus);
         button->setDefaultAction(action);
+        button->setAccessibleName(action->property("accessibleName").toString());
         connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
         layout->addWidget(button);
     };
@@ -562,7 +573,7 @@ void EntityCommands::addViewBar(QMenu *menu)
 
     QAction *overflow = new QAction(AppIcons::icon(IconId::More), QStringLiteral("更多视图"), host);
     overflow->setObjectName(QStringLiteral("viewOverflowAction"));
-    overflow->setToolTip(QStringLiteral("更多视图"));
+    overflow->setProperty("accessibleName", QStringLiteral("更多视图"));
     overflow->setToolTip(QStringLiteral("更多视图"));
     overflow->setEnabled(false);
     QToolButton *button = new QToolButton(host);
@@ -594,7 +605,7 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
     search->installEventFilter(this);
     QWidgetAction *searchAction = new QWidgetAction(moveMenu);
     searchAction->setObjectName(QStringLiteral("moveToSearchAction"));
-    searchAction->setToolTip(QStringLiteral("搜索目标清单"));
+    searchAction->setProperty("accessibleName", QStringLiteral("搜索目标清单"));
     searchAction->setToolTip(QStringLiteral("搜索目标清单"));
     searchAction->setIcon(AppIcons::icon(IconId::Search));
     searchAction->setDefaultWidget(search);
@@ -623,8 +634,9 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
                                       indented ? QStringLiteral("    ") + list.name : list.name,
                                       moveMenu);
         action->setObjectName(QStringLiteral("moveToList.%1").arg(list.id));
-        action->setToolTip(QStringLiteral("移动到%1").arg(list.name)); action->setStatusTip(QStringLiteral("移动到%1").arg(list.name));
+        action->setProperty("accessibleName", QStringLiteral("移动到%1").arg(list.name));
         action->setToolTip(QStringLiteral("移动到“%1”").arg(list.name));
+        action->setStatusTip(QStringLiteral("移动到“%1”").arg(list.name));
         action->setProperty("targetListId", list.id);
         action->setProperty("targetListName", list.name);
         action->setProperty("moveFolderId", folderId);
@@ -638,7 +650,7 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
     for (const Folder &folder : folders) {
         QAction *heading = new QAction(AppIcons::icon(IconId::Folder), folder.name, moveMenu);
         heading->setObjectName(QStringLiteral("moveFolder.%1").arg(folder.id));
-        heading->setToolTip(QStringLiteral("文件夹%1").arg(folder.name));
+        heading->setProperty("accessibleName", QStringLiteral("文件夹%1").arg(folder.name));
         heading->setToolTip(QStringLiteral("文件夹：%1").arg(folder.name));
         heading->setProperty("moveFolderHeading", folder.id);
         heading->setProperty("moveFolderName", folder.name);
@@ -656,7 +668,7 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
 
     QAction *empty = new QAction(AppIcons::icon(IconId::Search), QStringLiteral("没有匹配清单"), moveMenu);
     empty->setObjectName(QStringLiteral("moveToEmpty"));
-    empty->setToolTip(QStringLiteral("没有匹配清单"));
+    empty->setProperty("accessibleName", QStringLiteral("没有匹配清单"));
     empty->setToolTip(QStringLiteral("没有匹配清单"));
     empty->setEnabled(false);
     empty->setVisible(false);
@@ -748,6 +760,13 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
 {
     if (cmd == EntityCommand::Count) {
         emit errorOccurred(QStringLiteral("未知实体命令"));
+        return;
+    }
+
+    QAction *sourceAction = qobject_cast<QAction *>(sender());
+    if (sourceAction && sourceAction->property("batchCommand").toBool()) {
+        // 批量命令仍统一经过本入口，但不能只写入代表项 entityId。
+        emit commandExecuted(cmd, entityId);
         return;
     }
 
