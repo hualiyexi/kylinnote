@@ -39,13 +39,17 @@ private:
     void beginTextSession();
     bool endTextSession();
     void showMoreMenu();
+    void openDatePicker();
+    void setSettingsExpanded(bool expanded);
     TaskStore* m_store;
     QString m_id;
     bool m_loading = false, m_saving = false;
     QSet<QString> m_dirty;
     QString m_editSession;
     QTimer m_saveTimer;
-    QWidget* m_form = nullptr;
+    QWidget* m_detailHost = nullptr;   // 有实体时显示的整体（顶栏+主区+底栏）
+    QWidget* m_form = nullptr;         // 主区内容（正文/检查清单/折叠设置）
+    QWidget* m_settingsHost = nullptr; // 低频字段折叠区，默认隐藏
     QWidget *m_scheduleHost = nullptr, *m_priorityHost = nullptr, *m_appearanceHost = nullptr;
     QLabel *m_empty = nullptr, *m_status = nullptr;
     QLineEdit *m_title = nullptr, *m_tags = nullptr, *m_checkInput = nullptr;
@@ -54,13 +58,13 @@ private:
               *m_layer = nullptr;
     QCheckBox *m_hasStart = nullptr, *m_hasDue = nullptr, *m_hasReminder = nullptr;
     QDateTimeEdit *m_start = nullptr, *m_due = nullptr, *m_reminder = nullptr;
+    QPushButton* m_dateChip = nullptr;      // 顶栏「设置日期」chip，打开 DatePickerPopup
+    QPushButton* m_settingsToggle = nullptr;
     MarkdownEditor* m_description = nullptr;
     AttachmentWidget* m_attachments = nullptr;
     QListWidget* m_checklist = nullptr;
     QPushButton *m_remove = nullptr, *m_restore = nullptr;
     QToolButton *m_moreButton = nullptr;
-    // R8: 底部固定工具栏中的低频动作收纳到更多菜单
-    // m_convert 和 m_activity 移入更多菜单，不再平铺
 };
 }  // namespace kl
 
