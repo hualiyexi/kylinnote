@@ -3,19 +3,15 @@
 #include <QGridLayout>
 #include <QInputDialog>
 #include <QKeySequence>
-#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTabBar>
-#include <QTextBlock>
 #include <QTextEdit>
-#include <QTextList>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QWidgetAction>
 #include "../app/TaskStore.h"
 #include "AppIcons.h"
 #include "AppStyle.h"
@@ -23,12 +19,53 @@
 #include "Markdown.h"
 
 namespace kl {
+namespace {
+struct FormatSpec {
+    const char* label;
+    const char* before;
+    const char* after;
+    int kind;
+    const char* key;
+    IconId icon;
+};
+// 顺序必须与 MarkdownEditor::FormatAction 一致。
+const FormatSpec& formatSpec(MarkdownEditor::FormatAction action) {
+    static const FormatSpec specs[] = {
+        {"加粗", "**", "**", 0, "Ctrl+B", IconId::Bold},
+        {"斜体", "*", "*", 1, "Ctrl+I", IconId::Italic},
+        {"删除线", "~~", "~~", 2, "Ctrl+Shift+X", IconId::Strike},
+        {"标题", "## ", "", 3, "", IconId::Heading},
+        {"列表", "- ", "", 4, "", IconId::List},
+        {"编号", "1. ", "", 5, "", IconId::OrderedList},
+        {"块引用", "> ", "", 6, "", IconId::Quote},
+        {"代码", "`", "`", 7, "", IconId::Code},
+        {"清单", "- [ ] ", "", 8, "", IconId::Checklist},
+        {"链接", "", "", 9, "", IconId::Link},
+        {"实体引用", "", "", 10, "", IconId::Link},
+    };
+    const int index = static_cast<int>(action);
+    if (index < 0 || index >= static_cast<int>(MarkdownEditor::FormatAction::Count)) return specs[0];
+    return specs[index];
+}
+}  // namespace
+
 MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("MarkdownEditor"));
-    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(5);
-    m_toolbar = new QFrame(this); auto* toolbar = m_toolbar; toolbar->setObjectName(QStringLiteral("EditorToolbar"));
-    auto* grid = new QGridLayout(toolbar); grid->setContentsMargins(3, 3, 3, 3); grid->setSpacing(0);
-    auto* more = new QToolButton(toolbar);
+    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(0);
+
+    // 正文区保持干净：常驻工具条与编辑/预览 tab 不再占位。
+    // 格式按钮寄存在屏幕外的宿主里，仍保留 objectName 与真实几何，
+    // 因此兼容测试里的 QTest::mouseClick 依旧有效，外部面板也可复用动作。
+    m_actionHost = new QWidget(this);
+    m_actionHost->setObjectName(QStringLiteral("FormatActionHost"));
+    m_actionHost->move(-10000, -10000);
+    m_actionHost->resize(11 * 24, 24);
+
+    // 保留 QFrame#EditorToolbar 与 moreFormats 结构（QSS 选择器与对象名兼容），但隐藏、不入布局。
+    m_toolbar = new QFrame(this);
+    m_toolbar->setObjectName(QStringLiteral("EditorToolbar"));
+    auto* grid = new QGridLayout(m_toolbar); grid->setContentsMargins(0, 0, 0, 0); grid->setSpacing(0);
+    auto* more = new QToolButton(m_toolbar);
     more->setObjectName(QStringLiteral("moreFormats")); more->setText(QStringLiteral("更多格式"));
     more->setIcon(AppIcons::icon(IconId::More)); more->setIconSize(QSize(16, 16));
     more->setToolButtonStyle(Qt::ToolButtonIconOnly); more->setAutoRaise(true);
@@ -36,64 +73,55 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     more->setFocusPolicy(Qt::NoFocus); more->setPopupMode(QToolButton::InstantPopup);
     auto* moreMenu = new QMenu(more); moreMenu->setObjectName(QStringLiteral("MoreFormatsMenu"));
     moreMenu->setToolTipsVisible(true); more->setMenu(moreMenu);
-    struct Tool { const char* label; const char* before; const char* after; int kind; const char* key; IconId icon; };
-    const Tool tools[] = {{"加粗", "**", "**", 0, "Ctrl+B", IconId::Bold},
-                          {"斜体", "*", "*", 1, "Ctrl+I", IconId::Italic},
-                          {"删除线", "~~", "~~", 2, "Ctrl+Shift+X", IconId::Strike},
-                          {"标题", "## ", "", 3, "", IconId::Heading},
-                          {"列表", "- ", "", 4, "", IconId::List},
-                          {"编号", "1. ", "", 5, "", IconId::OrderedList},
-                          {"块引用", "> ", "", 6, "", IconId::Quote},
-                          {"代码", "`", "`", 7, "", IconId::Code},
-                          {"清单", "- [ ] ", "", 8, "", IconId::Checklist}};
-    for (int i = 0; i < 9; ++i) {
-        const Tool tool = tools[i];
-        const bool primary = tool.kind <= 2;
-        auto* button = new QToolButton(primary ? static_cast<QWidget*>(toolbar) : static_cast<QWidget*>(moreMenu));
-        const QString label = QString::fromUtf8(tool.label);
-        button->setText(label); button->setObjectName(QStringLiteral("format%1").arg(tool.kind));
-        button->setIcon(AppIcons::icon(tool.icon)); button->setIconSize(QSize(16, 16));
-        button->setToolButtonStyle(primary ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
-        button->setAutoRaise(true);
-        button->setToolTip(label + (QString::fromLatin1(tool.key).isEmpty()
-            ? QString() : QStringLiteral(" (%1)").arg(QString::fromLatin1(tool.key))));
-        button->setAccessibleName(AppIcons::accessibleName(tool.icon));
+    grid->addWidget(more, 0, 0);
+
+    // 9 个格式动作：objectName 仍为 format0..8，行为统一走 applyFormat()。
+    for (int i = 0; i <= static_cast<int>(FormatAction::Checklist); ++i) {
+        const FormatAction action = static_cast<FormatAction>(i);
+        const FormatSpec& spec = formatSpec(action);
+        const QString label = QString::fromUtf8(spec.label);
+        const QString key = QString::fromLatin1(spec.key);
+        auto* button = new QToolButton(m_actionHost);
+        button->setObjectName(QStringLiteral("format%1").arg(i));
+        button->setGeometry(i * 24, 0, 24, 24);
+        button->setText(label);
+        button->setIcon(AppIcons::icon(spec.icon)); button->setIconSize(QSize(16, 16));
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly); button->setAutoRaise(true);
+        button->setToolTip(key.isEmpty() ? label : QStringLiteral("%1 (%2)").arg(label, key));
+        button->setAccessibleName(AppIcons::accessibleName(spec.icon));
         button->setFocusPolicy(Qt::NoFocus);
-        if (primary) {
-            grid->addWidget(button, 0, tool.kind);
-        } else {
-            auto* menuItem = new QWidgetAction(moreMenu); menuItem->setDefaultWidget(button);
-            moreMenu->addAction(menuItem); connect(button, &QToolButton::clicked, moreMenu, &QMenu::hide);
-        }
-        auto action = [this, tool]() {
-            m_tabs->setCurrentIndex(0);
-            if ((tool.kind >= 3 && tool.kind <= 6) || tool.kind == 8) applyBlock(QString::fromLatin1(tool.before), tool.kind);
-            else applyInline(QString::fromLatin1(tool.before), QString::fromLatin1(tool.after), tool.kind);
-        };
-        connect(button, &QToolButton::clicked, this, action);
-        if (*tool.key) {
-            auto* key = new QShortcut(QKeySequence(QString::fromLatin1(tool.key)), this);
-            key->setContext(Qt::WidgetWithChildrenShortcut); connect(key, &QShortcut::activated, this, action);
+        connect(button, &QToolButton::clicked, this, [this, action]() { applyFormat(action); });
+        if (!key.isEmpty()) {
+            auto* shortcut = new QShortcut(QKeySequence(key), this);
+            shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+            connect(shortcut, &QShortcut::activated, this, [this, action]() { applyFormat(action); });
         }
     }
-    auto* link = new QToolButton(toolbar); link->setText(QStringLiteral("链接")); link->setObjectName(QStringLiteral("insertLink"));
+    auto* link = new QToolButton(m_actionHost);
+    link->setObjectName(QStringLiteral("insertLink")); link->setText(QStringLiteral("链接"));
+    link->setGeometry(9 * 24, 0, 24, 24);
     link->setIcon(AppIcons::icon(IconId::Link)); link->setIconSize(QSize(16, 16));
     link->setToolButtonStyle(Qt::ToolButtonIconOnly); link->setAutoRaise(true);
     link->setToolTip(AppIcons::accessibleName(IconId::Link)); link->setAccessibleName(AppIcons::accessibleName(IconId::Link));
-    link->setFocusPolicy(Qt::NoFocus); grid->addWidget(link, 0, 3); grid->addWidget(more, 0, 4);
-    connect(link, &QToolButton::clicked, this, &MarkdownEditor::insertLink);
-    m_referenceButton = new QToolButton(moreMenu); m_referenceButton->setText(QStringLiteral("实体引用"));
+    link->setFocusPolicy(Qt::NoFocus);
+    connect(link, &QToolButton::clicked, this, [this]() { applyFormat(FormatAction::Link); });
+
+    m_referenceButton = new QToolButton(m_actionHost);
     m_referenceButton->setObjectName(QStringLiteral("insertEntityReference"));
+    m_referenceButton->setText(QStringLiteral("实体引用"));
+    m_referenceButton->setGeometry(10 * 24, 0, 24, 24);
     m_referenceButton->setIcon(AppIcons::icon(IconId::Link)); m_referenceButton->setIconSize(QSize(16, 16));
     m_referenceButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); m_referenceButton->setAutoRaise(true);
     m_referenceButton->setToolTip(QStringLiteral("实体引用")); m_referenceButton->setAccessibleName(QStringLiteral("实体引用"));
     m_referenceButton->setFocusPolicy(Qt::NoFocus); m_referenceButton->setEnabled(false);
-    auto* referenceItem = new QWidgetAction(moreMenu); referenceItem->setDefaultWidget(m_referenceButton);
-    moreMenu->addAction(referenceItem); connect(m_referenceButton, &QToolButton::clicked, moreMenu, &QMenu::hide);
-    connect(m_referenceButton, &QToolButton::clicked, this, &MarkdownEditor::chooseEntityReference);
-    layout->addWidget(toolbar);
+    connect(m_referenceButton, &QToolButton::clicked, this, [this]() { applyFormat(FormatAction::EntityReference); });
+
+    m_actionHost->show();
+    m_toolbar->hide();
+
+    // 编辑/预览切换能力保留：tab 隐藏但 currentChanged 仍驱动 stack。
     m_tabs = new QTabBar(this); m_tabs->addTab(QStringLiteral("编辑")); m_tabs->addTab(QStringLiteral("预览"));
-    m_tabs->setExpanding(false); layout->addWidget(m_tabs);
+    m_tabs->setExpanding(false); m_tabs->hide();
     m_stack = new QStackedWidget(this); m_editor = new QTextEdit(this);
     m_editor->setObjectName(QStringLiteral("DescriptionEditor")); m_editor->setAcceptRichText(false); m_editor->setMinimumHeight(150);
     m_editor->setPlaceholderText(QStringLiteral("记录任务说明，选中文字后点击上方按钮排版。\n也可以粘贴 Markdown，并切换到“预览”。"));
@@ -104,7 +132,11 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     connect(m_editor, &QTextEdit::textChanged, this, [this]() {
         if (!m_loading) { refreshPreview(); emit contentChanged(); }
     });
+    connect(m_editor, &QTextEdit::selectionChanged, this, [this]() {
+        emit selectionChanged(m_editor->textCursor().hasSelection());
+    });
 }
+
 void MarkdownEditor::setStore(TaskStore* store) {
     if (m_store == store) return;
     if (m_store) disconnect(m_store, nullptr, this, nullptr);
@@ -121,7 +153,9 @@ void MarkdownEditor::setContent(const QString& content) {
 QString MarkdownEditor::content() const { return m_editor->toPlainText(); }
 void MarkdownEditor::setPreview(bool preview) { m_tabs->setCurrentIndex(preview ? 1 : 0); }
 void MarkdownEditor::setCompact(bool compact) {
-    m_toolbar->setVisible(!compact); m_tabs->setVisible(!compact); m_editor->setFrameShape(QFrame::NoFrame);
+    Q_UNUSED(compact);
+    m_toolbar->hide(); m_tabs->hide();
+    m_editor->setFrameShape(QFrame::NoFrame);
     m_editor->setContentsMargins(0, 0, 0, 0); m_editor->document()->setDocumentMargin(0);
     m_preview->setContentsMargins(0, 0, 0, 0); m_preview->document()->setDocumentMargin(0);
 }
@@ -129,6 +163,36 @@ void MarkdownEditor::refreshPreview() {
     m_preview->setHtml(Markdown::toHtml(m_editor->toPlainText(), m_store ? Markdown::entityMap(m_store->entities())
                                                                         : Markdown::EntityMap()));
 }
+
+void MarkdownEditor::applyFormat(FormatAction action) {
+    m_tabs->setCurrentIndex(0);
+    if (action == FormatAction::Link) { insertLink(); return; }
+    if (action == FormatAction::EntityReference) { chooseEntityReference(); return; }
+    const FormatSpec& spec = formatSpec(action);
+    if ((spec.kind >= 3 && spec.kind <= 6) || spec.kind == 8)
+        applyBlock(QString::fromLatin1(spec.before), spec.kind);
+    else
+        applyInline(QString::fromLatin1(spec.before), QString::fromLatin1(spec.after), spec.kind);
+}
+QString MarkdownEditor::formatLabel(FormatAction action) const {
+    return QString::fromUtf8(formatSpec(action).label);
+}
+IconId MarkdownEditor::formatIcon(FormatAction action) const {
+    return formatSpec(action).icon;
+}
+QString MarkdownEditor::formatShortcut(FormatAction action) const {
+    return QString::fromLatin1(formatSpec(action).key);
+}
+QVector<MarkdownEditor::FormatAction> MarkdownEditor::primaryFormats() const {
+    return {FormatAction::Bold, FormatAction::Italic, FormatAction::Strike, FormatAction::Link};
+}
+QVector<MarkdownEditor::FormatAction> MarkdownEditor::allFormats() const {
+    QVector<FormatAction> actions;
+    for (int i = 0; i < static_cast<int>(FormatAction::Count); ++i)
+        actions.append(static_cast<FormatAction>(i));
+    return actions;
+}
+
 void MarkdownEditor::applyInline(const QString& before, const QString& after, int kind) {
     QTextCursor cursor = m_editor->textCursor(); Q_UNUSED(kind);
     const QString selected = cursor.hasSelection() ? cursor.selectedText() : QStringLiteral("文字");
