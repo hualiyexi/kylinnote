@@ -2,6 +2,7 @@
 #define KYLINLIST_MARKDOWNEDITOR_H
 
 #include <QPointer>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 #include "AppIcons.h"
@@ -38,12 +39,20 @@ signals:
     void contentChanged();
     void internalLinkActivated(QString entityId);
     void selectionChanged(bool hasSelection);
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     void applyInline(const QString& before, const QString& after, int formatKind);
     void applyBlock(const QString& prefix, int kind);
     void refreshPreview();
     void insertLink();
     void chooseEntityReference();
+    void renderDocument();
+    void renderLine(int line, bool source);
+    void updateLineStates();
+    void revealLines(int first, int last);
+    void revealSelection();
+    void synchronizeSource();
     QTextEdit* m_editor = nullptr;
     DocumentPreview* m_preview = nullptr;
     QStackedWidget* m_stack = nullptr;
@@ -52,7 +61,11 @@ private:
     QWidget* m_actionHost = nullptr;
     QToolButton* m_referenceButton = nullptr;
     QPointer<TaskStore> m_store;
+    QStringList m_sourceLines;
+    int m_editingLine = -1;
     bool m_loading = false;
+    bool m_rendering = false;
+    bool m_lineUpdatePending = false;
 };
 }  // namespace kl
 
