@@ -456,7 +456,9 @@ private slots:
         QCOMPARE(detail->entityId(), noteId);
         QVERIFY(detail->findChild<QCheckBox*>(QStringLiteral("TaskCompleted"))->isHidden());
         QVERIFY(detail->findChild<QCheckBox*>(QStringLiteral("TaskPinned"))->isHidden());
-        QVERIFY(!detail->findChild<QCheckBox*>(QStringLiteral("TaskPinnedAt"))->isHidden());
+        // g02 对齐后置顶不再是常驻 checkbox，而是收进详情「更多」菜单的命令；
+        // 兼容控件保留 objectName 但隐藏，业务由菜单 QAction 触发。
+        QVERIFY(detail->findChild<QCheckBox*>(QStringLiteral("TaskPinnedAt"))->isHidden());
         QVERIFY(detail->findChild<QWidget*>(QStringLiteral("TaskScheduleHost"))->isHidden());
         QVERIFY(detail->findChild<QWidget*>(QStringLiteral("TaskPriorityHost"))->isHidden());
         QVERIFY(detail->findChild<QWidget*>(QStringLiteral("TaskAppearanceHost"))->isHidden());

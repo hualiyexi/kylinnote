@@ -84,6 +84,7 @@ set(KYLINLIST_UI_SOURCES
     src/ui/ReminderPopup.cpp
     src/ui/EntityCommands.cpp
     src/ui/DatePickerPopup.cpp
+    src/ui/FormatToolbar.cpp
 )
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     list(APPEND KYLINLIST_UI_SOURCES src/app/DbusAdapter.cpp)

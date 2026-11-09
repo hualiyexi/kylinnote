@@ -22,6 +22,7 @@
 #include "AttachmentWidget.h"
 #include "ActivityLogDialog.h"
 #include "DatePickerPopup.h"
+#include "FormatToolbar.h"
 #include "MarkdownEditor.h"
 
 namespace kl {
@@ -58,9 +59,10 @@ void TaskDetailWidget::buildUi() {
     m_empty->setProperty("muted", true);
     root->addWidget(m_empty, 1);
 
-    // 有实体时显示的整体：固定顶栏 + 主内容滚动区 + 固定底栏。
-    // 考据 01:46-48 / 07:28：高频属性随任务可立即访问，长正文有自己的滚动区，
-    // 底部命令固定不被长内容挤走。
+    // 有实体时显示的整体：固定顶栏 + 正文滚动区 + 固定底栏。
+    // 严格对齐 g02/t02：顶部只有完成框+设置日期+优先级旗标；
+    // 底部 48px 固定栏是「清单名(左) + A/评论/···(右)」；
+    // 日期/时间/提醒/重复是「设置日期」chip 点开的临时浮层，不占固定栏。
     m_detailHost = new QWidget(this);
     m_detailHost->setObjectName(QStringLiteral("TaskDetailHost"));
     auto* hostLayout = new QVBoxLayout(m_detailHost);
@@ -72,25 +74,26 @@ void TaskDetailWidget::buildUi() {
     auto* header = new QFrame(m_detailHost);
     header->setObjectName(QStringLiteral("DetailHeader"));
     auto* headerLayout = new QVBoxLayout(header);
-    headerLayout->setContentsMargins(24, 14, 24, 10);
-    headerLayout->setSpacing(8);
+    headerLayout->setContentsMargins(24, 12, 24, 8);
+    headerLayout->setSpacing(6);
 
-    // 状态行：完成框在左，置顶/贴桌面在右
+    // 状态行：只有完成框在左（g02），置顶/贴桌面移入 ··· 菜单
     auto* stateRow = new QHBoxLayout;
-    stateRow->setSpacing(12);
+    stateRow->setSpacing(8);
     m_completed = new QCheckBox(QStringLiteral("已完成"), header);
     m_completed->setObjectName(QStringLiteral("TaskCompleted"));
-    m_pinnedAt = new QCheckBox(QStringLiteral("置顶"), header);
-    m_pinnedAt->setObjectName(QStringLiteral("TaskPinnedAt"));
-    m_pinned = new QCheckBox(QStringLiteral("贴到桌面"), header);
-    m_pinned->setObjectName(QStringLiteral("TaskPinned"));
     stateRow->addWidget(m_completed);
     stateRow->addStretch(1);
-    stateRow->addWidget(m_pinnedAt);
-    stateRow->addWidget(m_pinned);
+    // 置顶/贴桌面仍作为隐藏 checkbox 存在（业务与测试兼容），由菜单触发
+    m_pinnedAt = new QCheckBox(header);
+    m_pinnedAt->setObjectName(QStringLiteral("TaskPinnedAt"));
+    m_pinnedAt->hide();
+    m_pinned = new QCheckBox(header);
+    m_pinned->setObjectName(QStringLiteral("TaskPinned"));
+    m_pinned->hide();
     headerLayout->addLayout(stateRow);
 
-    // 标题
+    // 标题（考据 #tasktitle）
     m_title = new QLineEdit(header);
     m_title->setObjectName(QStringLiteral("TaskTitle"));
     m_title->setPlaceholderText(QStringLiteral("标题"));
@@ -103,15 +106,15 @@ void TaskDetailWidget::buildUi() {
     m_title->setFont(heading);
     headerLayout->addWidget(m_title);
 
-    // 属性 chips 行：日期 / 优先级 / 清单（考据 01:46「完成框、设置日期、优先级」）
+    // 属性行：设置日期 chip + 优先级旗标（g02/03:30）
     auto* chips = new QHBoxLayout;
     chips->setSpacing(8);
     m_dateChip = new QPushButton(header);
     m_dateChip->setObjectName(QStringLiteral("DateChip"));
     m_dateChip->setIcon(AppIcons::icon(IconId::Calendar, 14));
+    m_dateChip->setText(QStringLiteral("设置日期"));
     m_dateChip->setToolTip(QStringLiteral("设置日期、时间与提醒"));
     m_dateChip->setAccessibleName(QStringLiteral("设置日期"));
-    m_dateChip->setProperty("quiet", true);
     m_dateChip->setCursor(Qt::PointingHandCursor);
     connect(m_dateChip, &QPushButton::clicked, this, &TaskDetailWidget::openDatePicker);
     chips->addWidget(m_dateChip);
@@ -123,18 +126,17 @@ void TaskDetailWidget::buildUi() {
     m_priority->setToolTip(QStringLiteral("优先级"));
     m_priority->setFixedWidth(110);
     chips->addWidget(m_priority);
-
-    m_group = new QComboBox(header);
-    m_group->setObjectName(QStringLiteral("TaskGroup"));
-    m_group->setToolTip(QStringLiteral("所属清单"));
-    m_group->setMinimumWidth(120);
-    chips->addWidget(m_group);
     chips->addStretch(1);
     headerLayout->addLayout(chips);
 
+    // 所属清单：移到固定底栏左侧（t02/官方旧图），这里保留隐藏 combo 供业务与测试
+    m_group = new QComboBox(header);
+    m_group->setObjectName(QStringLiteral("TaskGroup"));
+    m_group->hide();
+
     hostLayout->addWidget(header, 0);
 
-    // ========== 主内容滚动区：正文优先 ==========
+    // ========== 正文滚动区（干净富文本 + 子项/检查清单/附件） ==========
     auto* scroll = new QScrollArea(m_detailHost);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
@@ -143,116 +145,36 @@ void TaskDetailWidget::buildUi() {
     scroll->setWidget(m_form);
     m_form->setObjectName(QStringLiteral("TaskDetailForm"));
     auto* layout = new QVBoxLayout(m_form);
-    layout->setContentsMargins(24, 8, 24, 12);
+    layout->setContentsMargins(24, 6, 24, 12);
     layout->setSpacing(8);
 
-    // 正文（占满剩余空间）
+    // 正文：MarkdownEditor 的常驻工具条/tab 由 R9 重构隐藏，正文区保持干净
     m_description = new MarkdownEditor(m_form);
-    m_description->setMinimumHeight(160);
+    m_description->setMinimumHeight(150);
     layout->addWidget(m_description, 1);
-    hostLayout->addWidget(scroll, 1);
 
-    // ========== 低频字段折叠区（默认隐藏） ==========
-    m_settingsHost = new QWidget(m_form);
-    m_settingsHost->setObjectName(QStringLiteral("AdditionalSettings"));
-    auto* settingsLayout = new QVBoxLayout(m_settingsHost);
-    settingsLayout->setContentsMargins(0, 6, 0, 0);
-    settingsLayout->setSpacing(10);
+    // 选区气泡工具条（由 FormatToolbar 提供，附着到正文编辑器）
+    m_bubble = new SelectionBubble(m_description, m_description->textEditor());
 
-    // 安排与提醒（三行日期编辑 + 重复 + 预设 + 提示）
-    m_scheduleHost = new QWidget(m_settingsHost);
-    m_scheduleHost->setObjectName(QStringLiteral("TaskScheduleHost"));
-    auto* scheduleLayout = new QVBoxLayout(m_scheduleHost);
-    scheduleLayout->setContentsMargins(0, 0, 0, 0); scheduleLayout->setSpacing(6);
-    auto* timeTitle = new QLabel(QStringLiteral("安排与提醒"), m_scheduleHost);
-    timeTitle->setProperty("section", true);
-    scheduleLayout->addWidget(timeTitle);
-
-    auto* time = new QVBoxLayout;
-    time->setSpacing(4);
-    auto addTime = [this, time](
-                       const QString& label, const QString& name, QCheckBox*& check, QDateTimeEdit*& edit) {
-        check = new QCheckBox(label, m_scheduleHost);
-        check->setObjectName(name + QStringLiteral("Enabled"));
-        const QDateTime defaultTime = toAppTime(appNow()).addSecs(3600);
-        edit = new QDateTimeEdit(QDateTime(defaultTime.date(), defaultTime.time()), m_scheduleHost);
-        edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
-        edit->setCalendarPopup(true);
-        edit->setObjectName(name);
-        auto* row = new QHBoxLayout;
-        row->setSpacing(8);
-        row->addWidget(check);
-        row->addWidget(edit, 1);
-        time->addLayout(row);
-        connect(check, &QCheckBox::toggled, this, [this, edit, name](bool enabled) {
-            edit->setEnabled(enabled);
-            dirty(name);
-        });
-        connect(edit, &QDateTimeEdit::dateTimeChanged, this, [this, name]() { dirty(name); });
-    };
-    addTime(QStringLiteral("开始"), QStringLiteral("start"), m_hasStart, m_start);
-    addTime(QStringLiteral("截止"), QStringLiteral("due"), m_hasDue, m_due);
-    addTime(QStringLiteral("提醒"), QStringLiteral("reminder"), m_hasReminder, m_reminder);
-
-    m_recurrence = new QComboBox(m_scheduleHost);
-    m_recurrence->addItem(QStringLiteral("不重复"), QStringLiteral("none"));
-    m_recurrence->addItem(QStringLiteral("每天"), QStringLiteral("daily"));
-    m_recurrence->addItem(QStringLiteral("每周"), QStringLiteral("weekly"));
-    m_recurrence->addItem(QStringLiteral("每月"), QStringLiteral("monthly"));
-    auto* recurrenceRow = new QHBoxLayout;
-    recurrenceRow->addWidget(new QLabel(QStringLiteral("重复"), m_scheduleHost));
-    recurrenceRow->addWidget(m_recurrence, 1);
-    time->addLayout(recurrenceRow);
-    scheduleLayout->addLayout(time);
-
-    auto* presets = new QHBoxLayout;
-    auto *atStart = new QPushButton(QStringLiteral("开始时提醒"), m_scheduleHost),
-         *beforeDue = new QPushButton(QStringLiteral("截止前10分钟"), m_scheduleHost);
-    presets->addWidget(atStart);
-    presets->addWidget(beforeDue);
-    presets->addStretch(1);
-    scheduleLayout->addLayout(presets);
-    connect(atStart, &QPushButton::clicked, this, [this]() {
-        if (m_hasStart->isChecked()) {
-            m_reminder->setDateTime(m_start->dateTime());
-            m_hasReminder->setChecked(true);
-        } else
-            m_status->setText(QStringLiteral("请先勾选并设置开始时间。"));
-    });
-    connect(beforeDue, &QPushButton::clicked, this, [this]() {
-        if (m_hasDue->isChecked()) {
-            m_reminder->setDateTime(m_due->dateTime().addSecs(-600));
-            m_hasReminder->setChecked(true);
-        } else
-            m_status->setText(QStringLiteral("请先勾选并设置截止时间。"));
-    });
-    auto* hint = new QLabel(
-        QStringLiteral("提醒通过系统通知和应用弹窗显示。应用需保持运行；休眠或关机期间的提醒会在恢复运行后补发。"),
-        m_scheduleHost);
-    hint->setWordWrap(true);
-    hint->setProperty("muted", true);
-    scheduleLayout->addWidget(hint);
-    settingsLayout->addWidget(m_scheduleHost);
-
-    // 检查清单
-    auto* checkTitle = new QLabel(QStringLiteral("检查清单"), m_settingsHost);
+    // 检查清单（考据 01:94 #sub-task-list：子项在正文下方）
+    auto* checkTitle = new QLabel(QStringLiteral("检查清单"), m_form);
     checkTitle->setProperty("section", true);
-    settingsLayout->addWidget(checkTitle);
-    m_checklist = new QListWidget(m_settingsHost);
+    layout->addWidget(checkTitle);
+    m_checklist = new QListWidget(m_form);
     m_checklist->setObjectName(QStringLiteral("TaskChecklist"));
-    m_checklist->setMinimumHeight(70);
+    m_checklist->setMinimumHeight(60);
     m_checklist->setMaximumHeight(140);
-    settingsLayout->addWidget(m_checklist);
+    layout->addWidget(m_checklist);
     auto* checkRow = new QHBoxLayout;
-    m_checkInput = new QLineEdit(m_settingsHost);
+    m_checkInput = new QLineEdit(m_form);
     m_checkInput->setPlaceholderText(QStringLiteral("添加一项，按回车确认"));
     m_checkInput->setObjectName(QStringLiteral("ChecklistInput"));
-    auto *addCheck = new QPushButton(QStringLiteral("添加"), m_settingsHost),
-         *removeCheck = new QPushButton(QStringLiteral("移除"), m_settingsHost);
+    auto *addCheck = new QPushButton(QStringLiteral("添加"), m_form),
+         *removeCheck = new QPushButton(QStringLiteral("移除"), m_form);
     checkRow->addWidget(m_checkInput, 1);
     checkRow->addWidget(addCheck);
     checkRow->addWidget(removeCheck);
-    settingsLayout->addLayout(checkRow);
+    layout->addLayout(checkRow);
     auto addItem = [this]() {
         const QString text = m_checkInput->text().trimmed();
         if (text.isEmpty()) return;
@@ -272,16 +194,21 @@ void TaskDetailWidget::buildUi() {
     });
     connect(m_checklist, &QListWidget::itemChanged, this, [this]() { dirty(QStringLiteral("checklist")); });
 
-    // 标签
+    // 附件
+    m_attachments = new AttachmentWidget(m_store, m_form);
+    layout->addWidget(m_attachments);
+
+    // 低频字段收纳区（默认隐藏）：标签、便签外观、以及兼容旧 QDateTimeEdit 的隐藏容器
+    m_settingsHost = new QWidget(m_form);
+    m_settingsHost->setObjectName(QStringLiteral("AdditionalSettings"));
+    auto* settingsLayout = new QVBoxLayout(m_settingsHost);
+    settingsLayout->setContentsMargins(0, 6, 0, 0);
+    settingsLayout->setSpacing(10);
+
     m_tags = new QLineEdit(m_settingsHost);
     m_tags->setPlaceholderText(QStringLiteral("标签，用逗号分隔，例如：工作, 本周"));
     settingsLayout->addWidget(m_tags);
 
-    // 附件
-    m_attachments = new AttachmentWidget(m_store, m_settingsHost);
-    settingsLayout->addWidget(m_attachments);
-
-    // 便签外观
     m_appearanceHost = new QWidget(m_settingsHost);
     m_appearanceHost->setObjectName(QStringLiteral("TaskAppearanceHost"));
     auto* appearance = new QFormLayout(m_appearanceHost);
@@ -295,7 +222,43 @@ void TaskDetailWidget::buildUi() {
     appearance->addRow(QStringLiteral("便签层位"), m_layer);
     settingsLayout->addWidget(m_appearanceHost);
 
-    // 兼容：TaskPriorityHost 作为隐藏容器，测试通过 objectName 断言
+    // 隐藏的兼容容器：三个 QDateTimeEdit / 复选 / 重复 / 优先级占位
+    // 数据读写全部走 DatePickerPopup 浮层；这里仅为保留测试 objectName 与 flush() 兼容
+    m_scheduleHost = new QWidget(m_settingsHost);
+    m_scheduleHost->setObjectName(QStringLiteral("TaskScheduleHost"));
+    m_scheduleHost->hide();
+    auto* scheduleLayout = new QVBoxLayout(m_scheduleHost);
+    scheduleLayout->setContentsMargins(0, 0, 0, 0);
+    auto addTime = [this, scheduleLayout](const QString& label, const QString& name,
+                                          QCheckBox*& check, QDateTimeEdit*& edit) {
+        check = new QCheckBox(label, m_scheduleHost);
+        check->setObjectName(name + QStringLiteral("Enabled"));
+        const QDateTime defaultTime = toAppTime(appNow()).addSecs(3600);
+        edit = new QDateTimeEdit(QDateTime(defaultTime.date(), defaultTime.time()), m_scheduleHost);
+        edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
+        edit->setCalendarPopup(true);
+        edit->setObjectName(name);
+        auto* row = new QHBoxLayout;
+        row->addWidget(check);
+        row->addWidget(edit, 1);
+        scheduleLayout->addLayout(row);
+        connect(check, &QCheckBox::toggled, this, [this, edit, name](bool enabled) {
+            edit->setEnabled(enabled);
+            dirty(name);
+        });
+        connect(edit, &QDateTimeEdit::dateTimeChanged, this, [this, name]() { dirty(name); });
+    };
+    addTime(QStringLiteral("开始"), QStringLiteral("start"), m_hasStart, m_start);
+    addTime(QStringLiteral("截止"), QStringLiteral("due"), m_hasDue, m_due);
+    addTime(QStringLiteral("提醒"), QStringLiteral("reminder"), m_hasReminder, m_reminder);
+    m_recurrence = new QComboBox(m_scheduleHost);
+    m_recurrence->addItem(QStringLiteral("不重复"), QStringLiteral("none"));
+    m_recurrence->addItem(QStringLiteral("每天"), QStringLiteral("daily"));
+    m_recurrence->addItem(QStringLiteral("每周"), QStringLiteral("weekly"));
+    m_recurrence->addItem(QStringLiteral("每月"), QStringLiteral("monthly"));
+    scheduleLayout->addWidget(m_recurrence);
+    settingsLayout->addWidget(m_scheduleHost);
+
     m_priorityHost = new QWidget(m_settingsHost);
     m_priorityHost->setObjectName(QStringLiteral("TaskPriorityHost"));
     m_priorityHost->hide();
@@ -308,8 +271,9 @@ void TaskDetailWidget::buildUi() {
     m_status->setObjectName(QStringLiteral("DetailStatus"));
     m_status->setWordWrap(true);
     layout->addWidget(m_status);
+    hostLayout->addWidget(scroll, 1);
 
-    // ========== 固定底栏（不随滚动，考据 t02：48px） ==========
+    // ========== 固定底栏 48px（t02/官方旧图） ==========
     auto* footer = new QFrame(m_detailHost);
     footer->setObjectName(QStringLiteral("DetailFooter"));
     footer->setFixedHeight(48);
@@ -317,23 +281,44 @@ void TaskDetailWidget::buildUi() {
     footerLayout->setContentsMargins(20, 6, 20, 6);
     footerLayout->setSpacing(8);
 
-    m_settingsToggle = new QPushButton(footer);
-    m_settingsToggle->setObjectName(QStringLiteral("AdditionalSettingsToggle"));
-    m_settingsToggle->setIcon(AppIcons::icon(IconId::Settings, 16));
-    m_settingsToggle->setText(QStringLiteral("更多设置"));
-    m_settingsToggle->setToolTip(QStringLiteral("展开/收起低频字段"));
-    m_settingsToggle->setProperty("quiet", true);
-    m_settingsToggle->setCursor(Qt::PointingHandCursor);
-    connect(m_settingsToggle, &QPushButton::clicked, this, [this]() {
-        setSettingsExpanded(m_settingsHost->isHidden());
-    });
-    footerLayout->addWidget(m_settingsToggle);
-
-    auto* save = new QPushButton(QStringLiteral("立即保存"), footer);
-    save->setObjectName(QStringLiteral("SaveTask"));
-    save->setProperty("primary", true);
-    footerLayout->addWidget(save);
+    // 左：所属清单 chip（点击弹清单选择菜单）
+    m_groupChip = new QToolButton(footer);
+    m_groupChip->setObjectName(QStringLiteral("GroupChip"));
+    m_groupChip->setIcon(AppIcons::icon(IconId::Inbox, 16));
+    m_groupChip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_groupChip->setToolTip(QStringLiteral("所属清单"));
+    m_groupChip->setAccessibleName(QStringLiteral("所属清单"));
+    m_groupChip->setAutoRaise(true);
+    m_groupChip->setCursor(Qt::PointingHandCursor);
+    connect(m_groupChip, &QToolButton::clicked, this, &TaskDetailWidget::showGroupMenu);
+    footerLayout->addWidget(m_groupChip);
     footerLayout->addStretch(1);
+
+    // 右：A(格式) / 评论 / ···
+    m_formatButton = new QToolButton(footer);
+    m_formatButton->setObjectName(QStringLiteral("FooterFormat"));
+    m_formatButton->setText(QStringLiteral("A"));
+    m_formatButton->setToolTip(QStringLiteral("文本格式"));
+    m_formatButton->setAccessibleName(QStringLiteral("文本格式"));
+    m_formatButton->setAutoRaise(true);
+    m_formatButton->setFixedSize(32, 32);
+    m_formatButton->setCursor(Qt::PointingHandCursor);
+    connect(m_formatButton, &QToolButton::clicked, this, &TaskDetailWidget::showFormatPanel);
+    footerLayout->addWidget(m_formatButton);
+
+    m_commentButton = new QToolButton(footer);
+    m_commentButton->setObjectName(QStringLiteral("FooterComment"));
+    m_commentButton->setIcon(AppIcons::icon(IconId::ActivityLog, 16));
+    m_commentButton->setToolTip(QStringLiteral("活动日志"));
+    m_commentButton->setAccessibleName(QStringLiteral("活动日志"));
+    m_commentButton->setAutoRaise(true);
+    m_commentButton->setFixedSize(32, 32);
+    m_commentButton->setCursor(Qt::PointingHandCursor);
+    connect(m_commentButton, &QToolButton::clicked, this, [this]() {
+        if (!finishEditing()) return;
+        ActivityLogDialog dialog(m_store, m_id, this); dialog.exec();
+    });
+    footerLayout->addWidget(m_commentButton);
 
     m_moreButton = new QToolButton(footer);
     m_moreButton->setIcon(AppIcons::icon(IconId::More, 18));
@@ -341,48 +326,43 @@ void TaskDetailWidget::buildUi() {
     m_moreButton->setAccessibleName(QStringLiteral("详情更多操作"));
     m_moreButton->setObjectName(QStringLiteral("DetailMore"));
     m_moreButton->setAutoRaise(true);
-    m_moreButton->setFixedSize(36, 36);
+    m_moreButton->setFixedSize(32, 32);
     m_moreButton->setCursor(Qt::PointingHandCursor);
     connect(m_moreButton, &QToolButton::clicked, this, &TaskDetailWidget::showMoreMenu);
     footerLayout->addWidget(m_moreButton);
-
-    m_restore = new QPushButton(QStringLiteral("恢复"), footer);
-    m_restore->setObjectName(QStringLiteral("RestoreTask"));
-    footerLayout->addWidget(m_restore);
-    m_remove = new QPushButton(QStringLiteral("移到回收站"), footer);
-    m_remove->setObjectName(QStringLiteral("TrashTask"));
-    footerLayout->addWidget(m_remove);
     hostLayout->addWidget(footer, 0);
 
-    // 隐藏的兼容按钮：测试通过 objectName 查找，实际功能在更多菜单中
+    // 隐藏的兼容按钮：测试通过 objectName 查找
+    auto* saveCompat = new QPushButton(m_detailHost);
+    saveCompat->setObjectName(QStringLiteral("SaveTask"));
+    saveCompat->hide();
+    connect(saveCompat, &QPushButton::clicked, this, &TaskDetailWidget::flush);
+    auto* settingsCompat = new QPushButton(m_detailHost);
+    settingsCompat->setObjectName(QStringLiteral("AdditionalSettingsToggle"));
+    settingsCompat->hide();
+    connect(settingsCompat, &QPushButton::clicked, this, [this]() {
+        setSettingsExpanded(m_settingsHost->isHidden());
+    });
     auto* convertCompat = new QPushButton(m_detailHost);
     convertCompat->setObjectName(QStringLiteral("ConvertKind"));
     convertCompat->hide();
-    connect(convertCompat, &QPushButton::clicked, this, [this]() {
-        if (!finishEditing()) return;
-        const Entity current = m_store->entity(m_id);
-        const EntityKind target = current.kind == EntityKind::Task ? EntityKind::Note : EntityKind::Task;
-        const QString text = target == EntityKind::Note
-            ? QStringLiteral("完成状态、日期、提醒、重复、优先级和贴桌面行为将暂停；字段、提醒、附件与清单均原样保留，转回任务后恢复。是否继续？")
-            : QStringLiteral("将恢复任务状态、日期、提醒、重复、优先级及贴桌面行为；字段、提醒、附件与清单均已保留。是否继续？");
-        if (QMessageBox::question(this, QStringLiteral("类型转换"), text,
-                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
-            m_store->convertKind(m_id, target);
-    });
+    connect(convertCompat, &QPushButton::clicked, this, &TaskDetailWidget::showMoreMenu);
     auto* activityCompat = new QPushButton(m_detailHost);
     activityCompat->setObjectName(QStringLiteral("ActivityLog"));
     activityCompat->hide();
-    connect(activityCompat, &QPushButton::clicked, this, [this]() {
-        if (!finishEditing()) return;
-        ActivityLogDialog dialog(m_store, m_id, this); dialog.exec();
-    });
+    auto* restoreCompat = new QPushButton(m_detailHost);
+    restoreCompat->setObjectName(QStringLiteral("RestoreTask"));
+    restoreCompat->hide();
+    connect(restoreCompat, &QPushButton::clicked, this, [this]() { m_store->restoreTask(m_id); });
+    auto* trashCompat = new QPushButton(m_detailHost);
+    trashCompat->setObjectName(QStringLiteral("TrashTask"));
+    trashCompat->hide();
 
     // ========== 事件过滤器 ==========
     m_title->installEventFilter(this); m_description->textEditor()->installEventFilter(this);
     m_checklist->installEventFilter(this); m_checkInput->installEventFilter(this);
 
     // ========== 信号连接 ==========
-    connect(save, &QPushButton::clicked, this, &TaskDetailWidget::flush);
     connect(m_title, &QLineEdit::textEdited, this, [this]() { dirty(QStringLiteral("title")); });
     connect(m_tags, &QLineEdit::textEdited, this, [this]() { dirty(QStringLiteral("tags")); });
     connect(m_description, &MarkdownEditor::contentChanged, this, [this]() {
@@ -425,27 +405,7 @@ void TaskDetailWidget::buildUi() {
             m_pinned->setChecked(m_store->desktopNote(m_id).open);
         }
     });
-    connect(m_restore, &QPushButton::clicked, this, [this]() { m_store->restoreTask(m_id); });
-    connect(m_remove, &QPushButton::clicked, this, [this]() {
-        if (!flush()) return;
-        const Entity task = m_store->entity(m_id);
-        if (task.deleted) {
-            if (QMessageBox::question(this, QStringLiteral("永久删除"),
-                                      QStringLiteral("永久删除“%1”？此操作无法撤销。").arg(task.title),
-                                      QMessageBox::Yes | QMessageBox::No,
-                                      QMessageBox::No) != QMessageBox::Yes)
-                return;
-            if (m_store->deletePermanently(m_id)) {
-                const auto id = m_id;
-                setTask(QString());
-                emit taskRemoved(id);
-            }
-        } else
-            m_store->trashTask(m_id);
-    });
 }
-
-// ========== R8: 详情更多菜单（考据 R11/m05：14 项，与右键不同集合） ==========
 void TaskDetailWidget::showMoreMenu() {
     if (m_id.isEmpty()) return;
     QMenu menu(this);
@@ -476,44 +436,122 @@ void TaskDetailWidget::showMoreMenu() {
         ActivityLogDialog dialog(m_store, m_id, this);
         dialog.exec();
     });
+    menu.addSeparator();
 
-    menu.exec(QCursor::pos());
+    // 置顶 / 贴桌面（从顶栏收进更多菜单，对齐 g02 顶部只有完成框）
+    auto* pin = menu.addAction(AppIcons::icon(IconId::Pin, 16),
+        entity.pinnedAt.isValid() ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
+    pin->setObjectName(QStringLiteral("CmdTogglePin"));
+    connect(pin, &QAction::triggered, this, [this, entity]() {
+        if (flush()) m_store->setPinnedAt(m_id, entity.pinnedAt.isValid() ? QDateTime() : appNow());
+    });
+    if (entity.kind == EntityKind::Task) {
+        const bool open = m_store->desktopNote(m_id).open;
+        auto* desktop = menu.addAction(AppIcons::icon(IconId::DesktopNote, 16),
+            open ? QStringLiteral("关闭桌面便签") : QStringLiteral("贴到桌面"));
+        desktop->setObjectName(QStringLiteral("CmdDesktopNote"));
+        connect(desktop, &QAction::triggered, this, [this, open]() {
+            if (!flush()) return;
+            const Entity cur = m_store->entity(m_id);
+            m_store->saveDesktopState(m_id, cur.color, cur.geometry, cur.zOrder, cur.layer, !open);
+        });
+    }
+    menu.addSeparator();
+    auto* moreSettings = menu.addAction(AppIcons::icon(IconId::Settings, 16),
+        m_settingsHost->isHidden() ? QStringLiteral("显示标签与便签外观") : QStringLiteral("收起标签与便签外观"));
+    connect(moreSettings, &QAction::triggered, this, [this]() {
+        setSettingsExpanded(m_settingsHost->isHidden());
+    });
+    menu.addSeparator();
+    auto* trash = menu.addAction(AppIcons::icon(IconId::Trash, 16),
+        entity.deleted ? QStringLiteral("永久删除") : QStringLiteral("移到回收站"));
+    connect(trash, &QAction::triggered, this, [this, entity]() {
+        if (!flush()) return;
+        if (entity.deleted) {
+            if (QMessageBox::question(this, QStringLiteral("永久删除"),
+                    QStringLiteral("永久删除“%1”？此操作无法撤销。").arg(entity.title),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
+                if (m_store->deletePermanently(m_id)) { const auto id = m_id; setTask(QString()); emit taskRemoved(id); }
+            }
+        } else m_store->trashTask(m_id);
+    });
+    if (entity.deleted) {
+        auto* restore = menu.addAction(AppIcons::icon(IconId::Restore, 16), QStringLiteral("恢复"));
+        connect(restore, &QAction::triggered, this, [this]() { m_store->restoreTask(m_id); });
+    }
+
+    menu.exec(m_moreButton ? m_moreButton->mapToGlobal(QPoint(0, 0)) : QCursor::pos());
+}
+
+void TaskDetailWidget::showFormatPanel() {
+    if (!m_formatPanel) m_formatPanel = new FormatPanel(m_description, this);
+    m_formatPanel->popupAbove(m_formatButton);
+}
+
+void TaskDetailWidget::showGroupMenu() {
+    if (m_id.isEmpty()) return;
+    QMenu menu(this);
+    menu.setObjectName(QStringLiteral("GroupSelectMenu"));
+    const QString current = m_store->entity(m_id).listId;
+    for (const TaskList& list : m_store->lists()) {
+        auto* action = menu.addAction(AppIcons::icon(list.kind == EntityKind::Note ? IconId::Note : IconId::TaskList, 16), list.name);
+        action->setCheckable(true);
+        action->setChecked(list.id == current);
+        action->setData(list.id);
+        connect(action, &QAction::triggered, this, [this, list]() {
+            if (!flush()) return;
+            Entity task = m_store->entity(m_id);
+            task.listId = list.id;
+            if (m_store->saveTask(task)) loadFields();
+        });
+    }
+    menu.exec(m_groupChip->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
 }
 
 void TaskDetailWidget::setSettingsExpanded(bool expanded) {
     m_settingsHost->setVisible(expanded);
-    m_settingsToggle->setText(expanded ? QStringLiteral("收起设置") : QStringLiteral("更多设置"));
 }
 
 void TaskDetailWidget::openDatePicker() {
     if (m_id.isEmpty()) return;
     if (!flush()) return;
     const Entity entity = m_store->entity(m_id);
-    DatePickerPopup picker(this);
-    picker.setDateTime(entity.dueAt.isValid() ? entity.dueAt : entity.startAt);
-    picker.setHasDate(entity.dueAt.isValid() || entity.startAt.isValid());
-    picker.setReminder(entity.reminderAt);
-    picker.setRecurrence(entity.recurrence);
-    picker.popupBelow(m_dateChip);
-    if (picker.exec() != QDialog::Accepted) return;
+    DatePickerPopup* picker = new DatePickerPopup(this);
+    picker->setDateTime(entity.dueAt.isValid() ? entity.dueAt : entity.startAt);
+    picker->setHasDate(entity.dueAt.isValid() || entity.startAt.isValid());
+    picker->setReminder(entity.reminderAt);
+    picker->setRecurrence(entity.recurrence);
 
-    const Entity current = m_store->entity(m_id);
-    Entity updated = current;
-    if (picker.hasDate()) {
-        updated.dueAt = picker.dateTime();
-        updated.reminderAt = picker.reminder();
-        updated.recurrence = picker.recurrence();
-    } else {
-        updated.dueAt = QDateTime();
-        updated.startAt = QDateTime();
-        updated.reminderAt = QDateTime();
-        updated.recurrence = QStringLiteral("none");
-    }
-    if (!m_store->saveTask(updated)) {
-        m_status->setText(QStringLiteral("日期保存失败，编辑内容已保留。"));
-        return;
-    }
-    loadFields();
+    // 浮层是临时操作层（01:11）：确定 / 清除 / 取消都在弹层内完成，
+    // 关闭后按结果一次性写回，详情区不常驻任何日期编辑控件。
+    const auto apply = [this, picker]() {
+        Entity updated = m_store->entity(m_id);
+        const DatePickerPopup& state = *picker;
+        const bool clear = state.cleared();  // const 引用才解析到 getter（与信号同名）
+        if (!clear && picker->hasDate()) {
+            updated.dueAt = picker->dateTime();
+            updated.startAt = QDateTime();
+            updated.reminderAt = picker->reminder();
+            updated.recurrence = picker->recurrence();
+        } else {
+            updated.dueAt = QDateTime();
+            updated.startAt = QDateTime();
+            updated.reminderAt = QDateTime();
+            updated.recurrence = QStringLiteral("none");
+        }
+        if (!m_store->saveTask(updated)) {
+            m_status->setText(QStringLiteral("日期保存失败，编辑内容已保留。"));
+            return;
+        }
+        loadFields();
+    };
+    connect(picker, &QDialog::finished, this, [this, picker, apply](int result) {
+        // 确定(Accepted) 或 清除(Rejected 且 cleared()) 都写回；单纯取消不写。
+        const DatePickerPopup& state = *picker;
+        if (result == QDialog::Accepted || state.cleared()) apply();
+    });
+    connect(picker, &QDialog::finished, picker, &QObject::deleteLater);
+    picker->popupBelow(m_dateChip);
 }
 
 void TaskDetailWidget::refreshGroups() {
@@ -524,6 +562,12 @@ void TaskDetailWidget::refreshGroups() {
     for (const TaskList& list : m_store->lists()) m_group->addItem(list.name, list.id);
     const int index = m_group->findData(selected);
     m_group->setCurrentIndex(index < 0 ? 0 : index);
+    // 底栏左侧清单 chip 显示当前归属
+    if (m_groupChip) {
+        QString name;
+        for (const TaskList& list : m_store->lists()) if (list.id == selected) name = list.name;
+        m_groupChip->setText(name.isEmpty() ? QStringLiteral("收集箱") : name);
+    }
 }
 
 bool TaskDetailWidget::setTask(QString id) {
@@ -595,31 +639,23 @@ void TaskDetailWidget::updateEnabled() {
     const Entity entity = m_store->entity(m_id);
     const bool enabled = !entity.deleted;
     const bool task = entity.kind == EntityKind::Task;
-    m_completed->setVisible(task); m_pinned->setVisible(task);
-    // 低频字段的可见性由折叠区控制；笔记不显示任务专属的安排/优先级/便签外观。
-    m_scheduleHost->setVisible(task); m_appearanceHost->setVisible(task);
-    m_priorityHost->hide();  // 兼容占位，永不显示
+    // g02：顶栏只留完成框；笔记隐藏完成框与优先级、日期 chip
+    m_completed->setVisible(task);
     m_priority->setVisible(task);
-    m_group->setVisible(true); m_dateChip->setVisible(task);
-    const QList<QWidget*> common = {m_title, m_description, m_group, m_pinnedAt, m_tags,
-                                    m_checklist, m_checkInput};
+    m_dateChip->setVisible(task);
+    m_scheduleHost->hide();       // 日期/时间/提醒/重复走浮层，兼容容器永不显示
+    m_priorityHost->hide();
+    m_appearanceHost->setVisible(task && !m_settingsHost->isHidden());
+    const QList<QWidget*> common = {m_title, m_description, m_tags, m_checklist, m_checkInput};
     for (QWidget* widget : common) widget->setEnabled(enabled);
-    const QList<QWidget*> taskFields = {m_priority, m_completed, m_pinned, m_recurrence, m_color, m_layer,
+    const QList<QWidget*> taskFields = {m_priority, m_completed, m_recurrence, m_color, m_layer,
                                         m_hasStart, m_hasDue, m_hasReminder};
     for (QWidget* widget : taskFields) widget->setEnabled(enabled && task);
-    m_scheduleHost->setEnabled(enabled && task);
-    m_appearanceHost->setEnabled(enabled && task);
-    m_start->setEnabled(enabled && task && m_hasStart->isChecked());
-    m_due->setEnabled(enabled && task && m_hasDue->isChecked());
-    m_reminder->setEnabled(enabled && task && m_hasReminder->isChecked());
-    for (auto* button : findChildren<QPushButton*>())
-        if (button != m_restore && button != m_remove && button != m_settingsToggle) button->setEnabled(enabled);
-    m_scheduleHost->setEnabled(enabled && task);
-    m_appearanceHost->setEnabled(enabled && task);
+    m_groupChip->setEnabled(enabled);
+    m_formatButton->setEnabled(enabled);
+    m_commentButton->setEnabled(true);
     m_moreButton->setEnabled(true);
     m_attachments->setReadOnly(!enabled);
-    m_restore->setVisible(!enabled);
-    m_remove->setText(enabled ? QStringLiteral("移到回收站") : QStringLiteral("永久删除"));
 }
 
 void TaskDetailWidget::dirty(const QString& field) {

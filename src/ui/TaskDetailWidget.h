@@ -17,6 +17,8 @@ namespace kl {
 class TaskStore;
 class MarkdownEditor;
 class AttachmentWidget;
+class SelectionBubble;
+class FormatPanel;
 class TaskDetailWidget : public QWidget {
     Q_OBJECT
 public:
@@ -39,6 +41,8 @@ private:
     void beginTextSession();
     bool endTextSession();
     void showMoreMenu();
+    void showFormatPanel();
+    void showGroupMenu();
     void openDatePicker();
     void setSettingsExpanded(bool expanded);
     TaskStore* m_store;
@@ -60,11 +64,16 @@ private:
     QDateTimeEdit *m_start = nullptr, *m_due = nullptr, *m_reminder = nullptr;
     QPushButton* m_dateChip = nullptr;      // 顶栏「设置日期」chip，打开 DatePickerPopup
     QPushButton* m_settingsToggle = nullptr;
+    QToolButton* m_groupChip = nullptr;     // 底栏左侧所属清单 chip
+    QToolButton* m_formatButton = nullptr;  // 底栏「A」格式按钮 → 悬浮格式面板
+    QToolButton* m_commentButton = nullptr;
+    QToolButton* m_moreButton = nullptr;
+    SelectionBubble* m_bubble = nullptr;    // 选中文字气泡工具条
+    FormatPanel* m_formatPanel = nullptr;   // 悬浮格式面板（卡片岛）
     MarkdownEditor* m_description = nullptr;
     AttachmentWidget* m_attachments = nullptr;
     QListWidget* m_checklist = nullptr;
     QPushButton *m_remove = nullptr, *m_restore = nullptr;
-    QToolButton *m_moreButton = nullptr;
 };
 }  // namespace kl
 
