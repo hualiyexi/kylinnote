@@ -19,6 +19,8 @@ class MarkdownEditor;
 class AttachmentWidget;
 class SelectionBubble;
 class FormatPanel;
+class EntityInfoPopup;
+class ListSelectPopup;
 class TaskDetailWidget : public QWidget {
     Q_OBJECT
 public:
@@ -31,9 +33,10 @@ public:
 signals:
     void taskRemoved(QString id);
     void internalLinkRequested(QString entityId);
+    void focusModeRequested(bool enabled);
 private:
     void buildUi();
-    void loadFields();
+    void loadFields(bool resetEditor = false);
     void refreshGroups();
     void dirty(const QString& field);
     void updateEnabled();
@@ -43,6 +46,12 @@ private:
     void showMoreMenu();
     void showFormatPanel();
     void showGroupMenu();
+    void showInfoPopup();
+    void addChecklistRow();
+    void updateChecklistHeight();
+    void updateDateChip();
+    void refreshIcons();
+    void setStatus(const QString& text, bool error = false);
     void openDatePicker();
     void setSettingsExpanded(bool expanded);
     TaskStore* m_store;
@@ -68,6 +77,10 @@ private:
     QToolButton* m_formatButton = nullptr;  // 底栏「A」格式按钮 → 悬浮格式面板
     QToolButton* m_commentButton = nullptr;
     QToolButton* m_moreButton = nullptr;
+    QToolButton *m_infoButton = nullptr, *m_reminderButton = nullptr;
+    EntityInfoPopup* m_infoPopup = nullptr;
+    ListSelectPopup* m_groupPopup = nullptr;
+    bool m_focusMode = false;
     SelectionBubble* m_bubble = nullptr;    // 选中文字气泡工具条
     FormatPanel* m_formatPanel = nullptr;   // 悬浮格式面板（卡片岛）
     MarkdownEditor* m_description = nullptr;

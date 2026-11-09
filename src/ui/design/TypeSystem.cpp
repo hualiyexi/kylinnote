@@ -31,6 +31,7 @@ qreal pointSize(TypeScale scale) {
         case TypeScale::Subtitle: return 10.5;
         case TypeScale::Title: return 20.0;
         case TypeScale::Display: return 24.0;
+        case TypeScale::DetailTitle: return 14.0;
         case TypeScale::Count: break;
     }
     return 9.5;
@@ -83,6 +84,10 @@ QFont qfont(FontScene scene) {
             f.setFamily(QStringLiteral("Consolas"));
             f.setPointSizeF(pointSize(TypeScale::Body));
             f.setStyleHint(QFont::Monospace);
+            break;
+        case FontScene::DetailTitle:
+            f.setPointSizeF(pointSize(TypeScale::DetailTitle));
+            f.setWeight(QFont::Bold);
             break;
         case FontScene::Count:
             break;

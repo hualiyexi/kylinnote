@@ -10,6 +10,7 @@
 #include "app/SingleInstanceGuard.h"
 #include "app/TrayController.h"
 #include "platform/InstanceChannel.h"
+#include "platform/SystemShadow.h"
 #include "ui/AppStyle.h"
 
 int main(int argc, char* argv[]) {
@@ -21,6 +22,8 @@ int main(int argc, char* argv[]) {
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
+    // 所有窗口阴影由应用自绘：禁止系统给无边框浮层补直角投影。
+    kl::disableNativeWindowShadows();
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("麒麟清单：本地任务、日程与桌面便签"));
     parser.addHelpOption();

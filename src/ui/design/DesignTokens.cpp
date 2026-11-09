@@ -48,6 +48,12 @@ ColorTable makeLight() {
     set(ColorToken::ScrollbarHover, L_ScrollbarHover);
     set(ColorToken::TooltipBg, L_TooltipBg);
     set(ColorToken::TooltipText, L_Text);
+    set(ColorToken::DetailDivider, 0xFFE6E6E6);
+    set(ColorToken::HighlightYellow, 0xFFFFED99);
+    set(ColorToken::HighlightGreen, 0xFFD6EFC0);
+    set(ColorToken::HighlightBlue, 0xFFCFE6FA);
+    set(ColorToken::HighlightPink, 0xFFF9D6DF);
+    set(ColorToken::HighlightPurple, 0xFFE7DAF7);
     return t;
 }
 
@@ -95,6 +101,12 @@ ColorTable makeDark() {
     set(ColorToken::ScrollbarHover, D_ScrollbarHover);
     set(ColorToken::TooltipBg, D_TooltipBg);
     set(ColorToken::TooltipText, D_Text);
+    set(ColorToken::DetailDivider, D_Divider);
+    set(ColorToken::HighlightYellow, 0xFF675523);
+    set(ColorToken::HighlightGreen, 0xFF345236);
+    set(ColorToken::HighlightBlue, 0xFF2D4F6A);
+    set(ColorToken::HighlightPink, 0xFF683F50);
+    set(ColorToken::HighlightPurple, 0xFF514167);
     return t;
 }
 

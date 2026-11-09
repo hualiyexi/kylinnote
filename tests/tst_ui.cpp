@@ -1,24 +1,43 @@
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTimeEdit>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QFrame>
+#include <QImage>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QListView>
 #include <QListWidget>
+#include <QMenu>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSet>
+#include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
+#include <QTextFragment>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QUrl>
 #include <QtTest>
 #include <memory>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 #include "app/NoteManager.h"
 #include "app/KylinListApp.h"
 #include "app/ReminderScheduler.h"
@@ -26,11 +45,14 @@
 #include "db/Database.h"
 #include "domain/InternalLink.h"
 #include "domain/ViewSpec.h"
+#include "platform/SystemShadow.h"
 #include "ui/AppStyle.h"
 #include "ui/ActivityLogDialog.h"
 #include "ui/EntityHoverPreview.h"
 #include "ui/EntityPicker.h"
 #include "ui/AttachmentWidget.h"
+#include "ui/DetailPopups.h"
+#include "ui/DatePickerPopup.h"
 #include "ui/Markdown.h"
 #include "ui/MarkdownEditor.h"
 #include "ui/NoteChecklist.h"
@@ -41,13 +63,92 @@
 #include "ui/TaskDelegate.h"
 #include "ui/TaskListModel.h"
 #include "ui/TaskPanel.h"
+#include "ui/design/TypeSystem.h"
 using namespace kl;
+
+namespace {
+QRect rectIn(const QWidget* widget, const QWidget* ancestor) {
+    return QRect(widget->mapTo(ancestor, QPoint()), widget->size());
+}
+
+QString referenceImage(const QString& directory) {
+    QImage image(320, 160, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(QStringLiteral("#F1F5FA")));
+    QPainter painter(&image);
+    painter.fillRect(QRect(16, 18, 88, 124), QColor(QStringLiteral("#5374BD")));
+    painter.fillRect(QRect(120, 24, 174, 14), QColor(QStringLiteral("#B9C9E4")));
+    painter.fillRect(QRect(120, 52, 140, 10), QColor(QStringLiteral("#D1DCEB")));
+    painter.fillRect(QRect(120, 74, 160, 10), QColor(QStringLiteral("#D1DCEB")));
+    painter.setPen(QColor(QStringLiteral("#435675")));
+    painter.drawText(QRect(120, 104, 180, 24), Qt::AlignLeft, QStringLiteral("LOCAL SAMPLE"));
+    painter.end();
+    const QString path = directory + QStringLiteral("/reference.png");
+    return image.save(path) ? path : QString();
+}
+
+bool nativePopupShadowDisabled(QWidget* popup) {
+#ifdef Q_OS_WIN
+    if (QApplication::platformName() == QLatin1String("windows")) {
+        const HWND handle = reinterpret_cast<HWND>(popup->winId());
+        return IsWindow(handle) && !(GetClassLongPtrW(handle, GCL_STYLE) & CS_DROPSHADOW);
+    }
+#else
+    Q_UNUSED(popup);
+#endif
+    return true;
+}
+
+bool savePopupPreview(QWidget* detail, QWidget* popup, const QString& path) {
+    const QRect detailBounds(detail->mapToGlobal(QPoint()), detail->size());
+    const QRect popupBounds(popup->mapToGlobal(QPoint()), popup->size());
+    const QRect bounds = detailBounds.united(popupBounds);
+    QImage image(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(detail->palette().window().color());
+    QPainter painter(&image);
+    painter.drawPixmap(detailBounds.topLeft() - bounds.topLeft(), detail->grab());
+    painter.drawPixmap(popupBounds.topLeft() - bounds.topLeft(), popup->grab());
+    painter.end();
+    return image.save(path);
+}
+
+// The detail menu may use exec() or popup(). Drive its real QAction in either case,
+// and close the menu on a missing action so a failed assertion cannot hang the suite.
+bool triggerDetailCommand(TaskDetailWidget& detail, const QString& actionName) {
+    auto* button = detail.findChild<QToolButton*>(QStringLiteral("DetailMore"));
+    if (!button || !button->isVisible() || !button->isEnabled()) return false;
+    bool settled = false, triggered = false;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QTimer poll;
+    poll.setInterval(10);
+    QObject::connect(&poll, &QTimer::timeout, &poll, [&]() {
+        auto* menu = detail.findChild<QMenu*>(QStringLiteral("DetailMoreMenu"));
+        if (menu && menu->isVisible()) {
+            auto* action = menu->findChild<QAction*>(actionName);
+            settled = true;
+            triggered = action && action->isVisible() && action->isEnabled();
+            poll.stop();
+            menu->close();
+            if (triggered) action->trigger();
+        } else if (elapsed.elapsed() > 1000) {
+            settled = true;
+            poll.stop();
+            if (auto* active = qobject_cast<QMenu*>(QApplication::activePopupWidget())) active->close();
+        }
+    });
+    poll.start();
+    QTest::mouseClick(button, Qt::LeftButton);
+    while (!settled && elapsed.elapsed() < 1200) QTest::qWait(10);
+    return triggered;
+}
+} // namespace
 
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() {
         AppStyle::apply(*qobject_cast<QApplication*>(qApp));
+        disableNativeWindowShadows();
     }
     void init() {
         m_dir.reset(new QTemporaryDir);
@@ -84,6 +185,195 @@ private slots:
         QCOMPARE(editor.content(), QStringLiteral("**hello**"));
         editor.textEditor()->undo();
         QCOMPARE(editor.content(), QStringLiteral("hello"));
+    }
+    void markdownInlineExtensionsRender_data() {
+        QTest::addColumn<QString>("color");
+        QTest::newRow("underline") << QString();
+        for (const QString& color : {QStringLiteral("yellow"), QStringLiteral("green"),
+                                      QStringLiteral("blue"), QStringLiteral("pink"), QStringLiteral("purple")})
+            QTest::newRow(qPrintable(color)) << color;
+    }
+    void markdownInlineExtensionsRender() {
+        QFETCH(QString, color);
+        const QString opening = color.isEmpty() ? QStringLiteral("<u>")
+            : QStringLiteral("<mark data-color=\"%1\">").arg(color);
+        const QString closing = color.isEmpty() ? QStringLiteral("</u>") : QStringLiteral("</mark>");
+        const QString source = QStringLiteral("prefix ") + opening + QStringLiteral("formatted")
+            + closing + QStringLiteral(" suffix");
+        MarkdownEditor editor;
+        editor.setContent(source);
+        QCOMPARE(editor.content(), source);
+        QCOMPARE(editor.plainTextContent(), QStringLiteral("prefix formatted suffix"));
+        for (QTextDocument* document : {editor.textEditor()->document(), editor.preview()->document()}) {
+            QCOMPARE(document->toPlainText(), QStringLiteral("prefix formatted suffix"));
+            const QTextCursor styled = document->find(QStringLiteral("formatted"));
+            QVERIFY(!styled.isNull());
+            const QTextCharFormat format = styled.charFormat();
+            if (color.isEmpty()) {
+                QVERIFY(format.fontUnderline());
+            } else {
+                QVERIFY(format.background().style() != Qt::NoBrush);
+                QCOMPARE(format.background().color(), Markdown::highlightColor(color));
+            }
+            const QTextCursor ordinary = document->find(QStringLiteral("prefix"));
+            QVERIFY(!ordinary.isNull());
+            QVERIFY(!ordinary.charFormat().fontUnderline());
+            QVERIFY(ordinary.charFormat().background().style() == Qt::NoBrush);
+        }
+    }
+    void markdownInlineExtensionsRejectOtherHtml_data() {
+        QTest::addColumn<QString>("source");
+        QTest::addColumn<QString>("literal");
+        const QStringList unsafe{
+            QStringLiteral("<script>alert(1)</script>"),
+            QStringLiteral("<img src=\"https://example.com/image.png\" onerror=\"bad()\">"),
+            QStringLiteral("<a href=\"javascript:bad()\">literal</a>"),
+            QStringLiteral("<mark data-color=\"yellow\" onclick=\"bad()\">literal</mark>"),
+            QStringLiteral("<mark data-color=\"orange\">literal</mark>"),
+            QStringLiteral("<u style=\"color:red\" onclick=\"bad()\">literal</u>")};
+        for (int index = 0; index < unsafe.size(); ++index)
+            QTest::newRow(qPrintable(QStringLiteral("untrusted-%1").arg(index))) << unsafe.at(index) << unsafe.at(index);
+        const QString code = QStringLiteral("<mark data-color=\"yellow\">literal</mark> <u>code</u>");
+        QTest::newRow("inline-code") << (QLatin1Char('`') + code + QLatin1Char('`')) << code;
+        QTest::newRow("fenced-code") << (QStringLiteral("```html\n") + code + QStringLiteral("\n```")) << code;
+    }
+    void markdownInlineExtensionsRejectOtherHtml() {
+        QFETCH(QString, source);
+        QFETCH(QString, literal);
+        const QString html = Markdown::toHtml(source);
+        QVERIFY(!html.contains(QStringLiteral("<script"), Qt::CaseInsensitive));
+        QVERIFY(!html.contains(QStringLiteral("<img"), Qt::CaseInsensitive));
+        QTextDocument preview;
+        preview.setHtml(html);
+        QCOMPARE(preview.toPlainText().trimmed(), literal);
+        MarkdownEditor editor;
+        editor.setContent(source);
+        QCOMPARE(editor.plainTextContent().trimmed(), literal);
+        QCOMPARE(editor.content(), source);
+        for (QTextDocument* document : {&preview, editor.textEditor()->document()}) {
+            for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+                for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+                    const QTextCharFormat format = it.fragment().charFormat();
+                    QVERIFY(!format.isImageFormat());
+                    QVERIFY(!format.isAnchor());
+                    QVERIFY(!format.fontUnderline());
+                }
+            }
+        }
+    }
+    void markdownNewFormatsPersistAndUndo_data() {
+        markdownInlineExtensionsRender_data();
+    }
+    void markdownNewFormatsPersistAndUndo() {
+        QFETCH(QString, color);
+        const QString id = m_store->createTask(QStringLiteral("格式持久化与撤销"));
+        Entity task = m_store->entity(id); task.body = QStringLiteral("hello"); QVERIFY(m_store->saveTask(task));
+        const auto bodyEventCount = [this, &id]() {
+            int count = 0;
+            for (const EntityEvent& event : m_store->events(id)) if (event.field == QStringLiteral("body")) ++count;
+            return count;
+        };
+        const int beforeEvents = bodyEventCount();
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* editor = detail.findChild<MarkdownEditor*>(); QVERIFY(editor);
+        auto* body = editor->textEditor(); detail.activateWindow(); body->setFocus(); QApplication::processEvents();
+        QVERIFY(body->hasFocus()); body->selectAll();
+        const QString expected = color.isEmpty() ? QStringLiteral("<u>hello</u>")
+            : QStringLiteral("<mark data-color=\"%1\">hello</mark>").arg(color);
+        if (color.isEmpty()) editor->applyFormat(MarkdownEditor::FormatAction::Underline);
+        else editor->applyHighlight(color);
+        QCOMPARE(editor->content(), expected); QVERIFY(detail.flush()); QCOMPARE(m_store->entity(id).body, expected);
+        QCOMPARE(bodyEventCount(), beforeEvents); // Explicit save keeps the active editing session open.
+        body->undo(); QCOMPARE(editor->content(), QStringLiteral("hello"));
+        QVERIFY(detail.flush()); QCOMPARE(m_store->entity(id).body, QStringLiteral("hello"));
+        body->redo(); QCOMPARE(editor->content(), expected);
+        QVERIFY(detail.finishEditing()); QCOMPARE(m_store->entity(id).body, expected);
+        QCOMPARE(bodyEventCount(), beforeEvents + 1);
+        QVERIFY(detail.setTask(QString())); QVERIFY(detail.setTask(id));
+        QCOMPARE(editor->content(), expected); QCOMPARE(editor->plainTextContent(), QStringLiteral("hello"));
+        for (QTextDocument* document : {body->document(), editor->preview()->document()}) {
+            QCOMPARE(document->toPlainText(), QStringLiteral("hello"));
+            const QTextCursor rendered = document->find(QStringLiteral("hello")); QVERIFY(!rendered.isNull());
+            if (color.isEmpty()) QVERIFY(rendered.charFormat().fontUnderline());
+            else QCOMPARE(rendered.charFormat().background().color(), Markdown::highlightColor(color));
+        }
+        TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+        QCOMPARE(reloaded.entity(id).body, expected);
+    }
+    void markdownBlocksKeepIndependentFonts() {
+        const QString source = QStringLiteral("## Heading\nPlain paragraph\n\n*italic*\nAnother paragraph\n\n```cpp\nint value;\n```\nLast paragraph");
+        MarkdownEditor editor;
+        editor.setContent(source);
+        const QFont bodyFont = ds::qfont(ds::FontScene::Body);
+        const auto verifyParagraphs = [&]() {
+            for (const QString& text : {QStringLiteral("Plain paragraph"), QStringLiteral("Another paragraph"), QStringLiteral("Last paragraph")}) {
+                const QTextCursor cursor = editor.textEditor()->document()->find(text);
+                QVERIFY(!cursor.isNull());
+                const QTextCharFormat format = cursor.charFormat();
+                QCOMPARE(format.fontWeight(), int(QFont::Normal));
+                QVERIFY(!format.fontItalic());
+                const qreal size = format.fontPointSize() > 0 ? format.fontPointSize()
+                    : editor.textEditor()->document()->defaultFont().pointSizeF();
+                QCOMPARE(size, bodyFont.pointSizeF());
+            }
+        };
+        verifyParagraphs();
+        QCOMPARE(editor.content(), source);
+        editor.setFlowLayout(true);
+        editor.resize(360, 500);
+        editor.show(); QApplication::processEvents();
+        verifyParagraphs();
+        QCOMPARE(editor.content(), source);
+    }
+    void markdownRenderedReselectionPreservesLiteralSource() {
+        const QString literal = QStringLiteral("A&B <literal> \"quote\" ") + QString::fromUtf8("\xF0\x9F\x98\x80");
+        const QString yellow = QStringLiteral("<mark data-color=\"yellow\">") + literal + QStringLiteral("</mark>");
+        const QString blue = QStringLiteral("<mark data-color=\"blue\">") + literal + QStringLiteral("</mark>");
+        const QString underlined = QStringLiteral("<mark data-color=\"blue\"><u>") + literal + QStringLiteral("</u></mark>");
+        const QString id = m_store->createTask(QStringLiteral("格式切换保留字面内容"));
+        Entity task = m_store->entity(id); task.body = literal; QVERIFY(m_store->saveTask(task));
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* editor = detail.findChild<MarkdownEditor*>();
+        auto* title = detail.findChild<QLineEdit*>(QStringLiteral("TaskTitle")); QVERIFY(editor && title);
+        auto* body = editor->textEditor(); detail.activateWindow(); body->setFocus(); QApplication::processEvents();
+        QVERIFY(body->hasFocus()); body->selectAll(); editor->applyHighlight(QStringLiteral("yellow"));
+        QCOMPARE(editor->content(), yellow);
+        title->setFocus(); QApplication::processEvents(); QVERIFY(!body->hasFocus());
+        QCOMPARE(editor->content(), yellow); QCOMPARE(body->toPlainText(), literal);
+        QCOMPARE(editor->plainTextContent(), literal); QCOMPARE(editor->preview()->document()->toPlainText(), literal);
+
+        // Select the displayed characters after rendering, rather than selecting source markup.
+        QTextCursor selection = body->document()->find(literal); QVERIFY(!selection.isNull());
+        QCOMPARE(selection.selectedText(), literal);
+        QCOMPARE(selection.charFormat().background().color(), Markdown::highlightColor(QStringLiteral("yellow")));
+        body->setTextCursor(selection); editor->applyHighlight(QStringLiteral("blue"));
+        QCOMPARE(editor->content(), blue); // Recolor replaces the old mark, retaining every literal character.
+        body->undo(); QCOMPARE(editor->content(), yellow);
+        body->redo(); QCOMPARE(editor->content(), blue);
+        title->setFocus(); QApplication::processEvents(); QVERIFY(!body->hasFocus());
+        QCOMPARE(editor->content(), blue); QCOMPARE(body->toPlainText(), literal);
+        QCOMPARE(editor->plainTextContent(), literal); QCOMPARE(editor->preview()->document()->toPlainText(), literal);
+
+        selection = body->document()->find(literal); QVERIFY(!selection.isNull());
+        QCOMPARE(selection.selectedText(), literal); body->setTextCursor(selection);
+        editor->applyFormat(MarkdownEditor::FormatAction::Underline);
+        QCOMPARE(editor->content(), underlined);
+        body->undo(); QCOMPARE(editor->content(), blue);
+        body->redo(); QCOMPARE(editor->content(), underlined);
+        title->setFocus(); QApplication::processEvents(); QVERIFY(!body->hasFocus());
+        QCOMPARE(editor->content(), underlined); QCOMPARE(body->toPlainText(), literal);
+        QCOMPARE(editor->plainTextContent(), literal); QVERIFY(detail.finishEditing());
+        QCOMPARE(m_store->entity(id).body, underlined);
+        QVERIFY(detail.setTask(QString())); QVERIFY(detail.setTask(id));
+        QCOMPARE(editor->content(), underlined); QCOMPARE(editor->plainTextContent(), literal);
+        for (QTextDocument* document : {body->document(), editor->preview()->document()}) {
+            QCOMPARE(document->toPlainText(), literal);
+            const QTextCursor restored = document->find(literal); QVERIFY(!restored.isNull());
+            QVERIFY(restored.charFormat().fontUnderline());
+            QCOMPARE(restored.charFormat().background().color(), Markdown::highlightColor(QStringLiteral("blue")));
+        }
+        TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+        QCOMPARE(reloaded.entity(id).body, underlined);
     }
     void internalLinkParsingAndRendering() {
         const QString first = newUuid(), second = newUuid();
@@ -665,6 +955,402 @@ private slots:
         m_store.reset(); app.shutdown();
     }
 
+    void detailShortBodyKeepsChecklistAndAttachmentsAdjacent() {
+        const QString id = m_store->createTask(QStringLiteral("紧凑详情"));
+        Entity task = m_store->entity(id);
+        task.body = QStringLiteral("A short body.");
+        ChecklistItem item; item.text = QStringLiteral("First item"); task.checklist.append(item);
+        QVERIFY(m_store->saveTask(task));
+        const QString source = referenceImage(m_dir->path()); QVERIFY(!source.isEmpty());
+        const Attachment attachment = m_store->importAttachment(id, source); QVERIFY(isUuid(attachment.id));
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 720); detail.show(); QVERIFY(detail.setTask(id));
+        QTest::qWait(20); // Settle document wrapping and deferred attachment-row replacement before measuring geometry.
+        auto* scroll = detail.findChild<QScrollArea*>(QStringLiteral("DetailScroll"));
+        auto* form = detail.findChild<QWidget*>(QStringLiteral("TaskDetailForm"));
+        auto* title = detail.findChild<QLineEdit*>(QStringLiteral("TaskTitle"));
+        auto* editor = detail.findChild<MarkdownEditor*>();
+        auto* checklist = detail.findChild<QListWidget*>(QStringLiteral("TaskChecklist"));
+        auto* attachments = detail.findChild<AttachmentWidget*>();
+        auto* input = detail.findChild<QLineEdit*>(QStringLiteral("ChecklistInput"));
+        QVERIFY(scroll && form && title && editor && checklist && attachments && input);
+        QCOMPARE(scroll->widget(), form);
+        QVERIFY(form->isAncestorOf(title)); QVERIFY(form->isAncestorOf(editor));
+        QTRY_VERIFY(checklist->isVisible()); QTRY_VERIFY(attachments->isVisible());
+        QVERIFY(input->isHidden());
+        QCOMPARE(checklist->frameShape(), QFrame::NoFrame);
+        QTRY_COMPARE(checklist->verticalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        const QTextCursor last = editor->textEditor()->document()->find(QStringLiteral("body."));
+        QVERIFY(!last.isNull());
+        const QRect line = editor->textEditor()->cursorRect(last);
+        const int bodyBottom = editor->textEditor()->viewport()->mapTo(form, line.bottomLeft()).y();
+        const int checklistGap = rectIn(checklist, form).top() - bodyBottom;
+        QVERIFY2(checklistGap >= 0 && checklistGap <= 64,
+                 qPrintable(QStringLiteral("Checklist starts %1 px after the short body").arg(checklistGap)));
+        const int attachmentGap = rectIn(attachments, form).top() - rectIn(checklist, form).bottom();
+        QVERIFY2(attachmentGap >= 0 && attachmentGap <= 64,
+                 qPrintable(QStringLiteral("Attachments start %1 px after the checklist").arg(attachmentGap)));
+        auto* row = attachments->findChild<QWidget*>(QStringLiteral("AttachmentRow")); QVERIFY(row);
+        QVERIFY(scroll->viewport()->rect().contains(rectIn(row, scroll->viewport())));
+
+        const QString empty = m_store->createTask(QStringLiteral("没有子项"));
+        Entity shortTask = m_store->entity(empty); shortTask.body = task.body; QVERIFY(m_store->saveTask(shortTask));
+        QVERIFY(detail.setTask(empty));
+        QTRY_VERIFY(checklist->isHidden()); QTRY_VERIFY(attachments->isHidden()); QVERIFY(input->isHidden());
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        QVERIFY(editor->height() < 100);
+        QVERIFY2(form->layout()->sizeHint().height() <= title->height() + editor->height() + 80,
+                 "Empty checklist/attachment sections must not reserve layout space");
+
+        // Removing the final managed file collapses its slot immediately, without reopening the entity.
+        QVERIFY(detail.setTask(id)); QTRY_VERIFY(attachments->isVisible());
+        QVERIFY(m_store->removeAttachment(id, attachment.id));
+        QTRY_VERIFY(attachments->isHidden());
+        QCOMPARE(m_store->entity(id).checklist.first().id, checklist->item(0)->data(Qt::UserRole).toString());
+    }
+
+    void detailChecklistCommandsRevealInputAndGrowWithoutInnerScroll() {
+        const QString id = m_store->createTask(QStringLiteral("按需添加清单"));
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* checklist = detail.findChild<QListWidget*>(QStringLiteral("TaskChecklist"));
+        auto* input = detail.findChild<QLineEdit*>(QStringLiteral("ChecklistInput"));
+        auto* editor = detail.findChild<MarkdownEditor*>(); QVERIFY(checklist && input && editor);
+        QVERIFY(checklist->isHidden()); QVERIFY(input->isHidden());
+        QPushButton* legacyAdd = nullptr;
+        for (QPushButton* button : detail.findChildren<QPushButton*>())
+            if (button->text() == QStringLiteral("添加")) legacyAdd = button;
+        QVERIFY(legacyAdd); QVERIFY(legacyAdd->isHidden());
+        QVERIFY(triggerDetailCommand(detail, QStringLiteral("AddChecklist")));
+        QTRY_VERIFY(input->isVisible()); QTRY_VERIFY(input->hasFocus());
+        QTest::keyClicks(input, QStringLiteral("First item")); QTest::keyClick(input, Qt::Key_Return);
+        QTRY_COMPARE(checklist->count(), 1); QTRY_VERIFY(checklist->isVisible()); QVERIFY(detail.flush());
+        const QString firstId = m_store->entity(id).checklist.first().id; QVERIFY(isUuid(firstId));
+        QCOMPARE(checklist->item(0)->data(Qt::UserRole).toString(), firstId);
+        const int oneRowHeight = checklist->height();
+        for (int row = 2; row <= 12; ++row) {
+            input->setText(QStringLiteral("Item %1").arg(row)); QTest::keyClick(input, Qt::Key_Return);
+        }
+        QVERIFY(detail.flush()); QTRY_COMPARE(checklist->count(), 12);
+        QTRY_VERIFY(checklist->height() > oneRowHeight * 5);
+        QTRY_COMPARE(checklist->verticalScrollBar()->maximum(), 0);
+        for (int row = 0; row < checklist->count(); ++row) {
+            const QRect itemRect = checklist->visualItemRect(checklist->item(row));
+            QVERIFY2(checklist->viewport()->rect().contains(itemRect), "Every checklist row must fit its own viewport");
+            QVERIFY(isUuid(checklist->item(row)->data(Qt::UserRole).toString()));
+        }
+        checklist->item(0)->setCheckState(Qt::Checked); QVERIFY(detail.flush());
+        QCOMPARE(m_store->entity(id).checklist.first().id, firstId);
+        QVERIFY(m_store->entity(id).checklist.first().done);
+        int doneEvents = 0;
+        for (const EntityEvent& event : m_store->events(id))
+            if (event.field == QStringLiteral("checklist.%1.done").arg(firstId)) ++doneEvents;
+        QCOMPARE(doneEvents, 1);
+
+        const QString other = m_store->createTask(QStringLiteral("工具栏添加清单"));
+        QVERIFY(detail.setTask(other)); QVERIFY(input->isHidden());
+        QSignalSpy requested(editor, &MarkdownEditor::checklistRequested);
+        auto* format = detail.findChild<QToolButton*>(QStringLiteral("FooterFormat")); QVERIFY(format);
+        QTest::mouseClick(format, Qt::LeftButton);
+        auto* panel = detail.findChild<QFrame*>(QStringLiteral("FormatPanel")); QVERIFY(panel);
+        QTRY_VERIFY(panel->isVisible());
+        auto* addChecklist = panel->findChild<QToolButton*>(QStringLiteral("FormatChecklist")); QVERIFY(addChecklist);
+        QTest::mouseClick(addChecklist, Qt::LeftButton);
+        QCOMPARE(requested.count(), 1); QTRY_VERIFY(input->isVisible()); QTRY_VERIFY(input->hasFocus());
+        QTest::keyClicks(input, QStringLiteral("Toolbar item")); QTest::keyClick(input, Qt::Key_Return);
+        QVERIFY(detail.finishEditing()); QCOMPARE(m_store->entity(other).checklist.size(), 1);
+        QCOMPARE(m_store->entity(other).checklist.first().text, QStringLiteral("Toolbar item"));
+        QVERIFY(m_store->entity(other).body.isEmpty()); // The command adds a real checklist item, not Markdown syntax.
+    }
+
+    void detailHeaderCommandsPersistWithoutSteadySaveLabel() {
+        const QString id = m_store->createTask(QStringLiteral("详情菜单操作"));
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* header = detail.findChild<QFrame*>(QStringLiteral("DetailHeader"));
+        auto* date = detail.findChild<QPushButton*>(QStringLiteral("DateChip"));
+        auto* info = detail.findChild<QToolButton*>(QStringLiteral("DetailInfo"));
+        auto* title = detail.findChild<QLineEdit*>(QStringLiteral("TaskTitle"));
+        auto* completed = detail.findChild<QCheckBox*>(QStringLiteral("TaskCompleted"));
+        auto* priority = detail.findChild<QComboBox*>(QStringLiteral("TaskPriority"));
+        QVERIFY(header && date && info && title && completed && priority);
+        QVERIFY(!header->isAncestorOf(title)); QVERIFY(header->isAncestorOf(date)); QVERIFY(header->isAncestorOf(info));
+        QVERIFY(completed->isHidden()); QVERIFY(priority->isHidden());
+        QVERIFY(date->isVisible()); QVERIFY(info->isVisible());
+        QVERIFY(rectIn(info, header).left() > rectIn(date, header).right());
+        for (QPushButton* button : header->findChildren<QPushButton*>())
+            if (button->isVisible()) QCOMPARE(button, date);
+        for (QToolButton* button : header->findChildren<QToolButton*>())
+            if (button->isVisible() && button != info)
+                QVERIFY(button->accessibleName().contains(QStringLiteral("提醒")) || button->toolTip().contains(QStringLiteral("提醒")));
+        for (QLineEdit* field : header->findChildren<QLineEdit*>()) QVERIFY(!field->isVisible());
+        for (QComboBox* field : header->findChildren<QComboBox*>()) QVERIFY(!field->isVisible());
+        for (QCheckBox* field : header->findChildren<QCheckBox*>()) QVERIFY(!field->isVisible());
+
+        detail.activateWindow(); detail.focusTitle(); QTest::keyClicks(title, QStringLiteral("Menu keeps this title"));
+        QVERIFY(triggerDetailCommand(detail, QStringLiteral("CmdPriority3")));
+        QCOMPARE(m_store->entity(id).title, QStringLiteral("Menu keeps this title"));
+        QCOMPARE(m_store->entity(id).priority, 3);
+        QVERIFY(triggerDetailCommand(detail, QStringLiteral("CmdToggleCompleted")));
+        QVERIFY(m_store->entity(id).completed);
+        QVERIFY(triggerDetailCommand(detail, QStringLiteral("CmdToggleCompleted")));
+        QVERIFY(!m_store->entity(id).completed);
+        QVERIFY(triggerDetailCommand(detail, QStringLiteral("CmdPriority0")));
+        QCOMPARE(m_store->entity(id).priority, 0); QVERIFY(detail.flush());
+        auto* status = detail.findChild<QLabel*>(QStringLiteral("DetailStatus"));
+        QVERIFY(!status || !status->isVisible() || status->text().isEmpty());
+        QVERIFY(detail.setTask(QString())); QVERIFY(detail.setTask(id));
+        QCOMPARE(title->text(), QStringLiteral("Menu keeps this title"));
+        QVERIFY(completed->isHidden()); QVERIFY(priority->isHidden());
+        QVERIFY(!status || !status->isVisible() || status->text().isEmpty());
+    }
+
+    void detailDateChipUsesShanghaiDateAndActiveStatus() {
+        const QDate today = toAppTime(appNow()).date();
+        const QDate overdue = today.addDays(-3);
+        const QString id = m_store->createTask(QStringLiteral("逾期日期展示"));
+        Entity task = m_store->entity(id);
+        task.dueAt = fromAppTime(QDateTime(overdue, QTime(0, 30), Qt::LocalTime));
+        task.allDayDate = today.addDays(5); // An explicit due time takes precedence over an all-day fallback.
+        QVERIFY(m_store->saveTask(task));
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* date = detail.findChild<QPushButton*>(QStringLiteral("DateChip")); QVERIFY(date);
+        QVERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
+        QVERIFY(date->text().contains(QStringLiteral("00:30")));
+        QVERIFY(date->text().contains(QStringLiteral("延期3天")));
+        QCOMPARE(date->accessibleName(), date->text());
+        QVERIFY(m_store->setCompleted(id, true));
+        QTRY_VERIFY(!date->text().contains(QStringLiteral("延期")));
+        QVERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
+        QVERIFY(m_store->setStatus(id, TaskStatus::Abandoned));
+        QTRY_VERIFY(!date->text().contains(QStringLiteral("延期")));
+        QVERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
+        QVERIFY(m_store->setStatus(id, TaskStatus::Active));
+        task = m_store->entity(id); task.dueAt = QDateTime(); task.allDayDate = overdue;
+        task.startAt = fromAppTime(QDateTime(today.addDays(5), QTime(11, 45), Qt::LocalTime));
+        QVERIFY(m_store->saveTask(task));
+        QTRY_VERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
+        QVERIFY(date->text().contains(QStringLiteral("延期3天")));
+        QVERIFY(!date->text().contains(QStringLiteral("11:45")));
+        task = m_store->entity(id); task.startAt = QDateTime();
+        task.dueAt = fromAppTime(QDateTime(today.addDays(2), QTime(8, 30), Qt::LocalTime));
+        QVERIFY(m_store->saveTask(task));
+        QTRY_VERIFY(date->text().contains(today.addDays(2).toString(QStringLiteral("yyyy/MM/dd"))));
+        QVERIFY(date->text().contains(QStringLiteral("08:30"))); QVERIFY(!date->text().contains(QStringLiteral("延期")));
+    }
+
+    void detailLongDocumentUsesOneScrollAtNarrowWidth() {
+        const QString id = m_store->createTask(QStringLiteral("标题与长正文一起滚动"));
+        Entity task = m_store->entity(id);
+        QStringList paragraphs;
+        for (int line = 0; line < 60; ++line)
+            paragraphs.append(QStringLiteral("Paragraph %1: a long line that wraps at narrow widths and remains editable.").arg(line));
+        task.body = paragraphs.join(QLatin1Char('\n'));
+        ChecklistItem item; item.text = QStringLiteral("Last checklist item"); task.checklist.append(item);
+        QVERIFY(m_store->saveTask(task));
+        const QString source = referenceImage(m_dir->path()); QVERIFY(!source.isEmpty());
+        QVERIFY(!m_store->importAttachment(id, source).id.isEmpty());
+        TaskDetailWidget detail(m_store.get()); detail.resize(360, 560); detail.show(); QVERIFY(detail.setTask(id));
+        QTest::qWait(20);
+        auto* scroll = detail.findChild<QScrollArea*>(QStringLiteral("DetailScroll"));
+        auto* form = detail.findChild<QWidget*>(QStringLiteral("TaskDetailForm"));
+        auto* title = detail.findChild<QLineEdit*>(QStringLiteral("TaskTitle"));
+        auto* editor = detail.findChild<MarkdownEditor*>();
+        auto* header = detail.findChild<QFrame*>(QStringLiteral("DetailHeader"));
+        auto* footer = detail.findChild<QFrame*>(QStringLiteral("DetailFooter"));
+        auto* attachments = detail.findChild<AttachmentWidget*>();
+        QVERIFY(scroll && form && title && editor && header && footer && attachments);
+        QTRY_VERIFY(detail.width() <= 380);
+        QVERIFY(form->isAncestorOf(title)); QVERIFY(form->isAncestorOf(editor)); QVERIFY(editor->flowLayout());
+        QTRY_VERIFY(scroll->verticalScrollBar()->maximum() > scroll->viewport()->height());
+        QCOMPARE(editor->textEditor()->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+        QTRY_COMPARE(editor->textEditor()->verticalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(editor->textEditor()->horizontalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        QVERIFY(editor->contentHeight() > scroll->viewport()->height());
+        scroll->verticalScrollBar()->setValue(0); QApplication::processEvents();
+        const QPoint titleBefore = title->mapTo(scroll->viewport(), QPoint());
+        const QPoint editorBefore = editor->mapTo(scroll->viewport(), QPoint());
+        const QRect headerBefore = header->geometry(), footerBefore = footer->geometry();
+        scroll->verticalScrollBar()->setValue(180); QApplication::processEvents();
+        QCOMPARE(title->mapTo(scroll->viewport(), QPoint()).y(), titleBefore.y() - 180);
+        QCOMPARE(editor->mapTo(scroll->viewport(), QPoint()).y(), editorBefore.y() - 180);
+        QVERIFY(rectIn(title, scroll->viewport()).bottom() < 0);
+        QCOMPARE(header->geometry(), headerBefore); QCOMPARE(footer->geometry(), footerBefore);
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); QApplication::processEvents();
+        auto* row = attachments->findChild<QWidget*>(QStringLiteral("AttachmentRow")); QVERIFY(row);
+        QVERIFY(scroll->viewport()->rect().contains(rectIn(row, scroll->viewport())));
+        QCOMPARE(editor->content(), task.body);
+
+        QSignalSpy heightChanges(editor, &MarkdownEditor::contentHeightChanged);
+        editor->textEditor()->setPlainText(QStringLiteral("Short again."));
+        QTRY_VERIFY(heightChanges.count() > 0);
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(editor->textEditor()->verticalScrollBar()->maximum(), 0);
+        QVERIFY(editor->contentHeight() < 100); QVERIFY(detail.flush());
+        QCOMPARE(m_store->entity(id).body, QStringLiteral("Short again."));
+    }
+
+    void detailInfoPopupShowsRenderedLiveStatisticsAndEntityDates() {
+        const QString id = m_store->createTask(QStringLiteral("Two words"));
+        Entity task = m_store->entity(id);
+        task.body = QStringLiteral("**bold** <u>under</u> <mark data-color=\"yellow\">lit</mark> ")
+            + QString::fromUtf8("\xF0\x9F\x98\x80");
+        ChecklistItem item; item.text = QStringLiteral("check item"); task.checklist.append(item);
+        QVERIFY(m_store->saveTask(task));
+        const QString source = referenceImage(m_dir->path()); QVERIFY(!source.isEmpty());
+        QVERIFY(!m_store->importAttachment(id, source).id.isEmpty());
+        // An existing entity with distinct dates also exercises Shanghai's UTC day boundary.
+        const QDateTime created(QDate(2026, 11, 5), QTime(16, 30), Qt::UTC);
+        const QDateTime updated(QDate(2026, 11, 8), QTime(16, 15), Qt::UTC);
+        QSqlQuery dates(Database::instance().connection());
+        dates.prepare(QStringLiteral("UPDATE entities SET created_at_utc_ms=?,updated_at_utc_ms=? WHERE id=?"));
+        dates.addBindValue(created.toMSecsSinceEpoch()); dates.addBindValue(updated.toMSecsSinceEpoch()); dates.addBindValue(id);
+        QVERIFY(dates.exec()); QVERIFY(m_store->load());
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* info = detail.findChild<QToolButton*>(QStringLiteral("DetailInfo")); QVERIFY(info);
+        QTest::mouseClick(info, Qt::LeftButton);
+        auto* popup = detail.findChild<EntityInfoPopup*>(QStringLiteral("EntityInfoPopup")); QVERIFY(popup);
+        QTRY_VERIFY(popup->isVisible()); QVERIFY(popup->windowFlags().testFlag(Qt::Popup));
+        auto* words = popup->findChild<QLabel*>(QStringLiteral("DetailWordCount"));
+        auto* characters = popup->findChild<QLabel*>(QStringLiteral("DetailCharacterCount"));
+        auto* createdLabel = popup->findChild<QLabel*>(QStringLiteral("DetailCreatedAt"));
+        auto* updatedLabel = popup->findChild<QLabel*>(QStringLiteral("DetailUpdatedAt"));
+        QVERIFY(words && characters && createdLabel && updatedLabel);
+        QCOMPARE(words->text(), QStringLiteral("7"));
+        QCOMPARE(characters->text(), QStringLiteral("35")); // Includes spaces and one non-BMP codepoint, no markup/newlines/filename.
+        QCOMPARE(createdLabel->text(), QStringLiteral("2026年11月6日"));
+        QCOMPARE(updatedLabel->text(), QStringLiteral("2026年11月9日"));
+        QCOMPARE(createdLabel->toolTip(), toAppTime(created).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        QCOMPARE(updatedLabel->toolTip(), toAppTime(updated).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        popup->hide();
+
+        auto* title = detail.findChild<QLineEdit*>(QStringLiteral("TaskTitle"));
+        auto* body = detail.findChild<QTextEdit*>(QStringLiteral("DescriptionEditor")); QVERIFY(title && body);
+        detail.activateWindow(); detail.focusTitle(); QTest::keyClicks(title, QStringLiteral("Only"));
+        body->setFocus(); body->setPlainText(QStringLiteral("**changed** text"));
+        QTest::mouseClick(info, Qt::LeftButton); QTRY_VERIFY(popup->isVisible());
+        QCOMPARE(words->text(), QStringLiteral("5")); QCOMPARE(characters->text(), QStringLiteral("26"));
+        popup->hide(); QVERIFY(detail.finishEditing());
+        const Entity saved = m_store->entity(id);
+        QCOMPARE(saved.title, QStringLiteral("Only")); QCOMPARE(saved.body, QStringLiteral("**changed** text"));
+        QTest::mouseClick(info, Qt::LeftButton); QTRY_VERIFY(popup->isVisible());
+        QCOMPARE(createdLabel->text(), QStringLiteral("2026年11月6日"));
+        QCOMPARE(updatedLabel->toolTip(), toAppTime(saved.updatedAt).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        popup->hide();
+    }
+
+    void nativePopupWindowsDisableSystemShadow() {
+        const QString id = m_store->createTask(QStringLiteral("浮层阴影检查"));
+        TaskDetailWidget detail(m_store.get()); detail.resize(480, 640); detail.show();
+        QVERIFY(detail.setTask(id)); QApplication::processEvents();
+        const auto verify = [](QWidget* popup) {
+            // 自有浮层显式声明标志；真实 Windows 窗口再核对系统样式。
+            QVERIFY(popup->windowFlags().testFlag(Qt::NoDropShadowWindowHint));
+            QVERIFY(nativePopupShadowDisabled(popup));
+        };
+        const auto verifyNativeOnly = [](QWidget* popup) {
+            // Qt 内部菜单不声明 NoDropShadowWindowHint，仅由应用级过滤器清除系统样式。
+            QVERIFY(nativePopupShadowDisabled(popup));
+        };
+
+        auto* info = detail.findChild<QToolButton*>(QStringLiteral("DetailInfo")); QVERIFY(info);
+        QTest::mouseClick(info, Qt::LeftButton);
+        auto* infoPopup = detail.findChild<EntityInfoPopup*>(); QVERIFY(infoPopup);
+        QTRY_VERIFY(infoPopup->isVisible()); verify(infoPopup); infoPopup->hide();
+
+        auto* group = detail.findChild<QToolButton*>(QStringLiteral("GroupChip")); QVERIFY(group);
+        QTest::mouseClick(group, Qt::LeftButton);
+        auto* listPopup = detail.findChild<ListSelectPopup*>(); QVERIFY(listPopup);
+        QTRY_VERIFY(listPopup->isVisible()); verify(listPopup); listPopup->hide();
+
+        auto* format = detail.findChild<QToolButton*>(QStringLiteral("FooterFormat")); QVERIFY(format);
+        QTest::mouseClick(format, Qt::LeftButton);
+        auto* formatPanel = detail.findChild<QFrame*>(QStringLiteral("FormatPanel")); QVERIFY(formatPanel);
+        QTRY_VERIFY(formatPanel->isVisible()); verify(formatPanel); formatPanel->hide();
+
+        auto* date = detail.findChild<QPushButton*>(QStringLiteral("DateChip")); QVERIFY(date);
+        QTest::mouseClick(date, Qt::LeftButton);
+        DatePickerPopup* datePopup = nullptr;
+        QTRY_VERIFY((datePopup = detail.findChild<DatePickerPopup*>()) != nullptr);
+        QTRY_VERIFY(datePopup->isVisible()); verify(datePopup); datePopup->reject();
+
+        // 菜单、下拉列表等 Qt 内部弹出窗口也走同一应用级拦截。
+        QMenu menu;
+        menu.addAction(QStringLiteral("菜单阴影检查"));
+        menu.popup(detail.mapToGlobal(QPoint(24, 24)));
+        QTRY_VERIFY(menu.isVisible()); verifyNativeOnly(&menu); menu.hide();
+    }
+
+    void detailListSearchMovesByUuidAndPreservesEditingSession() {
+        const QString sourceFolder = m_store->createFolder(QStringLiteral("SourceFolder"));
+        const QString targetFolder = m_store->createFolder(QStringLiteral("TargetFolder"));
+        const QString sourceList = m_store->createList(QStringLiteral("同名清单"), sourceFolder);
+        const QString targetList = m_store->createList(QStringLiteral("同名清单"), targetFolder);
+        const QString section = m_store->createSection(sourceList, QStringLiteral("原分段"));
+        const QString id = m_store->createTask(QStringLiteral("待移动任务"), sourceList, section);
+        QVERIFY(isUuid(id)); QVERIFY(isUuid(section));
+        Entity task = m_store->entity(id); task.body = QStringLiteral("Original body");
+        ChecklistItem item; item.text = QStringLiteral("Keep my identity"); task.checklist.append(item);
+        QVERIFY(m_store->saveTask(task));
+        const QString itemId = m_store->entity(id).checklist.first().id; QVERIFY(isUuid(itemId));
+        const auto bodyEvents = [this, &id]() {
+            QVector<EntityEvent> result;
+            for (const EntityEvent& event : m_store->events(id))
+                if (event.field == QStringLiteral("body")) result.append(event);
+            return result;
+        };
+        const QVector<EntityEvent> baselineEvents = bodyEvents(); QVERIFY(!baselineEvents.isEmpty());
+        QCOMPARE(baselineEvents.last().newValue.toString(), task.body);
+        const int beforeBodyEvents = baselineEvents.size();
+        TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        auto* title = detail.findChild<QLineEdit*>(QStringLiteral("TaskTitle"));
+        auto* editor = detail.findChild<MarkdownEditor*>();
+        auto* chip = detail.findChild<QToolButton*>(QStringLiteral("GroupChip"));
+        auto* checklist = detail.findChild<QListWidget*>(QStringLiteral("TaskChecklist"));
+        QVERIFY(title && editor && chip && checklist);
+        detail.activateWindow(); detail.focusTitle(); QTest::keyClicks(title, QStringLiteral("Pending move title"));
+        auto* body = editor->textEditor(); body->setFocus(); QApplication::processEvents(); QVERIFY(body->hasFocus());
+        const QString pendingBody = QStringLiteral("**Pending body**\nAll lines must survive moving lists.");
+        body->setPlainText(pendingBody);
+        QTest::mouseClick(chip, Qt::LeftButton);
+        auto* popup = detail.findChild<ListSelectPopup*>(QStringLiteral("GroupSelectMenu")); QVERIFY(popup);
+        QTRY_VERIFY(popup->isVisible());
+        auto* search = popup->findChild<QLineEdit*>(QStringLiteral("ListSearch"));
+        auto* tree = popup->findChild<QTreeWidget*>(QStringLiteral("ListSelectTree")); QVERIFY(search && tree);
+        QTreeWidgetItem *sourceItem = nullptr, *targetItem = nullptr;
+        for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+            const QString listId = (*it)->data(0, Qt::UserRole).toString();
+            if (listId == sourceList) sourceItem = *it;
+            if (listId == targetList) targetItem = *it;
+        }
+        QVERIFY(sourceItem && targetItem); QCOMPARE(sourceItem->text(0), targetItem->text(0));
+        QVERIFY(tree->currentItem()); QCOMPARE(tree->currentItem()->data(0, Qt::UserRole).toString(), sourceList);
+        search->setText(QStringLiteral("no matching list")); QTRY_VERIFY(!tree->isVisible());
+        QCOMPARE(m_store->entity(id).listId, sourceList); QCOMPARE(m_store->entity(id).sectionId, section);
+        search->clear(); QTest::keyClicks(search, QStringLiteral("TargetFolder"));
+        QTRY_VERIFY(tree->isVisible()); QVERIFY(sourceItem->parent()->isHidden());
+        QVERIFY(!targetItem->isHidden()); QVERIFY(!targetItem->parent()->isHidden()); QVERIFY(targetItem->parent()->isExpanded());
+        tree->scrollToItem(targetItem); QApplication::processEvents();
+        const QRect targetRect = tree->visualItemRect(targetItem); QVERIFY(!targetRect.isEmpty());
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, targetRect.center());
+        QTRY_VERIFY(!popup->isVisible());
+        QCOMPARE(m_store->entity(id).listId, targetList); QVERIFY(m_store->entity(id).sectionId.isEmpty());
+        QCOMPARE(m_store->entity(id).title, QStringLiteral("Pending move title"));
+        QCOMPARE(m_store->entity(id).body, pendingBody); QCOMPARE(editor->content(), pendingBody);
+        QCOMPARE(m_store->entity(id).checklist.first().id, itemId);
+        QCOMPARE(checklist->item(0)->data(Qt::UserRole).toString(), itemId);
+        const QVector<EntityEvent> edits = bodyEvents(); QCOMPARE(edits.size(), beforeBodyEvents + 1);
+        // Text history stores a full new snapshot; the edit-session baseline is used only to detect a change.
+        QVERIFY(!edits.last().oldValue.isValid()); QCOMPARE(edits.last().newValue.toString(), pendingBody);
+        checklist->item(0)->setCheckState(Qt::Checked); QVERIFY(detail.finishEditing());
+        TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+        const Entity moved = reloaded.entity(id);
+        QCOMPARE(moved.listId, targetList); QVERIFY(moved.sectionId.isEmpty());
+        QCOMPARE(moved.title, QStringLiteral("Pending move title")); QCOMPARE(moved.body, pendingBody);
+        QCOMPARE(moved.checklist.size(), 1); QCOMPARE(moved.checklist.first().id, itemId); QVERIFY(moved.checklist.first().done);
+        QVERIFY(detail.setTask(QString())); QVERIFY(detail.setTask(id));
+        QCOMPARE(title->text(), moved.title); QCOMPARE(editor->content(), pendingBody);
+    }
+
     void newChecklistItemKeepsIdentityForDoneEvent() {
         const QString id = m_store->createTask(QStringLiteral("新清单项日志"));
         TaskDetailWidget detail(m_store.get()); QVERIFY(detail.setTask(id));
@@ -795,8 +1481,9 @@ private slots:
         task.reminderAt = task.dueAt.addSecs(-600);
         task.priority = 1;
         task.body = QStringLiteral(
-            "## 本周要点\n\n整理 **完成情况**，记录需要协调的事项。\n\n- 汇总本周进展\n- 确认下周安排\n\n> "
-            "把下一步写清楚，让事情更容易推进。");
+            "## 本周要点\n\n整理 **完成情况**，<u>记录需要协调的事项</u>。\n\n"
+            "- 汇总本周进展\n- 确认下周安排\n\n"
+            "> <mark data-color=\"yellow\">把下一步写清楚</mark>，让事情更容易推进。");
         ChecklistItem one;
         one.text = QStringLiteral("汇总材料");
         one.done = true;
@@ -806,6 +1493,8 @@ private slots:
         task.checklist << one;
         task.tags << QStringLiteral("本周") << QStringLiteral("协作");
         QVERIFY(m_store->saveTask(task));
+        const QString attachmentSource = referenceImage(m_dir->path()); QVERIFY(!attachmentSource.isEmpty());
+        QVERIFY(!m_store->importAttachment(id, attachmentSource).id.isEmpty());
         QVERIFY(m_store->saveDesktopState(id, m_store->entity(id).color, m_store->entity(id).geometry,
                                           m_store->entity(id).zOrder, m_store->entity(id).layer, true));
         for (const auto& title : {QStringLiteral("预约下周会议室"),
@@ -816,14 +1505,72 @@ private slots:
         panel.resize(1240, 820);
         panel.showTask(id);
         QTest::qWait(100);
+        auto* detail = panel.findChild<TaskDetailWidget*>(); QVERIFY(detail);
+        auto* attachments = detail->findChild<AttachmentWidget*>(); QVERIFY(attachments);
+        QTRY_VERIFY(attachments->isVisible());
+        auto* attachmentIcon = attachments->findChild<QLabel*>(QStringLiteral("AttachmentIcon")); QVERIFY(attachmentIcon);
+        auto* attachmentName = attachments->findChild<QLabel*>(QStringLiteral("AttachmentName")); QVERIFY(attachmentName);
+        QVERIFY(attachmentIcon->isVisible()); QVERIFY(attachmentName->isVisible());
+        QCOMPARE(attachmentName->text(), QStringLiteral("reference.png"));
         const QString dir = qEnvironmentVariable("KYLINLIST_SCREENSHOT_DIR");
         if (!dir.isEmpty()) {
-            QDir().mkpath(dir);
+            QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
-            NoteWidget note(task);
+            QVERIFY(detail->grab().save(dir + QStringLiteral("/task-detail.png")));
+            NoteWidget note(m_store->entity(id)); note.setStore(m_store.get());
             note.show();
             QTest::qWait(50);
             QVERIFY(note.grab().save(dir + QStringLiteral("/desktop-note.png")));
+            note.hide();
+            panel.activateWindow(); panel.raise(); QApplication::processEvents();
+
+            auto* info = detail->findChild<QToolButton*>(QStringLiteral("DetailInfo")); QVERIFY(info);
+            QTest::mouseClick(info, Qt::LeftButton);
+            auto* infoPopup = detail->findChild<EntityInfoPopup*>(QStringLiteral("EntityInfoPopup")); QVERIFY(infoPopup);
+            QTRY_VERIFY(infoPopup->isVisible());
+            QVERIFY(nativePopupShadowDisabled(infoPopup));
+            QVERIFY(savePopupPreview(detail, infoPopup, dir + QStringLiteral("/detail-info.png")));
+            infoPopup->hide();
+            auto* format = detail->findChild<QToolButton*>(QStringLiteral("FooterFormat")); QVERIFY(format);
+            QTest::mouseClick(format, Qt::LeftButton);
+            auto* formatPanel = detail->findChild<QFrame*>(QStringLiteral("FormatPanel")); QVERIFY(formatPanel);
+            QTRY_VERIFY(formatPanel->isVisible());
+            QVERIFY(nativePopupShadowDisabled(formatPanel));
+            QVERIFY(savePopupPreview(detail, formatPanel, dir + QStringLiteral("/detail-toolbar.png")));
+            formatPanel->hide();
+            auto* group = detail->findChild<QToolButton*>(QStringLiteral("GroupChip")); QVERIFY(group);
+            QTest::mouseClick(group, Qt::LeftButton);
+            auto* groupPopup = detail->findChild<ListSelectPopup*>(); QVERIFY(groupPopup);
+            QTRY_VERIFY(groupPopup->isVisible());
+            QVERIFY(nativePopupShadowDisabled(groupPopup));
+            QVERIFY(savePopupPreview(detail, groupPopup, dir + QStringLiteral("/detail-list.png")));
+            groupPopup->hide();
+            // 原生 Windows 上菜单窗口也必须没有系统直角投影。
+            QMenu shadowProbe;
+            shadowProbe.addAction(QStringLiteral("菜单阴影检查"));
+            shadowProbe.popup(detail->mapToGlobal(QPoint(24, 24)));
+            QTRY_VERIFY(shadowProbe.isVisible());
+            QVERIFY(nativePopupShadowDisabled(&shadowProbe));
+            shadowProbe.hide();
+
+            TaskDetailWidget narrow(m_store.get()); narrow.resize(360, 700); QVERIFY(narrow.setTask(id)); narrow.show();
+            auto* narrowTitle = narrow.findChild<QLineEdit*>(QStringLiteral("TaskTitle")); QVERIFY(narrowTitle);
+            narrow.activateWindow(); narrowTitle->setFocus(); narrowTitle->deselect();
+            QTest::qWait(50); QVERIFY(narrow.width() <= 380);
+            QVERIFY(narrow.grab().save(dir + QStringLiteral("/detail-narrow.png")));
+            Entity longTask = m_store->entity(id);
+            for (int line = 1; line <= 35; ++line)
+                longTask.body += QStringLiteral("\n\n### 第 %1 段\n长文档与标题共用外层滚动区域，检查项和参考附件始终接在正文之后。").arg(line);
+            QVERIFY(m_store->saveTask(longTask));
+            auto* scroll = narrow.findChild<QScrollArea*>(QStringLiteral("DetailScroll"));
+            auto* editor = narrow.findChild<MarkdownEditor*>(); QVERIFY(scroll && editor);
+            QTRY_VERIFY(scroll->verticalScrollBar()->maximum() > 0);
+            QTRY_COMPARE(editor->textEditor()->verticalScrollBar()->maximum(), 0);
+            QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+            scroll->verticalScrollBar()->setValue(0); QApplication::processEvents();
+            QVERIFY(narrow.grab().save(dir + QStringLiteral("/detail-narrow-long.png")));
+            scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); QApplication::processEvents();
+            QVERIFY(narrow.grab().save(dir + QStringLiteral("/detail-narrow-bottom.png")));
         }
     }
 

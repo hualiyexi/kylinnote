@@ -98,6 +98,22 @@ const char* svgSource(IconId id) {
             return "<rect x='3' y='4' width='6' height='6' rx='1'/><path d='M4 7l1.5 1.5L8 6'/><path d='M13 7h8'/><rect x='3' y='14' width='6' height='6' rx='1'/><path d='M13 17h8'/>";
         case IconId::Link:
             return "<path d='M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1'/><path d='M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1'/>";
+        case IconId::Underline:
+            return "<path d='M6 4v8a6 6 0 0 0 12 0V4M4 21h16'/>";
+        case IconId::Highlight:
+            return "<path d='M9 14l7-10 4 3-7 10-4-3zM9 14l-3 5 4-1 3-1M4 21h12'/>";
+        case IconId::Expand:
+            return "<path d='M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5'/>";
+        case IconId::Info:
+            return "<circle cx='12' cy='12' r='8'/><path d='M12 11v6'/><circle cx='12' cy='7.5' r='.7' fill='currentColor' stroke='none'/>";
+        case IconId::ChevronDown:
+            return "<path d='M7 10l5 5 5-5'/>";
+        case IconId::FormatClear:
+            return "<path d='M4 5h14M11 5l-4 14M15 14l6 6M21 14l-6 6'/>";
+        case IconId::Format:
+            return "<path d='M5 17L12 3l7 14M8 12h8M4 21h16'/>";
+        case IconId::Comment:
+            return "<path d='M6 4h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-7l-5 3v-3a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM7 9h10M7 13h7'/>";
         default:
             return "";
     }
@@ -199,6 +215,14 @@ QString accessibleName(IconId id) {
         case IconId::Code: return QStringLiteral("代码");
         case IconId::Checklist: return QStringLiteral("清单");
         case IconId::Link: return QStringLiteral("链接");
+        case IconId::Underline: return QStringLiteral("下划线");
+        case IconId::Highlight: return QStringLiteral("高亮");
+        case IconId::Expand: return QStringLiteral("展开");
+        case IconId::Info: return QStringLiteral("信息");
+        case IconId::ChevronDown: return QStringLiteral("展开选项");
+        case IconId::FormatClear: return QStringLiteral("清除格式");
+        case IconId::Format: return QStringLiteral("文本格式");
+        case IconId::Comment: return QStringLiteral("活动记录");
         default: return QString();
     }
 }
