@@ -11,6 +11,7 @@ class WorkspaceSurface : public QWidget {
 public:
     explicit WorkspaceSurface(QWidget* parent = nullptr);
     void setFramelessCorners(bool enabled);
+    void updateContentClip() { updateClip(); }
 
 protected:
     void paintEvent(QPaintEvent* event) override;

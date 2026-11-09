@@ -427,6 +427,7 @@ void TaskPanel::buildUi() {
     m_border->setGeometry(18, 18, central->width() - 36, central->height() - 36);
     m_border->raise();
     m_windowControls->raise();
+    m_surface->updateContentClip();
     connect(m_detail, &TaskDetailWidget::focusModeRequested, this,
             [this](bool enabled) {
         if (enabled) {
@@ -796,6 +797,7 @@ void TaskPanel::resizeEvent(QResizeEvent* event) {
         m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
         m_border->raise();
         if (m_windowControls) m_windowControls->raise();
+        m_surface->updateContentClip();
     }
 }
 
@@ -817,6 +819,7 @@ void TaskPanel::changeEvent(QEvent* event) {
             m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
             m_border->raise();
             if (m_windowControls) m_windowControls->raise();
+            m_surface->updateContentClip();
         }
         update();
     }

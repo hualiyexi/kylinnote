@@ -688,7 +688,7 @@ private slots:
         QVERIFY(panel.testAttribute(Qt::WA_TranslucentBackground));
         QVERIFY(panel.mask().isEmpty());
         auto* surface = panel.findChild<QWidget*>(QStringLiteral("WorkspaceRoot"));
-        QVERIFY(surface && !surface->mask().isEmpty());
+        QVERIFY(surface && surface->mask().isEmpty());
         QCOMPARE(rectIn(rail, &panel).top(), 18);
         QCOMPARE(rectIn(navigationPane, &panel).top(), 18);
         QCOMPARE(rectIn(listPane, &panel).top(), 18);

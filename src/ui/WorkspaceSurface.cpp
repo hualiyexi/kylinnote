@@ -88,14 +88,25 @@ void WorkspaceSurface::resizeEvent(QResizeEvent* event) {
 
 void WorkspaceSurface::updateClip() {
     updateShadow();
+    // 本层还负责窗口外阴影，不能给整个 surface 设置圆角 mask。
+    // 只裁剪承载内容的直接子控件，透明外边距始终保留给阴影。
     if (m_rounded) {
         QPainterPath path;
         path.addRoundedRect(QRectF(rect()).adjusted(kShadowMargin, kShadowMargin,
                                                     -kShadowMargin, -kShadowMargin),
                             kCornerRadius, kCornerRadius);
-        setMask(path.toFillPolygon().toPolygon());
+        const QRegion clip(path.toFillPolygon().toPolygon());
+        for (QWidget* child : findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (child->objectName() == QLatin1String("WindowBorderOverlay")) {
+                child->clearMask();
+                continue;
+            }
+            const QRegion childClip = clip.intersected(QRect(child->pos(), child->size()));
+            child->setMask(childClip.translated(-child->pos()));
+        }
     } else {
-        clearMask();
+        for (QWidget* child : findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly))
+            child->clearMask();
     }
     update();
 }
