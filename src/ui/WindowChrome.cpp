@@ -48,7 +48,7 @@ void WindowDragArea::mouseDoubleClickEvent(QMouseEvent* event) {
 
 WindowControls::WindowControls(QWidget* parent) : QWidget(parent), m_window(parent) {
     setObjectName(QStringLiteral("WindowControls"));
-    setAttribute(Qt::WA_StyledBackground, true);
+    setAttribute(Qt::WA_StyledBackground, false);
     setFixedSize(138, 36);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -68,14 +68,16 @@ WindowControls::WindowControls(QWidget* parent) : QWidget(parent), m_window(pare
     button(m_maximize, QStringLiteral("WindowMaximize"), QStringLiteral("最大化"), QStringLiteral("最大化或还原窗口"));
     button(m_close, QStringLiteral("WindowClose"), QStringLiteral("关闭"), QStringLiteral("关闭窗口"));
     connect(m_minimize, &QToolButton::clicked, this, [this]() {
-        if (m_window) m_window->showMinimized();
+        if (m_window && m_window->window()) m_window->window()->showMinimized();
     });
     connect(m_maximize, &QToolButton::clicked, this, [this]() {
-        if (!m_window) return;
-        m_window->setWindowState(m_window->isMaximized() ? Qt::WindowNoState : Qt::WindowMaximized);
+        QWidget* window = m_window ? m_window->window() : nullptr;
+        if (!window) return;
+        if (window->isMaximized()) window->showNormal();
+        else window->showMaximized();
     });
     connect(m_close, &QToolButton::clicked, this, [this]() {
-        if (m_window) m_window->close();
+        if (m_window && m_window->window()) m_window->window()->close();
     });
     refreshIcons();
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &WindowControls::refreshIcons);
