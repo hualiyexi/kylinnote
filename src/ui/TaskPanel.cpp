@@ -42,6 +42,7 @@
 #include "TaskListModel.h"
 #include "ToastIsland.h"
 #include "WindowChrome.h"
+#include "WindowBorderOverlay.h"
 #include "WorkspaceSurface.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
@@ -410,6 +411,7 @@ void TaskPanel::buildUi() {
     auto* detailLayout = new QVBoxLayout(m_detailFrame);
     detailLayout->setContentsMargins(0, 36, 0, 0);
     m_detail = new TaskDetailWidget(m_store, m_detailFrame);
+    m_detail->setObjectName(QStringLiteral("TaskDetailWidget"));
     detailLayout->addWidget(m_detail);
     m_splitter->addWidget(m_detailFrame);
     m_splitter->setSizes({560, 440});
@@ -421,6 +423,9 @@ void TaskPanel::buildUi() {
     // 窗口按钮悬浮在最右列顶部；三列时属于清单，四列时属于详情。
     m_windowControls = new WindowControls(central);
     m_windowControls->setAttribute(Qt::WA_StyledBackground, false);
+    m_border = new WindowBorderOverlay(central);
+    m_border->setGeometry(18, 18, central->width() - 36, central->height() - 36);
+    m_border->raise();
     m_windowControls->raise();
     connect(m_detail, &TaskDetailWidget::focusModeRequested, this,
             [this](bool enabled) {
@@ -786,6 +791,12 @@ void TaskPanel::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     if (m_windowControls)
         updateWindowControlsPosition();
+    if (m_border) {
+        const int inset = (isMaximized() || isFullScreen()) ? 0 : 18;
+        m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
+        m_border->raise();
+        if (m_windowControls) m_windowControls->raise();
+    }
 }
 
 void TaskPanel::changeEvent(QEvent* event) {
@@ -795,11 +806,18 @@ void TaskPanel::changeEvent(QEvent* event) {
         if (m_surface) {
             m_surface->setFramelessCorners(!maximized);
             if (auto* layout = m_surface->layout()) {
-                const int inset = maximized ? 0 : 12;
+                const int inset = maximized ? 0 : 18;
                 layout->setContentsMargins(inset, inset, inset, inset);
             }
         }
         updateWindowControlsPosition();
+        if (m_border) {
+            const int inset = maximized ? 0 : 18;
+            m_border->setRounded(!maximized);
+            m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
+            m_border->raise();
+            if (m_windowControls) m_windowControls->raise();
+        }
         update();
     }
 }
