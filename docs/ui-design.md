@@ -44,6 +44,18 @@ design/QssBuilder.cpp   元素层：QSS 由生成器产出（Qt 无 CSS 变量�
 | `Divider` | 分隔线 | `#EDF0F5` | 考据 WhiteThemeDivider |
 | `MenuDisabled` | 禁用菜单项 | `#A8A8A8` | 考据 disabled |
 
+### 字体系统与内置字体
+
+字体族通过 `design/TypeSystem.cpp` 的 `fontFamilies()` 统一回退链解析：Windows 中文 → Linux/麒麟常见中文 → 通用无衬线。业务代码只走 `ds::qfont(FontScene)`，不裸构造 `QFont`。
+
+**可选内置字体**：若发布包在可执行文件同目录放置 `fonts/*.ttf` 或 `fonts/*.otf`，`TypeSystem` 启动时会用 `QFontDatabase::addApplicationFont()` 自动注册，随后按同一回退链解析。未放置该目录时完全走系统字体，不产生额外依赖、不增大安装包。这用于「目标机缺中文字体」的离线兜底与跨设备字形一致性。
+
+- 授权边界：内置字体**必须**是 OFL / SIL Open Font License 等允许再分发的开源字体，并把许可证全文放进 `THIRD_PARTY.md` 与发布包。**不得**把微软雅黑等专有系统字体复制进仓库或安装包。
+- 候选（OFL / 开源，本机已有但未纳入仓库）：Noto Sans CJK SC、Source Han Sans SC、文泉驿微米黑。兄弟项目 `CaseLawLibrary` / `public-interest-litigation-fund` 的 `frontend/src/assets/fonts/` 提供的是 woff2 子集（Web 用），Qt 5.12 需要 TTF/OTF 源文件。
+- 是否真正内置、内置哪一款，由用户按目标麒麟镜像的实际字体清单决定；当前实现只提供机制，仓库内不附带字体文件。
+
+**offscreen 测试的环境问题**：Windows 的 Qt offscreen 平台插件不读系统字体目录，会报 `Cannot find font directory ...` 并退化成无字形截图。`CMakeLists.txt` 已为 Windows 测试自动设置 `QT_QPA_FONTDIR=$WINDIR/Fonts`，CTest 与 `visualPreview()` 截图不再缺字。真实 Windows 桌面与麒麟目标机不走 offscreen，不受影响。
+
 ### 字号阶梯
 
 | 场景 | 字号 | 用途 |

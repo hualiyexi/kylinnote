@@ -145,6 +145,13 @@ target_link_libraries(kylinlist PRIVATE kylinlist_ui)
 
 if(BUILD_TESTING)
     find_package(Qt5 5.12 REQUIRED COMPONENTS Test)
+    # Windows 的 offscreen 平台插件不读系统字体目录，会退化成无字形渲染
+    # 并刷 QFontDatabase 警告。显式指向系统字体，让截图与文本度量可信。
+    set(KYLINLIST_TEST_ENV "QT_QPA_PLATFORM=offscreen")
+    if(WIN32)
+        file(TO_CMAKE_PATH "$ENV{WINDIR}/Fonts" KYLINLIST_WIN_FONTS)
+        list(APPEND KYLINLIST_TEST_ENV "QT_QPA_FONTDIR=${KYLINLIST_WIN_FONTS}")
+    endif()
     foreach(test IN ITEMS tasks ui)
         if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tst_${test}.cpp")
             message(FATAL_ERROR "BUILD_TESTING requires tests/tst_${test}.cpp")
@@ -157,7 +164,7 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME ${test} COMMAND test_${test})
         set_tests_properties(${test} PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            ENVIRONMENT "${KYLINLIST_TEST_ENV}"
             TIMEOUT 90)
     endforeach()
 endif()
