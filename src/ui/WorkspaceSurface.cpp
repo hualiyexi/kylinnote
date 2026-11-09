@@ -8,7 +8,7 @@
 
 namespace kl {
 namespace {
-constexpr int kShadowMargin = 18;
+constexpr int kShadowMargin = 21;
 constexpr qreal kCornerRadius = 10.0;
 
 // 对整张圆角 alpha 图做可分离高斯模糊。直边与转角共享同一连续场，
@@ -35,8 +35,8 @@ QImage blurredShadow(const QSize& size, bool rounded) {
         const auto* row = reinterpret_cast<const QRgb*>(source.constScanLine(y));
         for (int x = 0; x < width; ++x) input[y * width + x] = qAlpha(row[x]) / 255.0;
     }
-    const double sigma = 5.2;
-    const int radius = 15;
+    const double sigma = 6.0;
+    const int radius = 18;
     QVector<double> kernel(radius * 2 + 1);
     double sum = 0.0;
     for (int i = -radius; i <= radius; ++i) {
@@ -61,7 +61,7 @@ QImage blurredShadow(const QSize& size, bool rounded) {
         auto* row = reinterpret_cast<QRgb*>(shadow.scanLine(y));
         for (int x = 0; x < width; ++x) {
             QColor pixel(color);
-            pixel.setAlphaF(qMin(1.0, output[y * width + x] * 0.42));
+            pixel.setAlphaF(qMin(1.0, output[y * width + x] * 0.38));
             row[x] = pixel.rgba();
         }
     }
