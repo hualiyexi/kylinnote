@@ -26,6 +26,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStyle>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
@@ -102,14 +103,23 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
     setAttribute(Qt::WA_TranslucentBackground, true);
     if (auto* oldStatusBar = findChild<QStatusBar*>(QString(), Qt::FindDirectChildrenOnly))
         delete oldStatusBar;
-    setMinimumSize(960, 620); resize(1240, 820);
+    setMinimumSize(620, 560); resize(1240, 820);
     buildUi();
     for (const Entity& entity : m_store->entities()) m_taskStates.insert(entity.id, entity.status);
     connect(m_detail, &TaskDetailWidget::internalLinkRequested, this, &TaskPanel::showTask);
     rebuildNavigation();
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("kylinlist"), QStringLiteral("panel"));
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
-    m_splitter->restoreState(settings.value(QStringLiteral("splitter")).toByteArray());
+    m_sidebarWidth = qBound(180, settings.value(QStringLiteral("sidebarWidth"), AppStyle::metric(AppStyle::Metric::SidebarWidth)).toInt(), 360);
+    m_detailWidth = qBound(300, settings.value(QStringLiteral("detailWidth"), 370).toInt(), 560);
+    m_sidebarUserHidden = settings.value(QStringLiteral("sidebarHidden"), false).toBool();
+    m_restoringLayout = true;
+    if (m_splitter->count() == 3) {
+        const QList<int> restored = m_splitter->sizes();
+        if (restored.value(0) >= 180) m_sidebarWidth = qMin(360, restored.at(0));
+        if (restored.value(2) >= 300) m_detailWidth = restored.at(2);
+    }
+    m_restoringLayout = false;
     if (QGuiApplication::primaryScreen()) {
         const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
         resize(size().boundedTo(available.size()));
@@ -245,7 +255,8 @@ void TaskPanel::buildUi() {
     // 第二列：筛选与组织。顶部没有独立标题条。
     m_sidebar = new QFrame(central);
     m_sidebar->setObjectName(QStringLiteral("Sidebar"));
-    m_sidebar->setFixedWidth(AppStyle::metric(AppStyle::Metric::SidebarWidth));
+    m_sidebar->setMinimumWidth(180);
+    m_sidebar->setMaximumWidth(360);
     auto* side = new QVBoxLayout(m_sidebar);
     side->setContentsMargins(8, 36, 8, 8);
     side->setSpacing(2);
@@ -279,12 +290,12 @@ void TaskPanel::buildUi() {
     backup->hide();
     connect(backup, &QToolButton::clicked, this, &TaskPanel::backupMenu);
     side->addWidget(backup, 0, Qt::AlignLeft);
-    body->addWidget(m_sidebar);
 
-    // 第三列与可选第四列共用分隔器；详情隐藏时清单自然占满余宽。
+    // 第二至第四列共享一个分割器，两条边界均为普通 1px 分隔线。
     m_splitter = new QSplitter(Qt::Horizontal, central);
     m_splitter->setObjectName(QStringLiteral("WorkspaceSplitter"));
     m_splitter->setHandleWidth(1);
+    m_splitter->addWidget(m_sidebar);
     body->addWidget(m_splitter, 1);
     m_middle = new QFrame(m_splitter);
     m_middle->setObjectName(QStringLiteral("ListPane"));
@@ -407,20 +418,42 @@ void TaskPanel::buildUi() {
 
     m_detailFrame = new QFrame(m_splitter);
     m_detailFrame->setObjectName(QStringLiteral("DetailFrame"));
-    m_detailFrame->setMinimumWidth(370);
+    m_detailFrame->setMinimumWidth(300);
     auto* detailLayout = new QVBoxLayout(m_detailFrame);
     detailLayout->setContentsMargins(0, 36, 0, 0);
     m_detail = new TaskDetailWidget(m_store, m_detailFrame);
     m_detail->setObjectName(QStringLiteral("TaskDetailWidget"));
     detailLayout->addWidget(m_detail);
     m_splitter->addWidget(m_detailFrame);
-    m_splitter->setSizes({560, 440});
-    m_splitter->setStretchFactor(0, 1);
+    m_splitter->setSizes({m_sidebarWidth, 560, m_detailWidth});
+    m_splitter->setStretchFactor(0, 0);
     m_splitter->setStretchFactor(1, 1);
+    m_splitter->setStretchFactor(2, 0);
     m_splitter->setChildrenCollapsible(false);
-    m_splitter->setCollapsible(1, true);
+    m_splitter->setCollapsible(0, true);
+    m_splitter->setCollapsible(2, true);
+    connect(m_splitter, &QSplitter::splitterMoved, this, [this]() {
+        if (m_layoutUpdating || m_restoringLayout || m_focusMode) return;
+        const QList<int> sizes = m_splitter->sizes();
+        if (sizes.size() == 3) {
+            if (sizes.at(0) >= 180) m_sidebarWidth = qMin(360, sizes.at(0));
+            if (sizes.at(2) >= 300) m_detailWidth = sizes.at(2);
+        }
+    });
 
-    // 窗口按钮悬浮在最右列顶部；三列时属于清单，四列时属于详情。
+    // 窗口按钮悬浮在最右列顶部；第二列开关位于列表标题栏。
+    m_sidebarToggle = new QToolButton(listHeader);
+    m_sidebarToggle->setObjectName(QStringLiteral("SidebarToggle"));
+    m_sidebarToggle->setFixedSize(32, 32);
+    m_sidebarToggle->setAutoRaise(true);
+    m_sidebarToggle->setCheckable(true);
+    m_sidebarToggle->setChecked(true);
+    m_sidebarToggle->setToolTip(QStringLiteral("显示或隐藏筛选栏"));
+    m_sidebarToggle->setAccessibleName(QStringLiteral("显示或隐藏筛选栏"));
+    connect(m_sidebarToggle, &QToolButton::clicked, this, [this](bool checked) {
+        setSidebarVisible(checked, true);
+    });
+    header->insertWidget(0, m_sidebarToggle);
     m_windowControls = new WindowControls(central);
     m_windowControls->setAttribute(Qt::WA_StyledBackground, false);
     m_border = new WindowBorderOverlay(central);
@@ -430,17 +463,22 @@ void TaskPanel::buildUi() {
     m_surface->updateContentClip();
     connect(m_detail, &TaskDetailWidget::focusModeRequested, this,
             [this](bool enabled) {
+        m_focusMode = enabled;
         if (enabled) {
             m_activityRail->hide();
             m_sidebar->hide();
             m_middle->hide();
+            m_detailOverlay = false;
+            m_detailFrame->setParent(m_splitter);
+            m_detailFrame->setMinimumWidth(0);
             m_detailFrame->show();
+            m_detail->setOverlayMode(false);
             if (m_windowControls) m_windowControls->raise();
         } else {
             m_activityRail->show();
-            m_sidebar->show();
             m_middle->show();
-            setDetailVisible(!m_selectedId.isEmpty());
+            m_detailFrame->setMinimumWidth(300);
+            reconcileWorkspaceLayout();
         }
     });
     connect(m_detail, &TaskDetailWidget::taskRemoved, this, [this]() {
@@ -524,7 +562,7 @@ void TaskPanel::buildUi() {
     });
 
     refreshWorkspaceIcons();
-    setDetailVisible(false);
+    reconcileWorkspaceLayout();
     applyFilter();
 }
 
@@ -719,21 +757,125 @@ bool TaskPanel::eventFilter(QObject* watched, QEvent* event) {
 
 void TaskPanel::setDetailVisible(bool visible) {
     if (!m_detailFrame) return;
-    m_detailFrame->setVisible(visible);
-    if (visible) {
-        const int detailWidth = qBound(370, m_splitter->sizes().value(1), qMax(370, m_splitter->width() - 320));
-        m_splitter->setSizes({qMax(320, m_splitter->width() - detailWidth - 1), detailWidth});
-        QTimer::singleShot(0, this, [this]() {
-            updateWindowControlsPosition();
-            if (m_windowControls) m_windowControls->raise();
-        });
+    // 宽窗口的第四列始终存在，无选择时只是空白；只有窄窗覆盖详情可关闭。
+    if (m_detailAutoHidden && !m_focusMode) {
+        m_detailOverlay = visible && !m_selectedId.isEmpty();
+        if (m_detailOverlay && m_detailFrame->parentWidget() != m_surface) {
+            m_detailFrame->setParent(m_surface);
+            m_detailFrame->setMinimumWidth(0);
+            m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
+            m_detailFrame->setProperty("overlay", true);
+            m_detail->setOverlayMode(true);
+            m_detailFrame->style()->unpolish(m_detailFrame);
+            m_detailFrame->style()->polish(m_detailFrame);
+        }
+        updateDetailOverlayGeometry();
+        m_detailFrame->setVisible(m_detailOverlay);
+    } else if (!m_focusMode) {
+        m_detailOverlay = false;
+        if (m_detailFrame->parentWidget() != m_splitter) {
+            m_detailFrame->setParent(m_splitter);
+            m_detailFrame->setMinimumWidth(300);
+            m_detailFrame->setProperty("overlay", false);
+            m_detail->setOverlayMode(false);
+            m_detailFrame->style()->unpolish(m_detailFrame);
+            m_detailFrame->style()->polish(m_detailFrame);
+        }
+        m_detailFrame->show();
+    }
+    updateWindowControlsPosition();
+    if (m_border) m_border->raise();
+    if (m_windowControls) m_windowControls->raise();
+    m_surface->updateContentClip();
+}
+
+void TaskPanel::setSidebarVisible(bool visible, bool userInitiated) {
+    if (userInitiated) m_sidebarUserHidden = !visible;
+    reconcileWorkspaceLayout();
+}
+
+void TaskPanel::reconcileWorkspaceLayout() {
+    if (!m_splitter || m_layoutUpdating || m_focusMode) return;
+    if (!isVisible()) {
+        m_detailAutoHidden = false;
+        m_sidebarAutoHidden = false;
+        m_sidebar->setVisible(!m_sidebarUserHidden);
+        m_detailFrame->setVisible(true);
+        m_splitter->setSizes({m_sidebarWidth, 560, m_detailWidth});
+        return;
+    }
+    m_layoutUpdating = true;
+    const int available = m_splitter->width();
+    const bool oldDetailAutoHidden = m_detailAutoHidden;
+    const bool oldSidebarAutoHidden = m_sidebarAutoHidden;
+    // 先收第四列，再收第二列；拉宽时按相反顺序恢复。
+    const int detailThreshold = m_sidebarUserHidden ? 621 : 820;
+    const int sidebarThreshold = 620;
+    m_detailAutoHidden = available < detailThreshold;
+    m_sidebarAutoHidden = available < sidebarThreshold;
+    const bool showSidebar = !m_sidebarUserHidden && !m_sidebarAutoHidden;
+    const bool showDockedDetail = !m_detailAutoHidden;
+    const bool wantOverlay = m_detailAutoHidden && !m_selectedId.isEmpty();
+
+    if (oldDetailAutoHidden != m_detailAutoHidden || oldSidebarAutoHidden != m_sidebarAutoHidden
+        || m_detailOverlay != wantOverlay
+        || m_detailFrame->parentWidget() != (wantOverlay ? static_cast<QWidget*>(m_surface)
+                                                        : static_cast<QWidget*>(m_splitter))) {
+        if (wantOverlay) {
+            m_detailFrame->setParent(m_surface);
+            m_detailFrame->setMinimumWidth(0);
+            m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
+            m_detailFrame->setProperty("overlay", true);
+            m_detail->setOverlayMode(true);
+        } else {
+            m_detailFrame->setParent(m_splitter);
+            m_detailFrame->setMinimumWidth(300);
+            m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
+            m_detailFrame->setProperty("overlay", false);
+            m_detail->setOverlayMode(false);
+        }
+        m_detailFrame->style()->unpolish(m_detailFrame);
+        m_detailFrame->style()->polish(m_detailFrame);
+    }
+    m_detailOverlay = wantOverlay;
+    m_sidebar->setVisible(showSidebar);
+    m_middle->show();
+    m_detailFrame->setVisible(showDockedDetail || wantOverlay);
+    if (m_sidebarToggle) {
+        const QSignalBlocker blocker(m_sidebarToggle);
+        m_sidebarToggle->setChecked(showSidebar);
+    }
+
+    QList<int> sizes{0, 0, 0};
+    if (showDockedDetail) {
+        const int side = showSidebar ? qMin(m_sidebarWidth, qMax(180, available - 621)) : 0;
+        const int detail = qBound(300, m_detailWidth, qMax(300, available - side - 321));
+        sizes = {side, qMax(320, available - side - detail - 2), detail};
     } else {
-        m_splitter->setSizes({m_splitter->width(), 0});
+        const int side = showSidebar ? qMin(m_sidebarWidth, qMax(180, available - 321)) : 0;
+        sizes = {side, qMax(320, available - side - (showSidebar ? 1 : 0)), 0};
     }
-    if (m_windowControls) {
-        updateWindowControlsPosition();
-        m_windowControls->raise();
-    }
+    m_splitter->setSizes(sizes);
+    updateDetailOverlayGeometry();
+    updateWindowControlsPosition();
+    if (m_border) m_border->raise();
+    if (m_windowControls) m_windowControls->raise();
+    m_surface->updateContentClip();
+    m_layoutUpdating = false;
+}
+
+void TaskPanel::updateDetailOverlayGeometry() {
+    if (!m_detailFrame || !m_detailOverlay) return;
+    const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
+    const QRect content = m_surface->rect().adjusted(inset, inset, -inset, -inset);
+    const int overlayWidth = qMin(300, qMax(260, content.width() - 260));
+    m_detailFrame->setGeometry(content.right() - overlayWidth + 1, content.top(),
+                               overlayWidth, content.height());
+    m_detailFrame->show();
+    m_detailFrame->raise();
+    if (m_border) m_border->raise();
+    if (m_windowControls) m_windowControls->raise();
+    m_surface->updateContentClip();
 }
 
 void TaskPanel::updateWindowControlsPosition() {
@@ -743,7 +885,8 @@ void TaskPanel::updateWindowControlsPosition() {
                                  m_windowControls->width(), m_windowControls->height());
     if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
         if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
-            layout->setContentsMargins(20, 6, 16, 6);
+            const bool overlay = m_detailFrame && m_detailFrame->property("overlay").toBool();
+            layout->setContentsMargins(overlay ? 12 : 20, 6, overlay ? 10 : 16, 6);
             layout->invalidate();
             layout->activate();
         }
@@ -754,6 +897,7 @@ void TaskPanel::refreshWorkspaceIcons() {
     if (auto* account = findChild<QToolButton*>(QStringLiteral("AccountButton")))
         account->setIcon(brandMark(30));
     if (m_railTasks) m_railTasks->setIcon(AppIcons::icon(IconId::Checklist, 20));
+    if (m_sidebarToggle) m_sidebarToggle->setIcon(AppIcons::icon(IconId::TaskList, 17));
     if (m_railSearch) m_railSearch->setIcon(AppIcons::icon(IconId::Search, 20));
     if (m_railSettings) m_railSettings->setIcon(AppIcons::icon(IconId::Settings, 20));
     if (auto* notes = findChild<QToolButton*>(QStringLiteral("RailNotes")))
@@ -790,6 +934,7 @@ void TaskPanel::selectNavigation(ViewScope scope, const QString& listId) {
 
 void TaskPanel::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
+    reconcileWorkspaceLayout();
     if (m_windowControls)
         updateWindowControlsPosition();
     if (m_border) {
@@ -813,6 +958,7 @@ void TaskPanel::changeEvent(QEvent* event) {
             }
         }
         updateWindowControlsPosition();
+        reconcileWorkspaceLayout();
         if (m_border) {
             const int inset = maximized ? 0 : 18;
             m_border->setRounded(!maximized);
@@ -1210,7 +1356,9 @@ void TaskPanel::closeEvent(QCloseEvent* event) {
     if (!flush()) { event->ignore(); return; }
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("kylinlist"), QStringLiteral("panel"));
     settings.setValue(QStringLiteral("geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("splitter"), m_splitter->saveState());
+    settings.setValue(QStringLiteral("sidebarWidth"), m_sidebarWidth);
+    settings.setValue(QStringLiteral("detailWidth"), m_detailWidth);
+    settings.setValue(QStringLiteral("sidebarHidden"), m_sidebarUserHidden);
     if (QSystemTrayIcon::isSystemTrayAvailable()) { hide(); event->ignore(); }
     else { event->accept(); emit quitRequested(); }
 }

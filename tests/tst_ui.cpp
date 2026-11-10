@@ -21,6 +21,7 @@
 #include <QSettings>
 #include <QSet>
 #include <QSqlQuery>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTextBlock>
@@ -698,23 +699,25 @@ private slots:
         QCOMPARE(rail->width(), 52);
         QCOMPARE(rectIn(rail, &panel).left(), 21);
         QCOMPARE(rectIn(navigationPane, &panel).left(), rectIn(rail, &panel).right() + 1);
-        QCOMPARE(rectIn(listPane, &panel).left(), rectIn(navigationPane, &panel).right() + 1);
-        QVERIFY(!detailPane->isVisible());
-        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 21);
+        QCOMPARE(rectIn(listPane, &panel).left(), rectIn(navigationPane, &panel).right() + 2);
+        QVERIFY(detailPane->isVisible());
+        QCOMPARE(rectIn(detailPane, &panel).left(), rectIn(listPane, &panel).right() + 2);
+        QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right() - 21);
         QCOMPARE(rectIn(controls, &panel).top(), 21);
         QCOMPARE(rectIn(controls, &panel).right(), panel.rect().right() - 21);
 
         const QString id = m_store->createTask(QStringLiteral("展开第四列"));
         panel.showTask(id);
         QTRY_VERIFY(detailPane->isVisible());
-        QCOMPARE(rectIn(detailPane, &panel).left(), rectIn(listPane, &panel).right() + 1);
+        QCOMPARE(rectIn(detailPane, &panel).left(), rectIn(listPane, &panel).right() + 2);
         QCOMPARE(rectIn(detailPane, &panel).right(), panel.rect().right() - 21);
         auto* info = detailPane->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
         QVERIFY(info);
         QVERIFY(rectIn(info, &panel).top() >= rectIn(controls, &panel).bottom());
         QTest::mouseClick(detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose")), Qt::LeftButton);
-        QTRY_VERIFY(!detailPane->isVisible());
-        QCOMPARE(rectIn(listPane, &panel).right(), panel.rect().right() - 21);
+        QTRY_VERIFY(detailPane->isVisible());
+        QVERIFY(panel.findChild<TaskDetailWidget*>()->entityId().isEmpty());
+        QCOMPARE(rectIn(listPane, &panel).right(), rectIn(detailPane, &panel).left() - 2);
         panel.showTask(id);
         QTRY_VERIFY(detailPane->isVisible());
         QTest::mouseClick(panel.findChild<QToolButton*>(QStringLiteral("WindowMaximize")), Qt::LeftButton);
@@ -726,6 +729,79 @@ private slots:
         QApplication::processEvents();
         QVERIFY(!(panel.windowState() & Qt::WindowMaximized));
         QVERIFY(panel.mask().isEmpty());
+    }
+
+    void responsiveColumnsAndOverlayDetail() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1240, 820);
+        panel.show();
+        auto* rail = panel.findChild<QFrame*>(QStringLiteral("ActivityRail"));
+        auto* sidebar = panel.findChild<QFrame*>(QStringLiteral("Sidebar"));
+        auto* list = panel.findChild<QFrame*>(QStringLiteral("ListPane"));
+        auto* detail = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        auto* splitter = panel.findChild<QSplitter*>(QStringLiteral("WorkspaceSplitter"));
+        auto* toggle = panel.findChild<QToolButton*>(QStringLiteral("SidebarToggle"));
+        QVERIFY(rail && sidebar && list && detail && splitter && toggle);
+        QCOMPARE(splitter->count(), 3);
+        QCOMPARE(splitter->handleWidth(), 1);
+        QVERIFY(splitter->handle(1) && splitter->handle(2));
+        QCOMPARE(rail->width(), 52);
+        QCOMPARE(panel.minimumSize(), QSize(620, 560));
+        splitter->setSizes({280, 500, 370});
+        QApplication::processEvents();
+        QCOMPARE(sidebar->width(), 280);
+        QCOMPARE(detail->width(), 370);
+        QCOMPARE(rail->width(), 52);
+
+        panel.resize(900, 700);
+        QApplication::processEvents();
+        QVERIFY(sidebar->isVisible());
+        QVERIFY(!detail->isVisible());
+        QVERIFY(list->isVisible());
+        const QRect listBeforeOverlay = rectIn(list, &panel);
+        const QString id = m_store->createTask(QStringLiteral("窄窗覆盖详情"));
+        panel.showTask(id);
+        QTRY_VERIFY(detail->isVisible());
+        QCOMPARE(detail->width(), 300);
+        QCOMPARE(detail->parentWidget(), panel.findChild<QWidget*>(QStringLiteral("WorkspaceRoot")));
+        QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
+        QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
+        QVERIFY(rectIn(detail, &panel).left() > rectIn(list, &panel).left());
+        auto* close = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));
+        auto* reminder = detail->findChild<QToolButton*>(QStringLiteral("DetailReminder"));
+        QVERIFY(close && reminder);
+        QVERIFY(rectIn(close, &panel).left() >= rectIn(reminder, &panel).right());
+        QTest::mouseClick(close, Qt::LeftButton);
+        QTRY_VERIFY(!detail->isVisible());
+        QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
+
+        panel.resize(700, 620);
+        QApplication::processEvents();
+        QVERIFY(!sidebar->isVisible());
+        QVERIFY(!detail->isVisible());
+        QVERIFY(list->isVisible());
+        QCOMPARE(rail->width(), 52);
+        panel.resize(900, 700);
+        QApplication::processEvents();
+        QVERIFY(sidebar->isVisible());
+        QVERIFY(!detail->isVisible());
+        panel.resize(1240, 820);
+        QApplication::processEvents();
+        QVERIFY(sidebar->isVisible());
+        QVERIFY(detail->isVisible());
+        QCOMPARE(detail->parentWidget(), splitter);
+        QCOMPARE(detail->width(), 370);
+
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QApplication::processEvents();
+        QVERIFY(!sidebar->isVisible());
+        panel.resize(700, 620);
+        panel.resize(1240, 820);
+        QApplication::processEvents();
+        QVERIFY(!sidebar->isVisible());
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QApplication::processEvents();
+        QVERIFY(sidebar->isVisible());
     }
 
     void toastIslandSupportsUndoAndHoverLifetime() {
@@ -1630,6 +1706,10 @@ private slots:
         if (!dir.isEmpty()) {
             QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
+            QImage divider = panel.grab().toImage().copy(
+                rectIn(panel.findChild<QFrame*>(QStringLiteral("ListPane")), &panel).right() - 12, 16, 40, 100);
+            QVERIFY(divider.scaled(240, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(dir + QStringLiteral("/workspace-divider-detail.png")));
             QImage corner = panel.grab().toImage().copy(panel.width() - 190, 0, 190, 150);
             QImage onLight(corner.size(), QImage::Format_ARGB32_Premultiplied);
             onLight.fill(QColor(QStringLiteral("#E9E9E9")));
@@ -1657,11 +1737,23 @@ private slots:
             auto* closeDetail = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));
             QVERIFY(closeDetail);
             QTest::mouseClick(closeDetail, Qt::LeftButton);
-            QTRY_VERIFY(!panel.findChild<QFrame*>(QStringLiteral("DetailFrame"))->isVisible());
+            QTRY_VERIFY(panel.findChild<QFrame*>(QStringLiteral("DetailFrame"))->isVisible());
+            QVERIFY(panel.findChild<TaskDetailWidget*>()->entityId().isEmpty());
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-three-columns.png")));
             panel.showTask(id);
             QTest::qWait(30);
             QVERIFY(detail->grab().save(dir + QStringLiteral("/task-detail.png")));
+            panel.resize(900, 700);
+            QTest::qWait(50);
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-auto-three-columns.png")));
+            panel.showTask(id);
+            QTest::qWait(50);
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-detail-overlay.png")));
+            panel.resize(700, 620);
+            QTest::qWait(50);
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-auto-two-columns.png")));
+            panel.resize(1240, 820);
+            QTest::qWait(50);
             NoteWidget note(m_store->entity(id)); note.setStore(m_store.get());
             note.show();
             QTest::qWait(50);

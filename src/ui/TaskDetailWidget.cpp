@@ -109,12 +109,26 @@ TaskDetailWidget::TaskDetailWidget(TaskStore* store, QWidget* parent) : QWidget(
     setTask(QString());
 }
 
+void TaskDetailWidget::setOverlayMode(bool overlay) {
+    m_overlayMode = overlay;
+    // 覆盖模式把关闭放在提醒旁；停靠模式保留信息按钮后的常规位置。
+    if (auto* header = findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
+        if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
+            layout->setContentsMargins(overlay ? 12 : 20, 6, overlay ? 10 : 16, 6);
+            layout->removeWidget(m_closeButton);
+            layout->insertWidget(overlay ? 2 : layout->count(), m_closeButton);
+            layout->invalidate();
+            layout->activate();
+        }
+    }
+}
+
 void TaskDetailWidget::buildUi() {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    m_empty = new QLabel(QStringLiteral("选择一项任务或笔记\n\n在这里编辑内容与检查清单。"), this);
+    m_empty = new QLabel(this);
     m_empty->hide();
     m_empty->setAlignment(Qt::AlignCenter);
     m_empty->setWordWrap(true);

@@ -165,3 +165,17 @@
 绘制层级修正：父容器底层边框会被内容覆盖，因此新增 `WindowBorderOverlay` 在所有工作区内容之上绘制实线轮廓且不拦截鼠标；内容容器按同一圆角路径裁剪，详情底栏与内部视口不再留下右下角直角。新增 `window-bottom-corner-detail.png` 与右上角一起核对。
 
 阴影可见性修正：内容圆角遮罩曾把透明外边距里的阴影一并裁掉。现在只裁直接内容子控件，`WorkspaceSurface` 保留完整透明区域绘制高斯阴影；边框 overlay 不裁剪。回归同时断言主窗口和阴影宿主无硬遮罩、最大化时内容遮罩清除。
+
+## 2026-11-10 可调列宽与窄窗覆盖详情
+
+| 细节 | 本轮规格 | 实现 |
+|---|---|---|
+| 常驻第四列 | 宽窗口始终保留详情列；无选择、关闭或删除后显示纯空白，不占位提示、不收起 | `TaskPanel`、`TaskDetailWidget` |
+| 窗口尺寸 | 允许边缘与角落调整长宽，最小 620×560；内部列表、快速添加和详情随宽度伸缩 | `TaskPanel` |
+| 两个可调边界 | 第二列 180–360px，第四列按可用空间调整；两个 handle 均为 1px，第一列固定 52px | `WorkspaceSplitter`、`QssBuilder` |
+| 第二列显隐 | 列表标题栏提供显隐按钮；手动隐藏与自动隐藏分开记录，列宽分别持久化 | `TaskPanel`、`SidebarToggle` |
+| 响应式顺序 | 变窄先收第四列，再收第二列；拉宽先恢复第二列，再恢复第四列，保留用户列宽 | `TaskPanel::reconcileWorkspaceLayout()` |
+| 覆盖详情 | 第四列自动隐藏后，选中实体在右侧显示约 300px 覆盖详情，不改变列表宽度；关闭按钮紧邻提醒，关闭只隐藏浮层 | `TaskPanel::updateDetailOverlayGeometry()`、`TaskDetailWidget::setOverlayMode()` |
+| 分界缺角 | 中间列不再误用窗口外缘圆角；分割线与栏背景不重复描边，第三／第四列上端无透底小角 | `QssBuilder` |
+
+验证：`workspaceUsesFourColumnsAndNoPermanentStatusBar` 更新为常驻空白详情语义；`responsiveColumnsAndOverlayDetail` 覆盖两个 1px 边界、固定功能栏、最小窗口、自动隐藏／恢复、覆盖详情几何与关闭、手动隐藏第二列。原生 Windows 截图新增 `workspace-divider-detail.png`、`task-panel-auto-three-columns.png`、`task-panel-detail-overlay.png`、`task-panel-auto-two-columns.png`，核对分界上端、覆盖堆叠和两列状态。以上仍不是银河麒麟 V10 SP 目标机验收。
