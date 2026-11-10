@@ -448,6 +448,7 @@ void TaskPanel::buildUi() {
             if (sizes.at(0) >= 180) m_sidebarWidth = qMin(360, sizes.at(0));
             if (sizes.at(2) >= 300) m_detailWidth = sizes.at(2);
         }
+        syncColumnResizeAreas();
     });
 
     // 窗口按钮悬浮在最右列顶部；第二列开关位于列表标题栏。
@@ -485,6 +486,12 @@ void TaskPanel::buildUi() {
     for (const auto& definition : resizeAreas)
         m_resizeAreas.append(new WindowResizeArea(this, definition.edges,
                                                   QString::fromLatin1(definition.name)));
+    m_columnResizeAreas.append(new SplitterResizeArea(this, m_splitter, 1,
+                                                       QStringLiteral("SidebarResizeArea")));
+    m_columnResizeAreas.append(new SplitterResizeArea(this, m_splitter, 2,
+                                                       QStringLiteral("DetailResizeArea")));
+    m_detailOverlayShadow = new OverlayEdgeShadow(central);
+    m_detailOverlayShadow->hide();
     m_border->raise();
     m_windowControls->raise();
     m_surface->updateContentClip();
@@ -883,6 +890,7 @@ void TaskPanel::reconcileWorkspaceLayout() {
         sizes = {side, qMax(320, available - side - (showSidebar ? 1 : 0)), 0};
     }
     m_splitter->setSizes(sizes);
+    syncColumnResizeAreas();
     updateDetailOverlayGeometry();
     updateWindowControlsPosition();
     if (m_border) m_border->raise();
@@ -891,13 +899,36 @@ void TaskPanel::reconcileWorkspaceLayout() {
     m_layoutUpdating = false;
 }
 
+void TaskPanel::syncColumnResizeAreas() {
+    if (!m_splitter) return;
+    for (SplitterResizeArea* area : m_columnResizeAreas) {
+        const int index = area->objectName() == QLatin1String("SidebarResizeArea") ? 1 : 2;
+        QWidget* handle = m_splitter->handle(index);
+        const bool available = handle && !m_focusMode && m_middle->isVisible()
+            && (index == 1 ? m_sidebar->isVisible()
+                           : m_detailFrame->isVisible() && !m_detailAutoHidden);
+        area->setVisible(available);
+        if (!available) continue;
+        const QPoint topLeft = handle->mapTo(this, QPoint(0, 0));
+        area->setGeometry(topLeft.x() - 5, topLeft.y(), 12, handle->height());
+        area->raise();
+    }
+}
+
 void TaskPanel::updateDetailOverlayGeometry() {
+    if (m_detailOverlayShadow && !m_detailOverlay) m_detailOverlayShadow->hide();
     if (!m_detailFrame || !m_detailOverlay) return;
     const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
     const QRect content = m_surface->rect().adjusted(inset, inset, -inset, -inset);
     const int overlayWidth = qMin(300, qMax(260, content.width() - 260));
     m_detailFrame->setGeometry(content.right() - overlayWidth + 1, content.top(),
                                overlayWidth, content.height());
+    if (m_detailOverlayShadow) {
+        m_detailOverlayShadow->setGeometry(m_detailFrame->x() - 18, m_detailFrame->y(),
+                                           18, m_detailFrame->height());
+        m_detailOverlayShadow->show();
+        m_detailOverlayShadow->raise();
+    }
     m_detailFrame->show();
     m_detailFrame->raise();
     if (m_border) m_border->raise();
@@ -1020,6 +1051,7 @@ void TaskPanel::syncWindowDecoration() {
         area->raise();
     }
     m_surface->updateContentClip();
+    syncColumnResizeAreas();
 }
 
 void TaskPanel::paintEvent(QPaintEvent* event) {

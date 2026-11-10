@@ -21,6 +21,8 @@ class TaskListModel;
 class TaskDetailWidget;
 class WindowControls;
 class WindowResizeArea;
+class SplitterResizeArea;
+class OverlayEdgeShadow;
 class WorkspaceSurface;
 class WindowBorderOverlay;
 class ToastIsland;
@@ -69,6 +71,7 @@ private:
     void refreshWorkspaceIcons();
     void updateWindowControlsPosition();
     void syncWindowDecoration();
+    void syncColumnResizeAreas();
     void selectNavigation(ViewScope scope, const QString& listId = QString());
     TaskStore* m_store;
     TaskListModel* m_model = nullptr;
@@ -90,6 +93,8 @@ private:
     WorkspaceSurface* m_surface = nullptr;
     WindowBorderOverlay* m_border = nullptr;
     QList<WindowResizeArea*> m_resizeAreas;
+    QList<SplitterResizeArea*> m_columnResizeAreas;
+    OverlayEdgeShadow* m_detailOverlayShadow = nullptr;
     QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
     QToolButton* m_sidebarToggle = nullptr;
     QToolButton* m_quickDate = nullptr;

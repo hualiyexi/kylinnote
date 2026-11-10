@@ -174,7 +174,6 @@ QString buildStyleSheet(Theme theme) {
             "QFrame#Sidebar{background:%8;border:0;}"
             "QFrame#ListPane,QFrame#ListHeader{background:%1;border:0;}"
             "QFrame#DetailFrame{background:%1;border:0;}"
-            "QFrame#DetailFrame[overlay=\"true\"]{border-left:1px solid %2;}"
             "QWidget#TaskDetailWidget{background:transparent;}"
             "QFrame#QuickAddFrame{background:%1;border:1px solid %3;border-radius:7px;}"
             "QFrame#QuickAddFrame:focus-within{border:1px solid %5;}"
