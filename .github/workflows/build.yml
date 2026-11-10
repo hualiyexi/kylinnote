@@ -15,9 +15,17 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  linux-arm64:
-    name: Linux ARM64 / Qt 5.12 / glibc 2.31
-    runs-on: ubuntu-24.04-arm
+  linux:
+    name: Linux ${{ matrix.arch }} / Qt 5.12.8 / glibc 2.31
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
     timeout-minutes: 45
     steps:
       # Current stable actions, verified to use Node 24.
@@ -25,21 +33,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Native ARM64 build and CTest in Ubuntu 20.04
+      - name: Native ${{ matrix.arch }} build and CTest in Ubuntu 20.04
         run: |
-          docker run --rm --platform linux/arm64 \
+          docker run --rm --platform linux/${{ matrix.arch }} \
             -v "$PWD":/src -w /src ubuntu:20.04 \
             bash packaging/ci-build.sh
 
       - name: Install regular package with system Qt in a separate container
         run: |
-          docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src ubuntu:20.04 bash -eu -o pipefail -c '
+          docker run --rm --platform linux/${{ matrix.arch }} -v "$PWD":/src -w /src ubuntu:20.04 bash -eu -o pipefail -c '
             export DEBIAN_FRONTEND=noninteractive
             if ! apt-get update -o APT::Update::Error-Mode=any; then
               sed -i -E "s|https?://(archive.ubuntu.com/ubuntu|security.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports)|http://old-releases.ubuntu.com/ubuntu|g" /etc/apt/sources.list
               apt-get update -o APT::Update::Error-Mode=any
             fi
-            packages=(dist/kylinlist_*_arm64.deb)
+            packages=(dist/kylinlist_*_${{ matrix.arch }}.deb)
             test "${#packages[@]}" -eq 1
             apt-get install -y --no-install-recommends "./${packages[0]}"
             test -x /usr/bin/kylinlist
@@ -48,9 +56,9 @@ jobs:
 
       - name: Prepare clean runtime image with base graphics dependencies only
         run: |
-          bundles=(dist/kylinlist_*_arm64_bundle.deb)
+          bundles=(dist/kylinlist_*_${{ matrix.arch }}_bundle.deb)
           test "${#bundles[@]}" -eq 1
-          docker run --name kylinlist-runtime-base --platform linux/arm64 \
+          docker run --name kylinlist-runtime-base --platform linux/${{ matrix.arch }} \
             -v "$PWD":/src:ro -w /src ubuntu:20.04 \
             bash packaging/test-bundle.sh --prepare "${bundles[0]}"
           docker commit kylinlist-runtime-base kylinlist-runtime:test
@@ -58,15 +66,15 @@ jobs:
 
       - name: Offline dpkg install, every ELF dependency and real X11 app smoke
         run: |
-          bundles=(dist/kylinlist_*_arm64_bundle.deb)
-          docker run --rm --platform linux/arm64 --network none \
+          bundles=(dist/kylinlist_*_${{ matrix.arch }}_bundle.deb)
+          docker run --rm --platform linux/${{ matrix.arch }} --network none \
             -v "$PWD":/src:ro -w /src kylinlist-runtime:test \
             bash packaging/test-bundle.sh "${bundles[0]}"
 
-      - name: Upload ARM64 packages
+      - name: Upload ${{ matrix.arch }} packages
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kylinlist-linux-arm64
+          name: kylinlist-linux-${{ matrix.arch }}
           path: dist/*.deb
           if-no-files-found: error
           retention-days: 14
@@ -126,8 +134,8 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish existing version tag after both platforms pass
-    needs: [linux-arm64, windows]
+    name: Publish existing version tag after all builds pass
+    needs: [linux, windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Build ARM64 packages in Ubuntu 20.04 with the distribution's Qt 5.12.8.
+# Build native ARM64 or amd64 packages in Ubuntu 20.04 with Qt 5.12.8.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export DEBIAN_FRONTEND=noninteractive
-[[ "$(dpkg --print-architecture)" == arm64 && "$(uname -m)" == aarch64 ]] || {
-    echo 'CI requires a real ARM64 userspace/kernel; --arch only relabels nothing.' >&2
-    exit 1
-}
+PACKAGE_ARCH="$(dpkg --print-architecture)"
+case "$PACKAGE_ARCH:$(uname -m)" in
+    arm64:aarch64|amd64:x86_64) ;;
+    *) echo "Unsupported CI architecture: $PACKAGE_ARCH / $(uname -m)" >&2; exit 1;;
+esac
 if ! apt-get update -o APT::Update::Error-Mode=any; then
     sed -i -E \
         -e 's|https?://(archive.ubuntu.com/ubuntu|security.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports)|http://old-releases.ubuntu.com/ubuntu|g' \
@@ -22,6 +23,6 @@ apt-get install -y --no-install-recommends \
 
 # Each mode has its own cache/staging tree and writes directly to dist.
 mkdir -p dist
-bash packaging/build-deb.sh --arch arm64 --build-dir "$PWD/build-deb-arm64-system" --output-dir "$PWD/dist"
-bash packaging/build-deb.sh --arch arm64 --bundle-qt --build-dir "$PWD/build-deb-arm64-bundle" --output-dir "$PWD/dist"
+bash packaging/build-deb.sh --arch "$PACKAGE_ARCH" --build-dir "$PWD/build-deb-$PACKAGE_ARCH-system" --output-dir "$PWD/dist"
+bash packaging/build-deb.sh --arch "$PACKAGE_ARCH" --bundle-qt --build-dir "$PWD/build-deb-$PACKAGE_ARCH-bundle" --output-dir "$PWD/dist"
 find dist -maxdepth 1 -name '*.deb' -exec ls -lh {} \;

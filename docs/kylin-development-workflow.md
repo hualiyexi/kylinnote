@@ -1,6 +1,6 @@
 # 银河麒麟开发与兼容性基线
 
-更新日期：2026-11-08。KylinList（麒麟清单）是个人自用应用，日常开发沿用已经跑通的构建环境。
+更新日期：2026-11-10。KylinList（麒麟清单）是个人自用应用，日常开发沿用已经跑通的构建环境。
 
 **日常兼容性策略：在 Ubuntu 20.04 中，使用发行版自带的 Qt 5.12.8，按目标 CPU 架构编译和打包。** 固定这套环境后，普通功能开发无需重复调查系统版本或执行额外的适配工具流程；构建、CTest 和安装启动检查由现有脚本与 CI 完成。
 
@@ -19,7 +19,7 @@
 
 Ubuntu 20.04 提供了与已测麒麟环境相符的旧版基础库。保持这一构建基线，可以避免编译时无意间引入更新系统库的要求。Windows 开发机通过 Docker 的 Linux 环境完成 deb 构建，无需在麒麟虚拟机里开发。
 
-ARM64 和 x86_64 共用源码，分别编译。`--arch` 用于核对构建架构，不能把 x86 程序转换成 ARM 程序。Windows 本地 Docker 可借助模拟运行 ARM64 容器；GitHub CI 使用原生 ARM64 runner。沿用编译器的默认架构选项，不添加 `-march=native` 或针对更新 ARM CPU 的指令集要求。
+ARM64 和 x86_64 共用源码，分别编译。`--arch` 用于核对构建架构，不能把 x86 程序转换成 ARM 程序。Windows 本地 Docker 可借助模拟运行 ARM64 容器；GitHub CI 为 ARM64 和 amd64 分别使用对应的原生 runner，并在 Ubuntu 20.04 容器中执行同一套构建与验证。沿用编译器的默认架构选项，不添加 `-march=native` 或针对更新 ARM CPU 的指令集要求。
 
 ## 已经验证的结论
 
@@ -39,7 +39,7 @@ ARM64 和 x86_64 共用源码，分别编译。`--arch` 用于核对构建架构
 
 1. 在 Windows 开发、预览，保持 C++14 / Qt 5.12.8 可用的 API。
 2. 推送到 `main`，由 CI 在固定环境构建并运行现有测试；本地需要 deb 时复用 Ubuntu 20.04 Docker 镜像。命令见[构建文档](building.md)。
-3. 从对应运行的 Artifacts 下载 `kylinlist-linux-arm64` 或 `kylinlist-windows-x64`。普通推送、PR 和手动运行只生成构建产物；`v*` 标签在两平台通过后自动创建 Release。
+3. 从对应运行的 Artifacts 下载 `kylinlist-linux-arm64`、`kylinlist-linux-amd64` 或 `kylinlist-windows-x64`。两个 Linux 架构各自包含普通包与 bundle。普通推送、PR 和手动运行只生成构建产物；`v*` 标签在三个构建目标全部通过后自动创建 Release。
 4. 在麒麟上安装对应架构的 deb 并使用。首次真机试用时确认启动、任务与清单保存、中文输入、多提醒、托盘和便签表现；开发测试使用独立数据目录。新包不迁移旧数据，验收时不得把旧数据库是否存在当作新数据已导入。
 
 保留普通 CTest、包架构和依赖检查，以及打包后的安装启动测试。这些由脚本自动执行。Windows 的 Qt 插件路径、`qt.conf` 和 `windeployqt --release` 是已经定位并修复的问题，继续保留。
