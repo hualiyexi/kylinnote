@@ -112,14 +112,38 @@ void WorkspaceSurface::updateClip() {
 }
 
 void WorkspaceSurface::updateShadow() {
-    m_shadow = blurredShadow(size(), m_rounded);
+    // 最大化没有外阴影，不生成一张永远被内容盖住的全屏模糊图。
+    if (!m_rounded || size().isEmpty()) {
+        m_shadow = QImage();
+        m_shadowColor = QColor();
+        return;
+    }
+    const QColor color = ThemeManager::instance().color(ds::ColorToken::Text);
+    if (!m_shadow.isNull() && m_shadowColor == color) return;
+    // 高斯场在直边方向不变，缓存小模板并在 paint 时做九宫格伸缩即可。
+    // 避免拖动和最大化时为每个尺寸执行整窗 74 次/像素的卷积。
+    m_shadow = blurredShadow(QSize(128, 128), true);
+    m_shadowColor = color;
 }
 
 void WorkspaceSurface::paintEvent(QPaintEvent*) {
+    if (m_shadow.isNull()) return;
     QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    if (!m_shadow.isNull()) painter.drawImage(0, 0, m_shadow);
+    const int sourceCuts[] = {0, 48, 80, 128};
+    const int targetCuts[] = {0, 48, width() - 48, width()};
+    const int targetRows[] = {0, 48, height() - 48, height()};
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            const QRect target(targetCuts[column], targetRows[row],
+                               targetCuts[column + 1] - targetCuts[column],
+                               targetRows[row + 1] - targetRows[row]);
+            const QRectF source(sourceCuts[column], sourceCuts[row],
+                                sourceCuts[column + 1] - sourceCuts[column],
+                                sourceCuts[row + 1] - sourceCuts[row]);
+            if (!target.isEmpty()) painter.drawImage(target, m_shadow, source);
+        }
+    }
 }
 
 }  // namespace kl

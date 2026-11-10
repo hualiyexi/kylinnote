@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QImage>
+#include <QColor>
 
 namespace kl {
 
@@ -21,6 +22,7 @@ private:
     void updateClip();
     void updateShadow();
     QImage m_shadow;
+    QColor m_shadowColor;
     bool m_rounded = true;
 };
 

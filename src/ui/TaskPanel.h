@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QHash>
+#include <QList>
 #include "../domain/ViewSpec.h"
 class QListWidget;
 class QListView;
@@ -19,6 +20,7 @@ class TaskStore;
 class TaskListModel;
 class TaskDetailWidget;
 class WindowControls;
+class WindowResizeArea;
 class WorkspaceSurface;
 class WindowBorderOverlay;
 class ToastIsland;
@@ -36,6 +38,7 @@ signals:
     void importBackupRequested(QString path);
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void changeEvent(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
@@ -65,6 +68,7 @@ private:
     void updateDetailOverlayGeometry();
     void refreshWorkspaceIcons();
     void updateWindowControlsPosition();
+    void syncWindowDecoration();
     void selectNavigation(ViewScope scope, const QString& listId = QString());
     TaskStore* m_store;
     TaskListModel* m_model = nullptr;
@@ -85,6 +89,7 @@ private:
     WindowControls* m_windowControls = nullptr;
     WorkspaceSurface* m_surface = nullptr;
     WindowBorderOverlay* m_border = nullptr;
+    QList<WindowResizeArea*> m_resizeAreas;
     QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
     QToolButton* m_sidebarToggle = nullptr;
     QToolButton* m_quickDate = nullptr;

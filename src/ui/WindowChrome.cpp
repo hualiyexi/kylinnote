@@ -8,6 +8,56 @@
 
 namespace kl {
 
+WindowResizeArea::WindowResizeArea(QWidget* window, Qt::Edges edges, const QString& name)
+    : QWidget(window), m_edges(edges) {
+    setObjectName(name);
+    setAttribute(Qt::WA_StyledBackground, false);
+    setMouseTracking(true);
+    if ((edges == (Qt::LeftEdge | Qt::TopEdge)) || (edges == (Qt::RightEdge | Qt::BottomEdge)))
+        setCursor(Qt::SizeFDiagCursor);
+    else if ((edges == (Qt::RightEdge | Qt::TopEdge)) || (edges == (Qt::LeftEdge | Qt::BottomEdge)))
+        setCursor(Qt::SizeBDiagCursor);
+    else if (edges & (Qt::LeftEdge | Qt::RightEdge)) setCursor(Qt::SizeHorCursor);
+    else setCursor(Qt::SizeVerCursor);
+}
+
+void WindowResizeArea::mousePressEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) return QWidget::mousePressEvent(event);
+    m_pressGlobal = event->globalPos();
+    m_startGeometry = window()->geometry();
+    m_dragging = true;
+    event->accept();
+}
+
+void WindowResizeArea::mouseMoveEvent(QMouseEvent* event) {
+    if (!m_dragging || !(event->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+    const QPoint delta = event->globalPos() - m_pressGlobal;
+    QRect next = m_startGeometry;
+    if (m_edges & Qt::LeftEdge) next.setLeft(next.left() + delta.x());
+    if (m_edges & Qt::RightEdge) next.setRight(next.right() + delta.x());
+    if (m_edges & Qt::TopEdge) next.setTop(next.top() + delta.y());
+    if (m_edges & Qt::BottomEdge) next.setBottom(next.bottom() + delta.y());
+    const QSize minimum = window()->minimumSize();
+    if (next.width() < minimum.width()) {
+        if (m_edges & Qt::LeftEdge) next.setLeft(next.right() - minimum.width() + 1);
+        else next.setWidth(minimum.width());
+    }
+    if (next.height() < minimum.height()) {
+        if (m_edges & Qt::TopEdge) next.setTop(next.bottom() - minimum.height() + 1);
+        else next.setHeight(minimum.height());
+    }
+    window()->setGeometry(next);
+    event->accept();
+}
+
+void WindowResizeArea::mouseReleaseEvent(QMouseEvent* event) {
+    m_dragging = false;
+    QWidget::mouseReleaseEvent(event);
+}
+
 WindowDragArea::WindowDragArea(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("WindowDragArea"));
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -69,12 +119,14 @@ WindowControls::WindowControls(QWidget* parent) : QWidget(parent), m_window(pare
     button(m_close, QStringLiteral("WindowClose"), QStringLiteral("关闭"), QStringLiteral("关闭窗口"));
     connect(m_minimize, &QToolButton::clicked, this, [this]() {
         if (m_window && m_window->window()) m_window->window()->showMinimized();
+        emit windowOperationFinished();
     });
     connect(m_maximize, &QToolButton::clicked, this, [this]() {
         QWidget* window = m_window ? m_window->window() : nullptr;
         if (!window) return;
         if (window->isMaximized()) window->showNormal();
         else window->showMaximized();
+        emit windowOperationFinished();
     });
     connect(m_close, &QToolButton::clicked, this, [this]() {
         if (m_window && m_window->window()) m_window->window()->close();
