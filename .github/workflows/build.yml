@@ -43,10 +43,9 @@ jobs:
         run: |
           docker run --rm --platform linux/${{ matrix.arch }} -v "$PWD":/src -w /src ubuntu:20.04 bash -eu -o pipefail -c '
             export DEBIAN_FRONTEND=noninteractive
-            if ! apt-get update -o APT::Update::Error-Mode=any; then
-              sed -i -E "s|https?://(archive.ubuntu.com/ubuntu|security.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports)|http://old-releases.ubuntu.com/ubuntu|g" /etc/apt/sources.list
-              apt-get update -o APT::Update::Error-Mode=any
-            fi
+            sed -i -E "s#://security[.]ubuntu[.]com/ubuntu#://archive.ubuntu.com/ubuntu#g" /etc/apt/sources.list
+            apt-get update -o APT::Update::Error-Mode=any -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
             packages=(dist/kylinlist_*_${{ matrix.arch }}.deb)
             test "${#packages[@]}" -eq 1
             apt-get install -y --no-install-recommends "./${packages[0]}"
