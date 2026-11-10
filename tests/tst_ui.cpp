@@ -910,6 +910,35 @@ private slots:
         QCOMPARE(overlayShadow->width(), 18);
         QCOMPARE(rectIn(overlayShadow, &panel).right(), rectIn(detail, &panel).left() - 1);
         QVERIFY(!detailResize->isVisible());
+        auto* overlayResize = panel.findChild<QWidget*>(QStringLiteral("OverlayDetailResizeArea"));
+        QVERIFY(overlayResize && overlayResize->isVisible());
+        QCOMPARE(overlayResize->cursor().shape(), Qt::SplitHCursor);
+        const int overlayLeft = rectIn(detail, &panel).left();
+        QTest::mousePress(overlayResize, Qt::LeftButton, Qt::NoModifier, QPoint(6, 200));
+        const QPoint overlayPressGlobal = overlayResize->mapToGlobal(QPoint(6, 200));
+        for (const int delta : {-40, -80}) {
+            const QPoint global = overlayPressGlobal + QPoint(delta, 0);
+            QMouseEvent dragOverlay(QEvent::MouseMove, overlayResize->mapFromGlobal(global), global,
+                                    Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(overlayResize, &dragOverlay);
+        }
+        QTest::mouseRelease(overlayResize, Qt::LeftButton, Qt::NoModifier,
+                            overlayResize->mapFromGlobal(overlayPressGlobal + QPoint(-80, 0)));
+        QCOMPARE(detail->width(), 380);
+        QCOMPARE(rectIn(detail, &panel).left(), overlayLeft - 80);
+        QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
+        QCOMPARE(rectIn(overlayShadow, &panel).right(), rectIn(detail, &panel).left() - 1);
+        QTest::mousePress(overlayResize, Qt::LeftButton, Qt::NoModifier, QPoint(6, 200));
+        const QPoint restorePressGlobal = overlayResize->mapToGlobal(QPoint(6, 200));
+        for (const int delta : {40, 80}) {
+            const QPoint global = restorePressGlobal + QPoint(delta, 0);
+            QMouseEvent restoreOverlay(QEvent::MouseMove, overlayResize->mapFromGlobal(global), global,
+                                       Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(overlayResize, &restoreOverlay);
+        }
+        QTest::mouseRelease(overlayResize, Qt::LeftButton, Qt::NoModifier,
+                            overlayResize->mapFromGlobal(restorePressGlobal + QPoint(80, 0)));
+        QCOMPARE(detail->width(), 300);
         QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
         QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
         QVERIFY(rectIn(detail, &panel).left() > rectIn(list, &panel).left());
@@ -920,6 +949,7 @@ private slots:
         QTest::mouseClick(close, Qt::LeftButton);
         QTRY_VERIFY(!detail->isVisible());
         QVERIFY(!overlayShadow->isVisible());
+        QVERIFY(!overlayResize->isVisible());
         QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
 
         panel.resize(700, 620);
@@ -937,7 +967,10 @@ private slots:
         QVERIFY(sidebar->isVisible());
         QVERIFY(detail->isVisible());
         QCOMPARE(detail->parentWidget(), splitter);
+        QCOMPARE(splitter->indexOf(detail), 2);
+        QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
         QVERIFY(detailResize->isVisible());
+        QVERIFY(!overlayResize->isVisible());
         QCOMPARE(detail->width(), 370);
 
         QTest::mouseClick(toggle, Qt::LeftButton);
