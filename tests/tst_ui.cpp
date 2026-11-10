@@ -115,8 +115,9 @@ bool savePopupPreview(QWidget* detail, QWidget* popup, const QString& path) {
     return image.save(path);
 }
 
-// The detail menu may use exec() or popup(). Drive its real QAction in either case,
-// and close the menu on a missing action so a failed assertion cannot hang the suite.
+// The detail menu may use exec() or popup(). Settle popup activation before
+// closing it and dispatching its QAction, so delayed focus events cannot steal
+// focus from the command's editor. Close on a missing action to avoid hangs.
 bool triggerDetailCommand(TaskDetailWidget& detail, const QString& actionName) {
     auto* button = detail.findChild<QToolButton*>(QStringLiteral("DetailMore"));
     if (!button || !button->isVisible() || !button->isEnabled()) return false;
@@ -132,6 +133,7 @@ bool triggerDetailCommand(TaskDetailWidget& detail, const QString& actionName) {
             settled = true;
             triggered = action && action->isVisible() && action->isEnabled();
             poll.stop();
+            QApplication::processEvents();
             menu->close();
             if (triggered) action->trigger();
         } else if (elapsed.elapsed() > 1000) {
@@ -1455,10 +1457,8 @@ private slots:
     void detailChecklistCommandsRevealInputAndGrowWithoutInnerScroll() {
         const QString id = m_store->createTask(QStringLiteral("按需添加清单"));
         TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
-        if (QGuiApplication::platformName() == QLatin1String("windows")) {
-            detail.activateWindow();
-            QVERIFY(QTest::qWaitForWindowActive(&detail));
-        }
+        detail.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&detail));
         auto* checklist = detail.findChild<QListWidget*>(QStringLiteral("TaskChecklist"));
         auto* input = detail.findChild<QLineEdit*>(QStringLiteral("ChecklistInput"));
         auto* editor = detail.findChild<MarkdownEditor*>(); QVERIFY(checklist && input && editor);
