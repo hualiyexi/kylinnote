@@ -8,12 +8,10 @@ case "$PACKAGE_ARCH:$(uname -m)" in
     arm64:aarch64|amd64:x86_64) ;;
     *) echo "Unsupported CI architecture: $PACKAGE_ARCH / $(uname -m)" >&2; exit 1;;
 esac
-if ! apt-get update -o APT::Update::Error-Mode=any; then
-    sed -i -E \
-        -e 's|https?://(archive.ubuntu.com/ubuntu|security.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports)|http://old-releases.ubuntu.com/ubuntu|g' \
-        /etc/apt/sources.list
-    apt-get update -o APT::Update::Error-Mode=any
-fi
+# The official archive mirror also serves the focal-security pocket.
+sed -i -E 's#://security[.]ubuntu[.]com/ubuntu#://archive.ubuntu.com/ubuntu#g' /etc/apt/sources.list
+apt-get update -o APT::Update::Error-Mode=any -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
 apt-get install -y --no-install-recommends \
     build-essential cmake binutils file dpkg-dev ca-certificates \
     qtbase5-dev qtbase5-dev-tools qt5-qmake \
