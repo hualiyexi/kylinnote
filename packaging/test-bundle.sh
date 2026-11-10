@@ -30,10 +30,7 @@ assert_no_system_qt() {
 }
 assert_no_system_qt
 if [[ "$PREPARE" == yes ]]; then
-    export DEBIAN_FRONTEND=noninteractive
-    sed -i -E 's#://security[.]ubuntu[.]com/ubuntu#://archive.ubuntu.com/ubuntu#g' /etc/apt/sources.list
-    apt-get update -o APT::Update::Error-Mode=any -o Acquire::Retries=3 \
-        -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+    bash packaging/prepare-ci-apt.sh
     # Expand only package names from our generated, single-choice Depends field.
     [[ "$DEPENDENCIES" != *'|'* ]] || die 'Alternative dependencies require explicit test preparation'
     BASE_PACKAGES="$(printf '%s\n' "$DEPENDENCIES" | sed -E 's/\([^)]*\)//g; s/,/ /g')"
