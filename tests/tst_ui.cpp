@@ -729,6 +729,133 @@ private slots:
         QApplication::processEvents();
         QVERIFY(!(panel.windowState() & Qt::WindowMaximized));
         QVERIFY(panel.mask().isEmpty());
+        if (QGuiApplication::platformName() == QLatin1String("windows")) {
+            auto* border = panel.findChild<QWidget*>(QStringLiteral("WindowBorderOverlay"));
+            QVERIFY(border);
+            QTRY_COMPARE(border->geometry(), QRect(21, 21, panel.width() - 42, panel.height() - 42));
+            panel.showMinimized();
+            QApplication::processEvents();
+            panel.showNormal();
+            QApplication::processEvents();
+            QTRY_COMPARE(border->geometry(), QRect(21, 21, panel.width() - 42, panel.height() - 42));
+            QCOMPARE(rectIn(listPane, &panel).top(), 21);
+            panel.showMaximized();
+            QApplication::processEvents();
+            QCOMPARE(border->geometry(), QRect(0, 0, panel.width(), panel.height()));
+            panel.showMinimized();
+            QApplication::processEvents();
+            panel.showNormal();
+            QApplication::processEvents();
+            QTRY_COMPARE(border->geometry(), QRect(21, 21, panel.width() - 42, panel.height() - 42));
+        }
+    }
+
+    void nativeWindowResizeAndHitTesting() {
+#ifdef Q_OS_WIN
+        if (QGuiApplication::platformName() != QLatin1String("windows"))
+            QSKIP("需要原生 Windows 窗口");
+        TaskPanel panel(m_store.get());
+        panel.resize(1100, 720);
+        panel.show();
+        QApplication::processEvents();
+        const HWND hwnd = reinterpret_cast<HWND>(panel.winId());
+        QVERIFY((GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_THICKFRAME) != 0);
+        RECT frame;
+        QVERIFY(GetWindowRect(hwnd, &frame));
+        const qreal scale = panel.devicePixelRatioF();
+        const int border = qRound(6 * scale);
+        struct Probe { int x; int y; LRESULT expected; };
+        const Probe probes[] = {
+            {2, 100, HTLEFT}, {frame.right - frame.left - 2, 100, HTRIGHT},
+            {100, 2, HTTOP}, {100, frame.bottom - frame.top - 2, HTBOTTOM},
+            {2, 2, HTTOPLEFT}, {frame.right - frame.left - 2, 2, HTTOPRIGHT},
+            {2, frame.bottom - frame.top - 2, HTBOTTOMLEFT},
+            {frame.right - frame.left - 2, frame.bottom - frame.top - 2, HTBOTTOMRIGHT}
+        };
+        for (const Probe& probe : probes) {
+            const LPARAM point = MAKELPARAM(frame.left + probe.x, frame.top + probe.y);
+            QCOMPARE(SendMessage(hwnd, WM_NCHITTEST, 0, point), probe.expected);
+        }
+        const int inset = qRound(21 * scale);
+        QCOMPARE(SendMessage(hwnd, WM_NCHITTEST, 0,
+                             MAKELPARAM(frame.right - inset, frame.top + 200)), HTRIGHT);
+        QCOMPARE(SendMessage(hwnd, WM_NCHITTEST, 0,
+                             MAKELPARAM(frame.left + inset, frame.top + 200)), HTLEFT);
+        QCOMPARE(SendMessage(hwnd, WM_NCHITTEST, 0,
+                             MAKELPARAM(frame.left + 200, frame.bottom - inset)), HTBOTTOM);
+        QVERIFY(border > 0);
+#else
+        QSKIP("Windows 原生窗口测试");
+#endif
+    }
+
+    void nativeWindowDecorationRestore() {
+#ifdef Q_OS_WIN
+        if (QGuiApplication::platformName() != QLatin1String("windows"))
+            QSKIP("需要原生 Windows 窗口");
+        TaskPanel panel(m_store.get());
+        panel.resize(1100, 720);
+        panel.show();
+        QApplication::processEvents();
+        auto* border = panel.findChild<QWidget*>(QStringLiteral("WindowBorderOverlay"));
+        QVERIFY(border);
+        const auto expected = [&panel]() {
+            return QRect(21, 21, panel.width() - 42, panel.height() - 42);
+        };
+        QTRY_COMPARE(border->geometry(), expected());
+        panel.showMinimized();
+        QTest::qWait(80);
+        panel.showNormal();
+        QTRY_COMPARE(border->geometry(), expected());
+        panel.showMaximized();
+        QTRY_COMPARE(border->geometry(), QRect(0, 0, panel.width(), panel.height()));
+        panel.showNormal();
+        QTRY_COMPARE(border->geometry(), expected());
+#else
+        QSKIP("Windows 原生窗口测试");
+#endif
+    }
+
+    void resizeAreasDragAllWindowEdges() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1100, 720);
+        panel.show();
+        QApplication::processEvents();
+        const struct { const char* name; Qt::CursorShape cursor; } areas[] = {
+            {"WindowResizeLeft", Qt::SizeHorCursor}, {"WindowResizeRight", Qt::SizeHorCursor},
+            {"WindowResizeTop", Qt::SizeVerCursor}, {"WindowResizeBottom", Qt::SizeVerCursor},
+            {"WindowResizeTopLeft", Qt::SizeFDiagCursor}, {"WindowResizeTopRight", Qt::SizeBDiagCursor},
+            {"WindowResizeBottomLeft", Qt::SizeBDiagCursor}, {"WindowResizeBottomRight", Qt::SizeFDiagCursor}
+        };
+        for (const auto& definition : areas) {
+            auto* area = panel.findChild<QWidget*>(QString::fromLatin1(definition.name));
+            QVERIFY(area && area->isVisible());
+            QCOMPARE(area->cursor().shape(), definition.cursor);
+        }
+        const QRect start = panel.geometry();
+        auto* right = panel.findChild<QWidget*>(QStringLiteral("WindowResizeRight"));
+        QTest::mousePress(right, Qt::LeftButton, Qt::NoModifier, QPoint(6, 240));
+        QMouseEvent move(QEvent::MouseMove, QPoint(-74, 240), right->mapToGlobal(QPoint(-74, 240)),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(right, &move);
+        QTest::mouseRelease(right, Qt::LeftButton, Qt::NoModifier, QPoint(-74, 240));
+        QCOMPARE(panel.width(), start.width() - 80);
+        QCOMPARE(panel.height(), start.height());
+        auto* bottomRight = panel.findChild<QWidget*>(QStringLiteral("WindowResizeBottomRight"));
+        QTest::mousePress(bottomRight, Qt::LeftButton, Qt::NoModifier, QPoint(6, 6));
+        QMouseEvent cornerMove(QEvent::MouseMove, QPoint(46, 66),
+                               bottomRight->mapToGlobal(QPoint(46, 66)),
+                               Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(bottomRight, &cornerMove);
+        QTest::mouseRelease(bottomRight, Qt::LeftButton, Qt::NoModifier, QPoint(46, 66));
+        QCOMPARE(panel.width(), start.width() - 40);
+        QCOMPARE(panel.height(), start.height() + 60);
+        panel.showMaximized();
+        QApplication::processEvents();
+        QVERIFY(!right->isVisible());
+        panel.showNormal();
+        QApplication::processEvents();
+        QVERIFY(right->isVisible());
     }
 
     void responsiveColumnsAndOverlayDetail() {

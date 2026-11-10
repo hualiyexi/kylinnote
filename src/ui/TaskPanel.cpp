@@ -105,6 +105,15 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
         delete oldStatusBar;
     setMinimumSize(620, 560); resize(1240, 820);
     buildUi();
+#ifdef Q_OS_WIN
+    // Qt 5.12 的 FramelessWindowHint 使用 WS_POPUP；仅补回可缩放边框样式，
+    // 系统标题栏仍由 WM_NCCALCSIZE 移除，透明背景和应用自绘边框保持不变。
+    const HWND hwnd = reinterpret_cast<HWND>(winId());
+    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_THICKFRAME);
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+#endif
     for (const Entity& entity : m_store->entities()) m_taskStates.insert(entity.id, entity.status);
     connect(m_detail, &TaskDetailWidget::internalLinkRequested, this, &TaskPanel::showTask);
     rebuildNavigation();
@@ -455,9 +464,27 @@ void TaskPanel::buildUi() {
     });
     header->insertWidget(0, m_sidebarToggle);
     m_windowControls = new WindowControls(central);
+    connect(m_windowControls, &WindowControls::windowOperationFinished, this, [this]() {
+        QTimer::singleShot(0, this, [this]() {
+            if (isMinimized()) return;
+            syncWindowDecoration();
+            reconcileWorkspaceLayout();
+        });
+    });
     m_windowControls->setAttribute(Qt::WA_StyledBackground, false);
     m_border = new WindowBorderOverlay(central);
     m_border->setGeometry(21, 21, central->width() - 42, central->height() - 42);
+    const struct { const char* name; Qt::Edges edges; } resizeAreas[] = {
+        {"WindowResizeLeft", Qt::LeftEdge}, {"WindowResizeRight", Qt::RightEdge},
+        {"WindowResizeTop", Qt::TopEdge}, {"WindowResizeBottom", Qt::BottomEdge},
+        {"WindowResizeTopLeft", Qt::LeftEdge | Qt::TopEdge},
+        {"WindowResizeTopRight", Qt::RightEdge | Qt::TopEdge},
+        {"WindowResizeBottomLeft", Qt::LeftEdge | Qt::BottomEdge},
+        {"WindowResizeBottomRight", Qt::RightEdge | Qt::BottomEdge}
+    };
+    for (const auto& definition : resizeAreas)
+        m_resizeAreas.append(new WindowResizeArea(this, definition.edges,
+                                                  QString::fromLatin1(definition.name)));
     m_border->raise();
     m_windowControls->raise();
     m_surface->updateContentClip();
@@ -703,8 +730,8 @@ void TaskPanel::showTask(QString id) {
         setDetailVisible(true);
     }
     showNormal(); raise(); activateWindow();
+    syncWindowDecoration();
     if (m_windowControls) {
-        updateWindowControlsPosition();
         m_windowControls->raise();
     }
 }
@@ -932,43 +959,67 @@ void TaskPanel::selectNavigation(ViewScope scope, const QString& listId) {
     }
 }
 
+void TaskPanel::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    syncWindowDecoration();
+    reconcileWorkspaceLayout();
+}
+
 void TaskPanel::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     reconcileWorkspaceLayout();
-    if (m_windowControls)
-        updateWindowControlsPosition();
-    if (m_border) {
-        const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
-        m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
-        m_border->raise();
-        if (m_windowControls) m_windowControls->raise();
-        m_surface->updateContentClip();
-    }
+    syncWindowDecoration();
 }
 
 void TaskPanel::changeEvent(QEvent* event) {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::WindowStateChange) {
-        const bool maximized = isMaximized() || isFullScreen();
-        if (m_surface) {
-            m_surface->setFramelessCorners(!maximized);
-            if (auto* layout = m_surface->layout()) {
-                const int inset = maximized ? 0 : 21;
-                layout->setContentsMargins(inset, inset, inset, inset);
-            }
-        }
-        updateWindowControlsPosition();
+    if (event->type() == QEvent::WindowStateChange && !isMinimized()) {
+        syncWindowDecoration();
         reconcileWorkspaceLayout();
-        if (m_border) {
-            const int inset = maximized ? 0 : 18;
-            m_border->setRounded(!maximized);
-            m_border->setGeometry(inset, inset, width() - 2 * inset, height() - 2 * inset);
-            m_border->raise();
-            if (m_windowControls) m_windowControls->raise();
-            m_surface->updateContentClip();
-        }
+        QTimer::singleShot(0, this, [this]() {
+            if (isMinimized()) return;
+            syncWindowDecoration();
+            reconcileWorkspaceLayout();
+        });
         update();
     }
+}
+
+void TaskPanel::syncWindowDecoration() {
+    if (!m_surface || !m_border) return;
+    const bool maximized = isMaximized() || isFullScreen();
+    const int inset = maximized ? 0 : 21;
+    m_surface->setFramelessCorners(!maximized);
+    if (auto* layout = m_surface->layout()) layout->setContentsMargins(inset, inset, inset, inset);
+    m_border->setRounded(!maximized);
+    m_border->setGeometry(m_surface->rect().adjusted(inset, inset, -inset, -inset));
+    updateWindowControlsPosition();
+    updateDetailOverlayGeometry();
+    m_border->raise();
+    if (m_windowControls) m_windowControls->raise();
+    for (WindowResizeArea* area : m_resizeAreas) {
+        area->setVisible(!maximized);
+        if (maximized) continue;
+        const QString name = area->objectName();
+        if (name == QLatin1String("WindowResizeLeft"))
+            area->setGeometry(inset - 6, inset, 12, height() - 2 * inset);
+        else if (name == QLatin1String("WindowResizeRight"))
+            area->setGeometry(width() - inset - 6, inset, 12, height() - 2 * inset);
+        else if (name == QLatin1String("WindowResizeTop"))
+            area->setGeometry(inset, inset - 6, width() - 2 * inset, 12);
+        else if (name == QLatin1String("WindowResizeBottom"))
+            area->setGeometry(inset, height() - inset - 6, width() - 2 * inset, 12);
+        else if (name == QLatin1String("WindowResizeTopLeft"))
+            area->setGeometry(inset - 6, inset - 6, 12, 12);
+        else if (name == QLatin1String("WindowResizeTopRight"))
+            area->setGeometry(width() - inset - 6, inset - 6, 12, 12);
+        else if (name == QLatin1String("WindowResizeBottomLeft"))
+            area->setGeometry(inset - 6, height() - inset - 6, 12, 12);
+        else
+            area->setGeometry(width() - inset - 6, height() - inset - 6, 12, 12);
+        area->raise();
+    }
+    m_surface->updateContentClip();
 }
 
 void TaskPanel::paintEvent(QPaintEvent* event) {
@@ -1319,19 +1370,20 @@ bool TaskPanel::nativeEvent(const QByteArray& eventType, void* message, long* re
             *result = 0;
             return true;
         }
-        if (msg->message == WM_NCHITTEST && !isMaximized()) {
-            const qreal scale = devicePixelRatioF();
+        if (msg->message == WM_NCHITTEST && !isMaximized() && !isFullScreen()) {
             RECT frame;
             GetWindowRect(msg->hwnd, &frame);
-            const int x = int((GET_X_LPARAM(msg->lParam) - frame.left) / scale);
-            const int y = int((GET_Y_LPARAM(msg->lParam) - frame.top) / scale);
-            const int w = int((frame.right - frame.left) / scale);
-            const int h = int((frame.bottom - frame.top) / scale);
-            const int border = 6;
-            const bool left = x < border;
-            const bool right = x >= w - border;
-            const bool top = y < border;
-            const bool bottom = y >= h - border;
+            const int x = GET_X_LPARAM(msg->lParam) - frame.left;
+            const int y = GET_Y_LPARAM(msg->lParam) - frame.top;
+            const int w = frame.right - frame.left;
+            const int h = frame.bottom - frame.top;
+            const int border = qRound(6 * devicePixelRatioF());
+            const int inset = qRound(21 * devicePixelRatioF());
+            // 透明外边距属于阴影；在可见边框及其外侧都提供缩放命中。
+            const bool left = x < border || qAbs(x - inset) < border;
+            const bool right = x >= w - border || qAbs(x - (w - inset)) < border;
+            const bool top = y < border || qAbs(y - inset) < border;
+            const bool bottom = y >= h - border || qAbs(y - (h - inset)) < border;
             if (top && left) *result = HTTOPLEFT;
             else if (top && right) *result = HTTOPRIGHT;
             else if (bottom && left) *result = HTBOTTOMLEFT;

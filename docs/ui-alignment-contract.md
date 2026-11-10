@@ -179,3 +179,13 @@
 | 分界缺角 | 中间列不再误用窗口外缘圆角；分割线与栏背景不重复描边，第三／第四列上端无透底小角 | `QssBuilder` |
 
 验证：`workspaceUsesFourColumnsAndNoPermanentStatusBar` 更新为常驻空白详情语义；`responsiveColumnsAndOverlayDetail` 覆盖两个 1px 边界、固定功能栏、最小窗口、自动隐藏／恢复、覆盖详情几何与关闭、手动隐藏第二列。原生 Windows 截图新增 `workspace-divider-detail.png`、`task-panel-auto-three-columns.png`、`task-panel-detail-overlay.png`、`task-panel-auto-two-columns.png`，核对分界上端、覆盖堆叠和两列状态。以上仍不是银河麒麟 V10 SP 目标机验收。
+
+## 2026-11-10 窗口缩放、还原与阴影性能修正
+
+| 问题 | 修正 | 验证 |
+|---|---|---|
+| 边缘无缩放光标且不能拖动 | Windows 无边框窗口补 `WS_THICKFRAME`；可见边框周围增加八方向透明 `WindowResizeArea`，直接调整窗口几何并遵循最小尺寸，X11 共用 | `nativeWindowResizeAndHitTesting` 核对八方向及可见边缘命中；`resizeAreasDragAllWindowEdges` 验证右边与右下角拖动、光标和最大化隐藏；桌面实际拖动 1240×820→1160×820、再至 1130×760 |
+| 最小化召出后边框大于内容 | 删除还原路径的 18px 特例；`syncWindowDecoration()` 统一 21px／最大化 0，并覆盖 show、状态变化和窗口按钮操作 | 原生 `nativeWindowDecorationRestore` 与四列回归核对普通→最小化→还原、最大化→还原的真实边框几何 |
+| 最大化卡顿 | 直角模式完全不生成阴影；普通窗口按主题缓存 128×128 高斯模板，九宫格伸缩，不再为每次 resize 分配全窗口缓冲并执行 74 次/像素卷积 | 原生截图核对圆角、边框、阴影；桌面最大化操作响应约 50ms，全量 CTest 保持通过 |
+
+测试中的边框按 `objectName=WindowBorderOverlay` 获取；该类没有 `Q_OBJECT`，不能用无名称的 `findChild<WindowBorderOverlay*>()`，否则可能退化为普通 QWidget 匹配并误取其他控件。
