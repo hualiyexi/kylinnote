@@ -28,7 +28,7 @@ ARM64 和 x86_64 共用源码，分别编译。`--arch` 用于核对构建架构
 | 银河麒麟 V10 SP1 2503 x86_64 虚拟机（更名前 KylinNote） | 用户已安装 Ubuntu 20.04 构建的系统 Qt 小包，并反馈可以正常使用；该结果不冒充当前 KylinList 新库版本的验收 |
 | 上述虚拟机的运行库 | Qt `5.12.12+dfsg-0kylin1k1.54`；glibc `2.31`；libstdc++ 提供至 `GLIBCXX_3.4.28` |
 | 本地 Ubuntu 20.04 ARM64 容器构建 | 已产出 `Architecture: arm64`、ELF `AArch64` 的 deb |
-| GitHub Actions | Linux ARM64 与 Windows x64 构建、测试、打包及现有安装启动检查已经跑通 |
+| GitHub Actions | 2026-11-10 的运行 [#42763725286](https://github.com/hualiyexi/kylinnote/actions/runs/42763725286) 已通过 Linux ARM64、Linux amd64 与 Windows x64 的构建、测试、打包及现有安装启动检查；Windows 在首次 UI 测试异常退出后，以相同源码重试通过 |
 | 飞腾 FT-2000 真机 | 尚未试装，由用户实际使用时确认；具体补丁号和运行库版本尚未从真机读取 |
 
 上述结果足以将 Ubuntu 20.04 定为日常构建方案。x86 虚拟机测试和 ARM64 自动化通过各有意义；飞腾真机的安装与桌面表现仍以实际试用为准。
