@@ -6,10 +6,11 @@ KylinList 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux
 
 普通开发无需自己重复搭建打包环境。推送到 `main` 后打开 [Actions](https://github.com/hualiyexi/kylinnote/actions/workflows/build.yml)，进入对应提交的成功运行，在页面底部的 **Artifacts** 下载：
 
-- `kylinlist-linux-arm64`：解压后包含系统 Qt 小包和自带 Qt 的 bundle。麒麟默认使用没有 `_bundle` 后缀的几百 KB 小包。
+- `kylinlist-linux-arm64`：飞腾等 ARM64 设备使用，包含系统 Qt 小包和自带 Qt 的 bundle。
+- `kylinlist-linux-amd64`：x86_64 麒麟或 x86 虚拟机使用，同样包含系统 Qt 小包和 bundle。
 - `kylinlist-windows-x64`：包含安装 EXE 和便携 ZIP。
 
-安装 Linux 小包使用 `sudo apt install ./kylinlist_<版本>_arm64.deb`；系统依赖已齐时也可离线 `sudo dpkg -i 文件名.deb`。目标机无需 qmake 或开发工具。Artifacts 保留 14 天；`v*` 标签对应的构建通过后，产物会放入 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
+麒麟默认选择没有 `_bundle` 后缀的几百 KB 小包。安装命令为 `sudo apt install ./kylinlist_<版本>_<架构>.deb`，架构填 `arm64` 或 `amd64`；系统依赖已齐时也可离线 `sudo dpkg -i 文件名.deb`。目标机无需 qmake 或开发工具。Artifacts 保留 14 天；`v*` 标签对应的三个构建目标全部通过后，产物会放入 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
 
 具体环境、已验证结果及何时需要重新检查见[兼容性基线](kylin-development-workflow.md)。以下为需要本地构建时使用的命令。
 
@@ -169,13 +170,20 @@ cmake --build build-linux --parallel
 
 `kylinlist_core` 包含数据库、任务领域、调度和跨平台 IPC；`kylinlist_ui` 包含 Qt Widgets 装配，可供 `test_ui` 链接；`test_tasks` 链接 core。Qt Network 的 `QLocalServer`/`QLocalSocket` 负责单实例唤醒。Qt DBus 和可选 D-Bus 适配器仅在 UNIX 且 `KYLINLIST_WITH_DBUS=ON` 时编译；Windows 不需要 D-Bus。Linux 安装 `libx11-dev` 可保留 X11 平台扩展能力，用户快捷键策略由应用控制。
 
-## ARM64 deb：常规包与离线 bundle
+## ARM64 / amd64 deb：常规包与离线 bundle
 
 在原生 ARM64 主机运行：
 
 ```bash
 bash packaging/build-deb.sh --arch arm64
 bash packaging/build-deb.sh --arch arm64 --bundle-qt
+```
+
+在原生 x86_64 主机使用同一入口：
+
+```bash
+bash packaging/build-deb.sh --arch amd64
+bash packaging/build-deb.sh --arch amd64 --bundle-qt
 ```
 
 脚本核对构建环境与包内 ELF 的架构；`--arch` 不能转换 CPU 指令。ARM64 用于目标机，amd64 用于 x86 麒麟虚拟机。系统包和 bundle 使用独立的构建目录，避免缓存混用。打包入口要求 Qt 5.12.8，直接查询系统 qmake 的版本与插件路径。
@@ -201,7 +209,7 @@ docker run --rm --platform linux/arm64 `
   ubuntu:20.04 bash packaging/ci-build.sh
 ```
 
-ARM64 容器在 Windows x64 上通过 Docker 的模拟能力运行，CI 则使用原生 ARM64 runner。两种方式均在容器内用 ARM64 工具链生成 ARM64 程序。deb 使用 xz 压缩，默认声明 glibc 2.31 和 Qt 5.12.8 的依赖下限；脚本不再生成逐文件 ABI 报告。具体实测状态见[兼容性基线](kylin-development-workflow.md)。
+ARM64 容器在 Windows x64 上通过 Docker 的模拟能力运行，CI 则为 ARM64 与 amd64 分别使用对应架构的原生 runner。上面的完整 CI 命令也可将平台改为 `linux/amd64`；`ci-build.sh` 根据容器内的原生架构选择打包参数，两种架构都生成普通包与 bundle。deb 使用 xz 压缩，默认声明 glibc 2.31 和 Qt 5.12.8 的依赖下限；脚本不再生成逐文件 ABI 报告。具体实测状态见[兼容性基线](kylin-development-workflow.md)。
 
 ## bundle 的自动安装启动测试
 
@@ -223,8 +231,8 @@ docker run --rm --platform linux/arm64 --network none \
 
 ## CI 与发布
 
-GitHub Actions 的 Linux ARM64 与 Windows x64 job 并行执行，均运行 CTest。Linux 构建系统 Qt 小包与 bundle，将产物直接放到 `dist/`，并保留独立容器中的安装与启动测试；Windows 产出便携 ZIP 和当前用户安装 EXE。
+GitHub Actions 的 Linux ARM64、Linux amd64 与 Windows x64 三个构建目标并行执行，均运行 CTest。Linux 两个架构各自使用原生 runner，在 Ubuntu 20.04 容器中产出系统 Qt 小包与 bundle，保留独立容器中的普通包安装检查，以及无系统 Qt 环境中的 bundle 断网安装与 X11 启动测试；对应 Artifacts 为 `kylinlist-linux-arm64` 和 `kylinlist-linux-amd64`。Windows 产出便携 ZIP 和当前用户安装 EXE，上传到 `kylinlist-windows-x64`。
 
-默认令牌仅有 `contents: read`。只有已有 `v*` 标签触发、且两个打包 job 都成功后，独立 release job 才获得 `contents: write` 并上传该次产物；普通 push、PR、手工运行不会创建 Release，也不会自动创建标签。
+默认令牌仅有 `contents: read`。只有已有 `v*` 标签触发、且两个 Linux 架构和 Windows 的打包 job 都成功后，独立 release job 才获得 `contents: write` 并上传该次产物；普通分支上的 push、PR、手工运行不会创建 Release，也不会自动创建标签。
 
 Qt 的 LGPLv3 文本、MD4C MIT 许可证及第三方说明会随包保留。Qt 对应版本源代码可从 https://code.qt.io/ 获取；组件版本与源地址见仓库根的第三方说明。

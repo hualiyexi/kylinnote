@@ -29,16 +29,18 @@
 
 ## 下载与安装
 
-每次 push 到 `main` 会触发 [GitHub Actions](https://github.com/hualiyexi/kylinnote/actions)。两个平台的构建产物分别下载；`v*` 标签会在两边验证成功后附到 [Releases](https://github.com/hualiyexi/kylinnote/releases)。GitHub 仓库的外部名称尚未更改，以上地址继续使用原仓库路径。
+每次 push 到 `main` 会触发 [GitHub Actions](https://github.com/hualiyexi/kylinnote/actions)，分别产出 Linux ARM64、Linux amd64 和 Windows x64 的安装包；`v*` 标签会在三个构建目标全部验证成功后附到 [Releases](https://github.com/hualiyexi/kylinnote/releases)。GitHub 仓库的外部名称尚未更改，以上地址继续使用原仓库路径。
 
 | 平台 | 安装包 | 使用方式 |
 |---|---|---|
 | 麒麟 ARM64（默认选择） | `kylinlist_<版本>_arm64.deb` | 复用系统 Qt 5.12.8 或更新的 Qt 5，约几百 KB；`sudo apt install ./文件名.deb` |
 | 缺少 Qt 的 ARM64 离线机 | `kylinlist_<版本>_arm64_bundle.deb` | 携带 Qt 及 SQLite/xcb/SVG 插件，约十几 MB；`sudo dpkg -i 文件名.deb` |
+| 麒麟 x86_64 / x86 虚拟机 | `kylinlist_<版本>_amd64.deb` | 复用系统 Qt；`sudo apt install ./文件名.deb` |
+| 缺少 Qt 的 x86_64 离线机 | `kylinlist_<版本>_amd64_bundle.deb` | 携带 Qt 及插件；`sudo dpkg -i 文件名.deb` |
 | Windows x64 | `KylinList-<版本>-Windows-x64-Setup.exe` | 当前用户安装到 `%LOCALAPPDATA%\Programs\KylinList`，无需目标机器另装 Qt |
 | Windows x64 | `KylinList-<版本>-Windows-x64.zip` | 解压到可写目录运行 `kylinlist.exe` |
 
-Linux CI 在 Ubuntu 20.04 ARM64 中构建并检查两个 deb，Windows CI 生成安装版和便携版。固定构建基线后，日常开发沿用现有测试即可。飞腾真机的启动、中文输入和托盘等表现由用户实际试用确认；自带 Qt 的 bundle 仍需系统已有的 glibc、驱动和基础图形库。
+Linux CI 分别在原生 ARM64、amd64 runner 的 Ubuntu 20.04 容器中构建，每个架构检查普通包与 bundle；Windows CI 生成安装版和便携版。Artifacts 名称分别为 `kylinlist-linux-arm64`、`kylinlist-linux-amd64`、`kylinlist-windows-x64`。固定构建基线后，日常开发沿用现有测试即可。飞腾真机的启动、中文输入和托盘等表现由用户实际试用确认；自带 Qt 的 bundle 仍需系统已有的 glibc、驱动和基础图形库。
 
 完整构建、打包和复现方式见 [构建文档](docs/building.md)。
 
@@ -79,7 +81,7 @@ tests/          核心与原生界面集成测试
 
 没有把 SQL 放进窗口，也没有让每个便签维护一份独立任务。详情编辑器只回写实际编辑的字段；窗口位置、提醒去重和业务状态通过同一个 TaskStore 进入仓储。多条相关操作在 SQLite 事务中一同提交。
 
-Windows 上编辑后 `git push` 即可运行双平台 CI。原生 UI 测试由 QtTest 驱动，不使用 WebView；今后若加入网页界面，其测试应继续遵循 Chromium 78 兼容基线。
+推送到 `main`、创建 PR 或手动运行工作流，可执行 Linux ARM64、Linux amd64 和 Windows x64 的 CI。原生 UI 测试由 QtTest 驱动，不使用 WebView；今后若加入网页界面，其测试应继续遵循 Chromium 78 兼容基线。
 
 进一步说明：
 
