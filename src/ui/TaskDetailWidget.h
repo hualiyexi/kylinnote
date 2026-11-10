@@ -30,6 +30,7 @@ public:
     bool flush();
     bool finishEditing();
     void focusTitle();
+    void setOverlayMode(bool overlay);
 signals:
     void taskRemoved(QString id);
     void internalLinkRequested(QString entityId);
@@ -82,6 +83,7 @@ private:
     EntityInfoPopup* m_infoPopup = nullptr;
     ListSelectPopup* m_groupPopup = nullptr;
     bool m_focusMode = false;
+    bool m_overlayMode = false;
     SelectionBubble* m_bubble = nullptr;    // 选中文字气泡工具条
     FormatPanel* m_formatPanel = nullptr;   // 悬浮格式面板（卡片岛）
     MarkdownEditor* m_description = nullptr;
