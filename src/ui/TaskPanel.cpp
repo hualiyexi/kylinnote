@@ -513,6 +513,7 @@ void TaskPanel::buildUi() {
             m_middle->hide();
             m_detailOverlay = false;
             m_detailFrame->setMinimumWidth(0);
+            m_detailFrame->clearMask();
             m_splitter->insertWidget(2, m_detailFrame);
             m_detailFrame->show();
             m_detail->setOverlayMode(false);
@@ -817,6 +818,7 @@ void TaskPanel::setDetailVisible(bool visible) {
     } else if (!m_focusMode) {
         m_detailOverlay = false;
         if (m_detailFrame->parentWidget() != m_splitter || m_splitter->indexOf(m_detailFrame) != 2) {
+            m_detailFrame->clearMask();
             m_splitter->insertWidget(2, m_detailFrame);
             m_detailFrame->setMinimumWidth(300);
             m_detailFrame->setProperty("overlay", false);
@@ -872,6 +874,8 @@ void TaskPanel::reconcileWorkspaceLayout() {
             m_detailFrame->setProperty("overlay", true);
             m_detail->setOverlayMode(true);
         } else {
+            // 覆盖时的 surface 裁剪会随控件保留；停靠后由 splitter 统一裁剪。
+            m_detailFrame->clearMask();
             m_splitter->insertWidget(2, m_detailFrame);
             m_detailFrame->setMinimumWidth(300);
             m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);

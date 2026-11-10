@@ -858,6 +858,77 @@ private slots:
         QVERIFY(right->isVisible());
     }
 
+    void detailRedocksAfterWindowEdgeDrag() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1240, 820);
+        panel.show();
+        const QString id = m_store->createTask(QStringLiteral("覆盖退出后继续拖动详情"));
+        panel.showTask(id);
+        QApplication::processEvents();
+        auto* detail = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        auto* splitter = panel.findChild<QSplitter*>(QStringLiteral("WorkspaceSplitter"));
+        auto* windowResize = panel.findChild<QWidget*>(QStringLiteral("WindowResizeRight"));
+        auto* detailResize = panel.findChild<QWidget*>(QStringLiteral("DetailResizeArea"));
+        auto* overlayResize = panel.findChild<QWidget*>(QStringLiteral("OverlayDetailResizeArea"));
+        auto* shadow = panel.findChild<QWidget*>(QStringLiteral("DetailOverlayShadow"));
+        auto* editor = panel.findChild<TaskDetailWidget*>();
+        QVERIFY(detail && splitter && windowResize && detailResize && overlayResize && shadow && editor);
+        const auto drag = [](QWidget* area, const QList<int>& offsets) {
+            const QPoint local(area->width() / 2, 200);
+            const QPoint pressGlobal = area->mapToGlobal(local);
+            QTest::mousePress(area, Qt::LeftButton, Qt::NoModifier, local);
+            for (int offset : offsets) {
+                const QPoint global = pressGlobal + QPoint(offset, 0);
+                QMouseEvent move(QEvent::MouseMove, area->mapFromGlobal(global), global,
+                                 Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(area, &move);
+                QApplication::processEvents();
+            }
+            QTest::mouseRelease(area, Qt::LeftButton, Qt::NoModifier,
+                                area->mapFromGlobal(pressGlobal + QPoint(offsets.last(), 0)));
+            QApplication::processEvents();
+        };
+        for (int cycle = 0; cycle < 2; ++cycle) {
+            drag(windowResize, {-80, -180, -280, -340});
+            QCOMPARE(panel.width(), 900);
+            QVERIFY(detail->property("overlay").toBool());
+            QVERIFY(overlayResize->isVisible());
+            QVERIFY(shadow->isVisible());
+            QCOMPARE(editor->entityId(), id);
+            if (cycle == 1) {
+                drag(overlayResize, {-40, -80});
+                QCOMPARE(detail->width(), 380);
+            }
+            drag(windowResize, {40, 100, 180, 260, 340});
+            QCOMPARE(panel.width(), 1240);
+            QVERIFY(!panel.isMaximized());
+            QCOMPARE(detail->parentWidget(), splitter);
+            QCOMPARE(splitter->indexOf(detail), 2);
+            QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
+            QVERIFY(detailResize->isVisible());
+            QVERIFY(!overlayResize->isVisible());
+            QVERIFY(!shadow->isVisible());
+            const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+            if (!screenshots.isEmpty()) {
+                QVERIFY(QDir().mkpath(screenshots));
+                QVERIFY(panel.grab().save(screenshots + QStringLiteral("/detail-redocked-%1.png").arg(cycle)));
+            }
+            QVERIFY2(detail->mask().isEmpty(), "Docked detail retains the overlay clipping mask");
+            const int detailWidth = detail->width();
+            const int detailLeft = rectIn(detail, &panel).left();
+            drag(detailResize, {-40, -80});
+            QCOMPARE(detail->width(), detailWidth + 80);
+            QCOMPARE(rectIn(detail, &panel).left(), detailLeft - 80);
+            QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
+            QVERIFY(detail->mask().isEmpty());
+            QVERIFY(detail->visibleRegion().contains(QPoint(detail->width() - 24, detail->height() / 2)));
+            drag(detailResize, {40, 80});
+            QCOMPARE(detail->width(), detailWidth);
+            QCOMPARE(rectIn(detail, &panel).left(), detailLeft);
+            QCOMPARE(editor->entityId(), id);
+        }
+    }
+
     void responsiveColumnsAndOverlayDetail() {
         TaskPanel panel(m_store.get());
         panel.resize(1240, 820);
@@ -968,6 +1039,7 @@ private slots:
         QVERIFY(detail->isVisible());
         QCOMPARE(detail->parentWidget(), splitter);
         QCOMPARE(splitter->indexOf(detail), 2);
+        QVERIFY(detail->mask().isEmpty());
         QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
         QVERIFY(detailResize->isVisible());
         QVERIFY(!overlayResize->isVisible());
@@ -1383,6 +1455,10 @@ private slots:
     void detailChecklistCommandsRevealInputAndGrowWithoutInnerScroll() {
         const QString id = m_store->createTask(QStringLiteral("按需添加清单"));
         TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
+        if (QGuiApplication::platformName() == QLatin1String("windows")) {
+            detail.activateWindow();
+            QVERIFY(QTest::qWaitForWindowActive(&detail));
+        }
         auto* checklist = detail.findChild<QListWidget*>(QStringLiteral("TaskChecklist"));
         auto* input = detail.findChild<QLineEdit*>(QStringLiteral("ChecklistInput"));
         auto* editor = detail.findChild<MarkdownEditor*>(); QVERIFY(checklist && input && editor);
