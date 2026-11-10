@@ -6,6 +6,7 @@
 #include <QPainter>
 #include <QSplitter>
 #include <QToolButton>
+#include <utility>
 #include "AppIcons.h"
 #include "design/ThemeManager.h"
 
@@ -103,6 +104,36 @@ void SplitterResizeArea::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void SplitterResizeArea::mouseReleaseEvent(QMouseEvent* event) {
+    m_dragging = false;
+    QWidget::mouseReleaseEvent(event);
+}
+
+OverlayResizeArea::OverlayResizeArea(QWidget* parent, std::function<void(int)> dragged)
+    : QWidget(parent), m_dragged(std::move(dragged)) {
+    setObjectName(QStringLiteral("OverlayDetailResizeArea"));
+    setAttribute(Qt::WA_StyledBackground, false);
+    setCursor(Qt::SplitHCursor);
+}
+
+void OverlayResizeArea::mousePressEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) return QWidget::mousePressEvent(event);
+    m_previousGlobal = event->globalPos();
+    m_dragging = true;
+    event->accept();
+}
+
+void OverlayResizeArea::mouseMoveEvent(QMouseEvent* event) {
+    if (!m_dragging || !(event->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+    const QPoint global = event->globalPos();
+    m_dragged(global.x() - m_previousGlobal.x());
+    m_previousGlobal = global;
+    event->accept();
+}
+
+void OverlayResizeArea::mouseReleaseEvent(QMouseEvent* event) {
     m_dragging = false;
     QWidget::mouseReleaseEvent(event);
 }

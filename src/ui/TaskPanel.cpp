@@ -492,6 +492,15 @@ void TaskPanel::buildUi() {
                                                        QStringLiteral("DetailResizeArea")));
     m_detailOverlayShadow = new OverlayEdgeShadow(central);
     m_detailOverlayShadow->hide();
+    m_overlayResizeArea = new OverlayResizeArea(this, [this](int delta) {
+        if (!m_detailOverlay) return;
+        const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
+        const int contentWidth = m_surface->width() - 2 * inset;
+        const int maximum = qMax(260, qMin(480, contentWidth - 260));
+        m_overlayWidth = qBound(260, m_overlayWidth - delta, maximum);
+        updateDetailOverlayGeometry();
+    });
+    m_overlayResizeArea->hide();
     m_border->raise();
     m_windowControls->raise();
     m_surface->updateContentClip();
@@ -503,8 +512,8 @@ void TaskPanel::buildUi() {
             m_sidebar->hide();
             m_middle->hide();
             m_detailOverlay = false;
-            m_detailFrame->setParent(m_splitter);
             m_detailFrame->setMinimumWidth(0);
+            m_splitter->insertWidget(2, m_detailFrame);
             m_detailFrame->show();
             m_detail->setOverlayMode(false);
             if (m_windowControls) m_windowControls->raise();
@@ -807,8 +816,8 @@ void TaskPanel::setDetailVisible(bool visible) {
         m_detailFrame->setVisible(m_detailOverlay);
     } else if (!m_focusMode) {
         m_detailOverlay = false;
-        if (m_detailFrame->parentWidget() != m_splitter) {
-            m_detailFrame->setParent(m_splitter);
+        if (m_detailFrame->parentWidget() != m_splitter || m_splitter->indexOf(m_detailFrame) != 2) {
+            m_splitter->insertWidget(2, m_detailFrame);
             m_detailFrame->setMinimumWidth(300);
             m_detailFrame->setProperty("overlay", false);
             m_detail->setOverlayMode(false);
@@ -853,6 +862,7 @@ void TaskPanel::reconcileWorkspaceLayout() {
 
     if (oldDetailAutoHidden != m_detailAutoHidden || oldSidebarAutoHidden != m_sidebarAutoHidden
         || m_detailOverlay != wantOverlay
+        || (!wantOverlay && m_splitter->indexOf(m_detailFrame) != 2)
         || m_detailFrame->parentWidget() != (wantOverlay ? static_cast<QWidget*>(m_surface)
                                                         : static_cast<QWidget*>(m_splitter))) {
         if (wantOverlay) {
@@ -862,7 +872,7 @@ void TaskPanel::reconcileWorkspaceLayout() {
             m_detailFrame->setProperty("overlay", true);
             m_detail->setOverlayMode(true);
         } else {
-            m_detailFrame->setParent(m_splitter);
+            m_splitter->insertWidget(2, m_detailFrame);
             m_detailFrame->setMinimumWidth(300);
             m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
             m_detailFrame->setProperty("overlay", false);
@@ -916,13 +926,18 @@ void TaskPanel::syncColumnResizeAreas() {
 }
 
 void TaskPanel::updateDetailOverlayGeometry() {
-    if (m_detailOverlayShadow && !m_detailOverlay) m_detailOverlayShadow->hide();
-    if (!m_detailFrame || !m_detailOverlay) return;
+    if (!m_detailOverlay) {
+        if (m_detailOverlayShadow) m_detailOverlayShadow->hide();
+        if (m_overlayResizeArea) m_overlayResizeArea->hide();
+        return;
+    }
+    if (!m_detailFrame) return;
     const int inset = (isMaximized() || isFullScreen()) ? 0 : 21;
     const QRect content = m_surface->rect().adjusted(inset, inset, -inset, -inset);
-    const int overlayWidth = qMin(300, qMax(260, content.width() - 260));
-    m_detailFrame->setGeometry(content.right() - overlayWidth + 1, content.top(),
-                               overlayWidth, content.height());
+    const int maximum = qMax(260, qMin(480, content.width() - 260));
+    m_overlayWidth = qBound(260, m_overlayWidth, maximum);
+    m_detailFrame->setGeometry(content.right() - m_overlayWidth + 1, content.top(),
+                               m_overlayWidth, content.height());
     if (m_detailOverlayShadow) {
         m_detailOverlayShadow->setGeometry(m_detailFrame->x() - 18, m_detailFrame->y(),
                                            18, m_detailFrame->height());
@@ -931,6 +946,12 @@ void TaskPanel::updateDetailOverlayGeometry() {
     }
     m_detailFrame->show();
     m_detailFrame->raise();
+    if (m_overlayResizeArea) {
+        const QPoint edge = m_detailFrame->mapTo(this, QPoint(0, 0));
+        m_overlayResizeArea->setGeometry(edge.x() - 6, edge.y(), 12, m_detailFrame->height());
+        m_overlayResizeArea->show();
+        m_overlayResizeArea->raise();
+    }
     if (m_border) m_border->raise();
     if (m_windowControls) m_windowControls->raise();
     m_surface->updateContentClip();

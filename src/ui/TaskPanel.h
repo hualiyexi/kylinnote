@@ -22,6 +22,7 @@ class TaskDetailWidget;
 class WindowControls;
 class WindowResizeArea;
 class SplitterResizeArea;
+class OverlayResizeArea;
 class OverlayEdgeShadow;
 class WorkspaceSurface;
 class WindowBorderOverlay;
@@ -95,6 +96,7 @@ private:
     QList<WindowResizeArea*> m_resizeAreas;
     QList<SplitterResizeArea*> m_columnResizeAreas;
     OverlayEdgeShadow* m_detailOverlayShadow = nullptr;
+    OverlayResizeArea* m_overlayResizeArea = nullptr;
     QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
     QToolButton* m_sidebarToggle = nullptr;
     QToolButton* m_quickDate = nullptr;
@@ -104,6 +106,7 @@ private:
     QHash<QString, TaskStatus> m_taskStates;
     int m_sidebarWidth = 232;
     int m_detailWidth = 370;
+    int m_overlayWidth = 300;
     bool m_sidebarUserHidden = false;
     bool m_detailAutoHidden = false;
     bool m_sidebarAutoHidden = false;

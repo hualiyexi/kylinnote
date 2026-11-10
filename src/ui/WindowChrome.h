@@ -3,6 +3,7 @@
 #include <QPointer>
 #include <QList>
 #include <QWidget>
+#include <functional>
 
 class QHBoxLayout;
 class QMouseEvent;
@@ -40,6 +41,20 @@ private:
     int m_index;
     QPoint m_pressGlobal;
     QList<int> m_startSizes;
+    bool m_dragging = false;
+};
+
+// 覆盖详情左边缘的拖动区，默认宽度之外仍允许按需调整。
+class OverlayResizeArea : public QWidget {
+public:
+    OverlayResizeArea(QWidget* parent, std::function<void(int)> dragged);
+protected:
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+private:
+    std::function<void(int)> m_dragged;
+    QPoint m_previousGlobal;
     bool m_dragging = false;
 };
 
