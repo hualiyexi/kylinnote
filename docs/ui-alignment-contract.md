@@ -189,3 +189,13 @@
 | 最大化卡顿 | 直角模式完全不生成阴影；普通窗口按主题缓存 128×128 高斯模板，九宫格伸缩，不再为每次 resize 分配全窗口缓冲并执行 74 次/像素卷积 | 原生截图核对圆角、边框、阴影；桌面最大化操作响应约 50ms，全量 CTest 保持通过 |
 
 测试中的边框按 `objectName=WindowBorderOverlay` 获取；该类没有 `Q_OBJECT`，不能用无名称的 `findChild<WindowBorderOverlay*>()`，否则可能退化为普通 QWidget 匹配并误取其他控件。
+
+## 2026-11-10 列拖动与覆盖详情边界修正
+
+| 细节 | 本轮规格 | 实现与验证 |
+|---|---|---|
+| 第三／第四列拖动 | 1px 视觉线周围增加 12px 透明命中区；向左拖动同步加宽第四列并移动边界，遵守两侧最小宽度 | `SplitterResizeArea`；回归驱动真实鼠标事件，桌面验证边界 x=796→716→796 |
+| 覆盖态顶部残留线 | 删除覆盖 `DetailFrame` 的 `border-left`，不再让顶部 36px 单独露出边框；覆盖时隐藏详情列拖动入口 | `QssBuilder`、`syncColumnResizeAreas()`；原生 `task-panel-detail-overlay.png` |
+| 覆盖层级阴影 | 详情左侧增加独立 18px 渐隐阴影，不拦截鼠标、不挤压列表、不改变主窗口外阴影 | `OverlayEdgeShadow`；回归检查位置、显隐及 18px 宽度，原生截图核对 |
+
+Windows 与 Ubuntu 20.04 的 Qt 5.12.8 全量 CTest 均须通过；该记录不代表麒麟目标机验收。

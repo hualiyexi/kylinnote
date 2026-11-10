@@ -872,6 +872,20 @@ private slots:
         QCOMPARE(splitter->count(), 3);
         QCOMPARE(splitter->handleWidth(), 1);
         QVERIFY(splitter->handle(1) && splitter->handle(2));
+        const int detailBeforeDrag = detail->width();
+        auto* detailResize = panel.findChild<QWidget*>(QStringLiteral("DetailResizeArea"));
+        QVERIFY(detailResize && detailResize->isVisible());
+        QCOMPARE(detailResize->cursor().shape(), Qt::SplitHCursor);
+        const QPoint handleBeforeDrag = rectIn(splitter->handle(2), &panel).topLeft();
+        QTest::mousePress(detailResize, Qt::LeftButton, Qt::NoModifier, QPoint(6, 200));
+        QMouseEvent dragDetail(QEvent::MouseMove, QPoint(-74, 200),
+                               detailResize->mapToGlobal(QPoint(-74, 200)),
+                               Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(detailResize, &dragDetail);
+        QTest::mouseRelease(detailResize, Qt::LeftButton, Qt::NoModifier, QPoint(-74, 200));
+        QApplication::processEvents();
+        QCOMPARE(detail->width(), detailBeforeDrag + 80);
+        QCOMPARE(rectIn(splitter->handle(2), &panel).left(), handleBeforeDrag.x() - 80);
         QCOMPARE(rail->width(), 52);
         QCOMPARE(panel.minimumSize(), QSize(620, 560));
         splitter->setSizes({280, 500, 370});
@@ -891,6 +905,11 @@ private slots:
         QTRY_VERIFY(detail->isVisible());
         QCOMPARE(detail->width(), 300);
         QCOMPARE(detail->parentWidget(), panel.findChild<QWidget*>(QStringLiteral("WorkspaceRoot")));
+        auto* overlayShadow = panel.findChild<QWidget*>(QStringLiteral("DetailOverlayShadow"));
+        QVERIFY(overlayShadow && overlayShadow->isVisible());
+        QCOMPARE(overlayShadow->width(), 18);
+        QCOMPARE(rectIn(overlayShadow, &panel).right(), rectIn(detail, &panel).left() - 1);
+        QVERIFY(!detailResize->isVisible());
         QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
         QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
         QVERIFY(rectIn(detail, &panel).left() > rectIn(list, &panel).left());
@@ -900,6 +919,7 @@ private slots:
         QVERIFY(rectIn(close, &panel).left() >= rectIn(reminder, &panel).right());
         QTest::mouseClick(close, Qt::LeftButton);
         QTRY_VERIFY(!detail->isVisible());
+        QVERIFY(!overlayShadow->isVisible());
         QCOMPARE(rectIn(list, &panel), listBeforeOverlay);
 
         panel.resize(700, 620);
@@ -917,6 +937,7 @@ private slots:
         QVERIFY(sidebar->isVisible());
         QVERIFY(detail->isVisible());
         QCOMPARE(detail->parentWidget(), splitter);
+        QVERIFY(detailResize->isVisible());
         QCOMPARE(detail->width(), 370);
 
         QTest::mouseClick(toggle, Qt::LeftButton);

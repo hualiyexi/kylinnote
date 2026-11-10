@@ -1,7 +1,10 @@
 #include "WindowChrome.h"
 
 #include <QHBoxLayout>
+#include <QLinearGradient>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QSplitter>
 #include <QToolButton>
 #include "AppIcons.h"
 #include "design/ThemeManager.h"
@@ -56,6 +59,69 @@ void WindowResizeArea::mouseMoveEvent(QMouseEvent* event) {
 void WindowResizeArea::mouseReleaseEvent(QMouseEvent* event) {
     m_dragging = false;
     QWidget::mouseReleaseEvent(event);
+}
+
+SplitterResizeArea::SplitterResizeArea(QWidget* parent, QSplitter* splitter, int index,
+                                       const QString& name)
+    : QWidget(parent), m_splitter(splitter), m_index(index) {
+    setObjectName(name);
+    setAttribute(Qt::WA_StyledBackground, false);
+    setCursor(Qt::SplitHCursor);
+}
+
+void SplitterResizeArea::mousePressEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) return QWidget::mousePressEvent(event);
+    m_pressGlobal = event->globalPos();
+    m_startSizes = m_splitter->sizes();
+    m_dragging = true;
+    event->accept();
+}
+
+void SplitterResizeArea::mouseMoveEvent(QMouseEvent* event) {
+    if (!m_dragging || !(event->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+    const int leftIndex = m_index - 1;
+    const int rightIndex = m_index;
+    if (leftIndex < 0 || rightIndex >= m_startSizes.size()) return;
+    const int delta = event->globalPos().x() - m_pressGlobal.x();
+    const int combined = m_startSizes.at(leftIndex) + m_startSizes.at(rightIndex);
+    const QWidget* left = m_splitter->widget(leftIndex);
+    const QWidget* right = m_splitter->widget(rightIndex);
+    const int leftMin = left ? left->minimumWidth() : 0;
+    const int rightMin = right ? right->minimumWidth() : 0;
+    int leftWidth = qBound(leftMin, m_startSizes.at(leftIndex) + delta,
+                           qMax(leftMin, combined - rightMin));
+    if (left && left->maximumWidth() < QWIDGETSIZE_MAX)
+        leftWidth = qMin(leftWidth, left->maximumWidth());
+    QList<int> sizes = m_startSizes;
+    sizes[leftIndex] = leftWidth;
+    sizes[rightIndex] = combined - leftWidth;
+    m_splitter->setSizes(sizes);
+    event->accept();
+}
+
+void SplitterResizeArea::mouseReleaseEvent(QMouseEvent* event) {
+    m_dragging = false;
+    QWidget::mouseReleaseEvent(event);
+}
+
+OverlayEdgeShadow::OverlayEdgeShadow(QWidget* parent) : QWidget(parent) {
+    setObjectName(QStringLiteral("DetailOverlayShadow"));
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    setAttribute(Qt::WA_StyledBackground, false);
+}
+
+void OverlayEdgeShadow::paintEvent(QPaintEvent*) {
+    QPainter painter(this);
+    QLinearGradient gradient(0, 0, width(), 0);
+    QColor color = ThemeManager::instance().color(ds::ColorToken::Text);
+    color.setAlpha(0);
+    gradient.setColorAt(0, color);
+    color.setAlpha(34);
+    gradient.setColorAt(1, color);
+    painter.fillRect(rect(), gradient);
 }
 
 WindowDragArea::WindowDragArea(QWidget* parent) : QWidget(parent) {
