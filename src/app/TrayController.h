@@ -12,6 +12,8 @@ public:
     ~TrayController() override;
     void show();
     void notify(const QString& text);
+    // 信息级通知：不改变提醒点击目标，点击后打开主面板（用于更新提示等非告警消息）。
+    void notifyInfo(const QString& text);
     void notifyReminder(QString entityId, const QString& title);
     static QIcon trayIcon();
 signals:

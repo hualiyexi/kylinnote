@@ -31,6 +31,8 @@ public:
     bool finishEditing();
     void focusTitle();
     void setOverlayMode(bool overlay);
+    // 检查项“添加新项”输入框中有未回车提交的文字时返回 true；这类草稿不会被 flush() 保存。
+    bool hasDraftInput(QString* what = nullptr) const;
 signals:
     void taskRemoved(QString id);
     void internalLinkRequested(QString entityId);
