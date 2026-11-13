@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QSysInfo>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -50,13 +51,13 @@ QString currentBuildPlatform()
 
 QString currentBuildArch()
 {
-#if defined(Q_PROCESSOR_ARM64)
-    return QStringLiteral("arm64");
-#elif defined(Q_PROCESSOR_X86_64)
-    return QStringLiteral("amd64");
-#else
+    // 包身份使用编译期架构：发布清单里的 arm64 / amd64 是打包目标，
+    // 不是运行时 CPU 探测结果。QSysInfo::buildCpuArchitecture() 是编译期常量，
+    // 比分散的 Q_PROCESSOR_* 宏更可靠（Qt 5.12 的 ARM64 宏名是 Q_PROCESSOR_ARM_64）。
+    const QString build = QSysInfo::buildCpuArchitecture();
+    if (build == QStringLiteral("arm64")) return QStringLiteral("arm64");
+    if (build == QStringLiteral("x86_64")) return QStringLiteral("amd64");
     return QStringLiteral("unknown");
-#endif
 }
 
 QString currentBuildVariantChoices()
