@@ -1,0 +1,29 @@
+# KylinList 可信局域网 HTTP 更新发布服务。
+#
+# 日常只有 http 常驻；发布 / 校验 / 回退 / 查看状态通过 tools profile 按需运行：
+#   docker compose run --rm publisher validate /data/incoming/<release目录>
+#   docker compose run --rm publisher publish  /data/incoming/<release目录>
+#   docker compose run --rm publisher rollback [--to <版本>]
+#   docker compose run --rm publisher status
+# 详细用法见 server/README.md。
+#
+# 镜像固定具体版本 tag；如需升级请整体替换为新 tag 并重新验证，不要用 latest。
+services:
+  http:
+    # 唯一常驻服务：只读对外提供 data/public 下的清单与安装包
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./data/public:/usr/share/nginx/html:ro
+    restart: unless-stopped
+
+  publisher:
+    # 发布工具：不常驻，仅 docker compose run 按需调用；宿主机无需安装 Python
+    profiles: ["tools"]
+    image: python:3.12-alpine
+    volumes:
+      - ./tools:/tools:ro
+      - ./data:/data
+    entrypoint: ["python", "-I", "/tools/publish.py"]

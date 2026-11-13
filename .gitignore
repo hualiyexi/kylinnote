@@ -19,7 +19,7 @@ pip-*/
 __pycache__/
 
 # 本机正式数据、参考图片与临时测试目录（不纳入发布源码）
-data/
+/data/
 滴答清单前端图片/
 /tmp*/
 kylinlist-smoke-data/
@@ -38,3 +38,7 @@ Thumbs.db
 
 # 工具生成的会话文件
 .zcode/
+
+# 内网更新服务的运行数据不入库，仅保留目录说明
+server/data/*
+!server/data/README.md
