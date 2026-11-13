@@ -18,6 +18,7 @@ param(
     [Parameter(Mandatory = $true)][string]$CompilerRoot,
     [string]$CTest,
     [string]$InnoSetupCompiler,
+    [string]$Version,
     [string]$BuildDir,
     [string]$OutputDir,
     [ValidateSet('Release', 'Debug', 'RelWithDebInfo')][string]$Configuration = 'Release',
@@ -40,6 +41,13 @@ function Invoke-Checked([string]$Executable, [string[]]$Arguments) {
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Executable failed with exit code $LASTEXITCODE" }
 }
+# Installation identity for the in-app updater. Windows clients read the file
+# beside kylinlist.exe; KylinList.iss installs the setup variant to {app}.
+function Write-InstallInfo([string]$Directory, [string]$Variant) {
+    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+    Set-Content -LiteralPath (Join-Path $Directory 'install-info.json') -Encoding ASCII `
+        -Value ('{{"product": "kylinlist", "platform": "windows", "version": "{0}", "arch": "amd64", "variant": "{1}"}}' -f $Version, $Variant)
+}
 $CMake = Resolve-Tool $CMake 'CMake'
 $Ninja = Resolve-Tool $Ninja 'Ninja'
 if (-not $CTest) { $CTest = Join-Path (Split-Path -Parent $CMake) 'ctest.exe' }
@@ -60,7 +68,12 @@ if ($BuildDir -eq $ProjectDir -or $BuildDir -eq [IO.Path]::GetPathRoot($BuildDir
 }
 $VersionMatch = [regex]::Match((Get-Content -LiteralPath (Join-Path $ProjectDir 'CMakeLists.txt') -Raw), '(?m)^\s*VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)')
 if (-not $VersionMatch.Success) { throw 'Cannot parse project version from CMakeLists.txt' }
-$Version = $VersionMatch.Groups[1].Value
+$ProjectVersion = $VersionMatch.Groups[1].Value
+# CMakeLists.txt is the single version source; -Version is only an assertion.
+if ($Version -and $Version -ne $ProjectVersion) {
+    throw "-Version $Version does not match the CMake project version $ProjectVersion"
+}
+$Version = $ProjectVersion
 $PackageName = "KylinList-$Version-Windows-x64"
 $StageParent = Join-Path $BuildDir 'package'
 $StageDir = Join-Path $StageParent $PackageName
@@ -165,6 +178,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $ProjectDir 'packaging/windows/Qt-LICENSE.LGPLv3.txt') -Destination $StageDir
     $License = Join-Path $ProjectDir 'third_party/md4c/LICENSE.md'
     if (Test-Path -LiteralPath $License) { Copy-Item -LiteralPath $License -Destination (Join-Path $StageDir 'md4c-LICENSE.txt') }
+    # Portable identity ships inside the ZIP, beside kylinlist.exe.
+    Write-InstallInfo $StageDir 'portable'
     $Suffix = ''
     if ($Configuration -eq 'Debug') { $Suffix = 'd' }
     foreach ($Required in @("Qt5Core$Suffix.dll", "Qt5Gui$Suffix.dll", "Qt5Widgets$Suffix.dll",
@@ -207,13 +222,30 @@ try {
         Write-Output "Portable archive: $ZipFile"
     }
     if (-not $SkipInstaller) {
+        # Setup identity is staged outside StageDir; KylinList.iss excludes the
+        # portable copy and installs this one to {app}\install-info.json.
+        $InstallerInfoDir = Join-Path $OutputDir 'installer-info'
+        Write-InstallInfo $InstallerInfoDir 'setup'
         $InstallerScript = Join-Path $ProjectDir 'packaging/windows/KylinList.iss'
         Invoke-Checked $InnoSetupCompiler @("/DAppVersion=$Version", "/DSourceDir=$StageDir",
-            "/DOutputDir=$OutputDir", $InstallerScript)
+            "/DOutputDir=$OutputDir", "/DSetupInfoDir=$InstallerInfoDir", $InstallerScript)
         $Installer = Join-Path $OutputDir "KylinList-$Version-Windows-x64-Setup.exe"
         if (-not (Test-Path -LiteralPath $Installer)) { throw "Installer was not generated: $Installer" }
         Write-Output "Current-user offline installer: $Installer"
     }
+    # Sidecar consumed by packaging/generate-update-manifest.py; it lists only
+    # the artifacts this run actually produced.
+    $UpdateArtifacts = [System.Collections.Generic.List[string]]::new()
+    if (-not $SkipInstaller) {
+        $UpdateArtifacts.Add(('{{"kind": "setup", "file": "KylinList-{0}-Windows-x64-Setup.exe"}}' -f $Version))
+    }
+    if (-not $SkipArchive) {
+        $UpdateArtifacts.Add(('{{"kind": "portable", "file": "{0}.zip"}}' -f $PackageName))
+    }
+    $SidecarPath = Join-Path $OutputDir 'windows-update-artifacts.json'
+    Set-Content -LiteralPath $SidecarPath -Encoding ASCII `
+        -Value ('{{"version": "{0}", "artifacts": [{1}]}}' -f $Version, ($UpdateArtifacts -join ', '))
+    Write-Output "Update sidecar: $SidecarPath"
     Write-Output "Deployed application: $App"
 } finally {
     $env:PATH = $OriginalPath
