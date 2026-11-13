@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <QApplication>
 #include <QAction>
 #include <QCheckBox>
@@ -153,6 +154,9 @@ class UiTest : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() {
+        // CI 把 stdout 接成管道时是整块缓冲，测试进程若异常退出，之前所有
+        // 结果都会丢失，只剩一个空日志。先关掉缓冲，崩溃点才能定位。
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
         AppStyle::apply(*qobject_cast<QApplication*>(qApp));
         disableNativeWindowShadows();
     }
