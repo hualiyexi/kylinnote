@@ -64,10 +64,21 @@ if [[ -z "$JOBS" ]]; then
     JOBS="$(nproc)"
 fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die '--jobs must be a positive integer'
+# CMakeLists.txt is the single version source. Without --version the package
+# always uses it; an explicit --version that differs is only a local experiment
+# (the version is part of the artifact name) and can never enter the stable
+# update channel, because generate-update-manifest.py only accepts the strict
+# CMake X.Y.Z version.
+CMAKE_VERSION="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9][0-9A-Za-z.+~-]*).*/\1/p' "$PROJECT_DIR/CMakeLists.txt" | head -n1)"
+[[ -n "$CMAKE_VERSION" ]] || die 'No VERSION found in CMakeLists.txt'
 if [[ -z "$VERSION" ]]; then
-    VERSION="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9][0-9A-Za-z.+~-]*).*/\1/p' "$PROJECT_DIR/CMakeLists.txt" | head -n1)"
+    VERSION="$CMAKE_VERSION"
 fi
-[[ "$VERSION" =~ ^[0-9][0-9A-Za-z.+~-]*$ ]] || die 'Invalid version (or no VERSION in CMakeLists.txt)'
+[[ "$VERSION" =~ ^[0-9][0-9A-Za-z.+~-]*$ ]] || die 'Invalid --version value'
+if [[ "$VERSION" != "$CMAKE_VERSION" ]]; then
+    echo "WARNING: package version $VERSION differs from the CMake project version $CMAKE_VERSION;" \
+        "this experiment package is not eligible for the stable update channel" >&2
+fi
 
 # The supported build environment has one Qt installation. Query its normal
 # paths directly; no per-library provenance report is needed.
@@ -89,6 +100,13 @@ PLUGIN_SRC="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
 
 MODE=system
 [[ "$BUNDLE_QT" == ON ]] && MODE=bundle
+# Installation identity written to <prefix>/share/kylinlist/install-info.json.
+case "$ARCH" in
+    arm64) INFO_ARCH=arm64;;
+    amd64) INFO_ARCH=amd64;;
+    *) die "Unsupported install-info architecture: $ARCH";;
+esac
+if [[ "$BUNDLE_QT" == ON ]]; then INFO_VARIANT=bundled-qt; else INFO_VARIANT=system-qt; fi
 PKG_NAME="kylinlist_${VERSION}_${ARCH}"
 [[ "$BUNDLE_QT" == OFF ]] || PKG_NAME="${PKG_NAME}_bundle"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR}"
@@ -149,6 +167,13 @@ STAGING_ROOT="$(mktemp -d "$BUILD_DIR/.staging.XXXXXXXX")"
 STAGING="$STAGING_ROOT/$PKG_NAME"
 mkdir -p "$STAGING/DEBIAN"
 DESTDIR="$STAGING" cmake --install "$BUILD_DIR" --config Release
+
+# Machine-readable installation identity consumed by the in-app updater
+# (client lookup path on Linux: /usr[/local]/share/kylinlist/install-info.json).
+INFO_SHARE_DIR="$STAGING$INSTALL_PREFIX/share/kylinlist"
+mkdir -p -- "$INFO_SHARE_DIR"
+printf '{"product": "kylinlist", "platform": "linux", "version": "%s", "arch": "%s", "variant": "%s"}\n' \
+    "$VERSION" "$INFO_ARCH" "$INFO_VARIANT" > "$INFO_SHARE_DIR/install-info.json"
 
 sed "s/^Version:.*/Version: $VERSION/; s/^Architecture:.*/Architecture: $ARCH/" \
     "$SCRIPT_DIR/deb/DEBIAN/control" > "$STAGING/DEBIAN/control"
@@ -259,6 +284,15 @@ TEMP_PACKAGE="$OUTPUT_TMP/$PKG_NAME.deb"
 dpkg-deb -Zxz --build --root-owner-group "$STAGING" "$TEMP_PACKAGE"
 [[ "$(dpkg-deb -f "$TEMP_PACKAGE" Architecture)" == "$ARCH" ]] || die 'Package architecture mismatch'
 [[ "$(dpkg-deb -f "$TEMP_PACKAGE" Version)" == "$VERSION" ]] || die 'Package version mismatch'
+INFO_CHECK_ROOT="$(mktemp -d "$TEST_ENV/tmp/.install-info.XXXXXXXX")"
+dpkg-deb -x "$TEMP_PACKAGE" "$INFO_CHECK_ROOT"
+INFO_CHECK_FILE="$INFO_CHECK_ROOT$INSTALL_PREFIX/share/kylinlist/install-info.json"
+[[ -f "$INFO_CHECK_FILE" ]] || die 'install-info.json is missing inside the built package'
+INFO_EXPECTED="$TEST_ENV/tmp/expected-install-info.json"
+printf '{"product": "kylinlist", "platform": "linux", "version": "%s", "arch": "%s", "variant": "%s"}\n' \
+    "$VERSION" "$INFO_ARCH" "$INFO_VARIANT" > "$INFO_EXPECTED"
+cmp -s "$INFO_CHECK_FILE" "$INFO_EXPECTED" \
+    || die "Packaged install-info.json mismatch: $(<"$INFO_CHECK_FILE")"
 (cd "$OUTPUT_TMP" && sha256sum "$PKG_NAME.deb" > "$PKG_NAME.deb.sha256")
 dpkg-deb --info "$TEMP_PACKAGE"
 ln -T -- "$TEMP_PACKAGE" "$OUTPUT" || die "Cannot publish package without overwriting: $OUTPUT"

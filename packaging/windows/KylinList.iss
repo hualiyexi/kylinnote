@@ -1,12 +1,16 @@
-﻿; Compile with Unicode Inno Setup 6. Define SourceDir and OutputDir explicitly.
+﻿; Compile with Unicode Inno Setup 6. Define AppVersion, SourceDir, OutputDir
+; and SetupInfoDir explicitly via ISCC /D arguments (see build-windows.ps1).
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #error AppVersion must be defined - pass it via /DAppVersion=<X.Y.Z>
 #endif
 #ifndef SourceDir
   #error SourceDir must point to the windeployqt output directory
 #endif
 #ifndef OutputDir
   #error OutputDir must point to the artifact directory
+#endif
+#ifndef SetupInfoDir
+  #error SetupInfoDir must point to the directory holding the setup install-info.json
 #endif
 
 [Setup]
@@ -39,7 +43,10 @@ Name: "chinesesimplified"; MessagesFile: "{#SourcePath}\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; SourceDir carries the portable install-info.json; exclude it so installed
+; copies get the setup identity below, reporting variant "setup" in {app}.
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "install-info.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SetupInfoDir}\install-info.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\KylinList"; Filename: "{app}\kylinlist.exe"; WorkingDir: "{app}"

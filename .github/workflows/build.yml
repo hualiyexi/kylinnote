@@ -33,9 +33,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Parse release version from CMakeLists.txt
+        id: release-version
+        run: |
+          release_version="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$/\1/p' CMakeLists.txt | head -n1)"
+          test -n "$release_version" || { echo 'Cannot parse a strict X.Y.Z version from CMakeLists.txt' >&2; exit 1; }
+          echo "releaseVersion=$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Native ${{ matrix.arch }} build and CTest in Ubuntu 20.04
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.releaseVersion }}
         run: |
           docker run --rm --platform linux/${{ matrix.arch }} \
+            -e KYLINLIST_EXPECT_VERSION="$RELEASE_VERSION" \
             -v "$PWD":/src -w /src ubuntu:20.04 \
             bash packaging/ci-build.sh
 
@@ -63,6 +73,7 @@ jobs:
       - name: Offline dpkg install, every ELF dependency and real X11 app smoke
         run: |
           bundles=(dist/kylinlist_*_${{ matrix.arch }}_bundle.deb)
+          test "${#bundles[@]}" -eq 1
           docker run --rm --platform linux/${{ matrix.arch }} --network none \
             -v "$PWD":/src:ro -w /src kylinlist-runtime:test \
             bash packaging/test-bundle.sh "${bundles[0]}"
@@ -87,6 +98,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Parse release version from CMakeLists.txt
+        id: release-version
+        run: |
+          $match = [regex]::Match((Get-Content -LiteralPath CMakeLists.txt -Raw), '(?m)^\s*VERSION\s+(\d+\.\d+\.\d+)')
+          if (-not $match.Success) { throw 'Cannot parse a strict X.Y.Z version from CMakeLists.txt' }
+          "releaseVersion=$($match.Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
       - name: Install pinned local build tools and Qt
         run: |
           python -m venv .tools/venv
@@ -102,6 +120,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Build, CTest, deploy, smoke, zip and current-user offline installer
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.releaseVersion }}
         run: |
           $iscc = 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc)) { throw 'The runner image no longer contains Inno Setup 6' }
@@ -110,13 +130,16 @@ jobs:
             -Ninja "$PWD/.tools/venv/Scripts/ninja.exe" `
             -QtRoot "$PWD/.tools/Qt/5.12.8/mingw73_64" `
             -CompilerRoot "$PWD/.tools/Qt/Tools/mingw730_64" `
-            -InnoSetupCompiler $iscc
+            -InnoSetupCompiler $iscc `
+            -Version $env:RELEASE_VERSION
 
       - name: Install, start, uninstall and verify user data survives
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.releaseVersion }}
         run: |
           $target = "$env:RUNNER_TEMP/kylinlist-install-test"
           $data = "$env:RUNNER_TEMP/kylinlist-data-test"
-          ./packaging/test-windows.ps1 -Installer "$PWD/dist/KylinList-1.1.0-Windows-x64-Setup.exe" `
+          ./packaging/test-windows.ps1 -Installer "$PWD/dist/KylinList-$($env:RELEASE_VERSION)-Windows-x64-Setup.exe" `
             -InstallDir $target -DataDir $data
 
       - name: Upload portable and installer packages
@@ -126,12 +149,62 @@ jobs:
           path: |
             dist/*.zip
             dist/*-Setup.exe
+            dist/windows-update-artifacts.json
+          if-no-files-found: error
+          retention-days: 14
+
+  update-bundle:
+    name: Stable update manifest bundle
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Parse release version from CMakeLists.txt
+        id: release-version
+        run: |
+          release_version="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$/\1/p' CMakeLists.txt | head -n1)"
+          test -n "$release_version" || { echo 'Cannot parse a strict X.Y.Z version from CMakeLists.txt' >&2; exit 1; }
+          echo "releaseVersion=$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: kylinlist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify the pushed tag matches the release version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.releaseVersion }}
+        run: |
+          expected="refs/tags/v$RELEASE_VERSION"
+          test "$GITHUB_REF" = "$expected" || { echo "GITHUB_REF $GITHUB_REF does not match $expected" >&2; exit 1; }
+
+      - name: Generate the update manifest and stage the release directory
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.releaseVersion }}
+        run: |
+          python3 -I packaging/generate-update-manifest.py \
+            --dist dist --version "$RELEASE_VERSION" \
+            --git-sha "$GITHUB_SHA" --output release-stage
+          (cd release-stage && zip -qr "$PWD/../kylinlist-update-bundle.zip" .)
+
+      - name: Upload update bundle
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kylinlist-update-bundle
+          path: kylinlist-update-bundle.zip
           if-no-files-found: error
           retention-days: 14
 
   release:
     name: Publish existing version tag after all builds pass
-    needs: [linux, windows]
+    needs: [linux, windows, update-bundle]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -147,4 +220,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
+        # Explicit globs keep the raw windows-update-artifacts.json sidecar out
+        # of the release assets while adding the kylinlist-update-bundle.zip.
+        run: gh release create "$RELEASE_TAG" dist/*.deb dist/*.zip dist/*-Setup.exe --verify-tag --generate-notes
