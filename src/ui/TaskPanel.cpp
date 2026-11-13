@@ -754,6 +754,18 @@ void TaskPanel::showTask(QString id) {
 }
 
 void TaskPanel::focusQuickAdd() { showTask(); m_quick->setFocus(); }
+
+// 更新退出前的草稿保护：只检查 flush() 链路覆盖不到的未提交输入。
+bool TaskPanel::hasUncommittedDrafts(QString* what) const {
+    if (m_quick && !m_quick->text().trimmed().isEmpty()) {
+        if (what) *what = QStringLiteral("快速添加框中有未提交内容");
+        return true;
+    }
+    if (m_detail && m_detail->hasDraftInput(what)) return true;
+    return false;
+}
+
+void TaskPanel::showUpdateNotice(const QString& message) { showNotice(message); }
 bool TaskPanel::flush() { return m_restoreFrozen ? true : m_detail->finishEditing(); }
 void TaskPanel::setRestoreFrozen(bool frozen) {
     m_restoreFrozen = frozen; setEnabled(!frozen);
@@ -1369,6 +1381,13 @@ void TaskPanel::backupMenu() {
     connect(openData, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(dataDirPath()));
     });
+    menu.addSeparator();
+    auto* checkUpdate = menu.addAction(QStringLiteral("检查更新…"));
+    checkUpdate->setObjectName(QStringLiteral("CmdCheckUpdate"));
+    connect(checkUpdate, &QAction::triggered, this, &TaskPanel::updateCheckRequested);
+    auto* updateServer = menu.addAction(QStringLiteral("更新服务器…"));
+    updateServer->setObjectName(QStringLiteral("CmdUpdateServer"));
+    connect(updateServer, &QAction::triggered, this, &TaskPanel::updateSettingsRequested);
     menu.addSeparator();
     auto* quit = menu.addAction(QStringLiteral("退出麒麟清单"));
     quit->setObjectName(QStringLiteral("CmdQuit"));

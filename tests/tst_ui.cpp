@@ -676,6 +676,33 @@ private slots:
         QCOMPARE(reminder->dateTime().date(), QDate(2026, 11, 6));
         QCOMPARE(reminder->dateTime().time(), QTime(0, 15));
     }
+    void updateDraftProtection() {
+        TaskPanel panel(m_store.get());
+        panel.show();
+        QString what;
+        QVERIFY(!panel.hasUncommittedDrafts(&what));
+        auto* quick = panel.findChild<QLineEdit*>(QStringLiteral("QuickAdd"));
+        QVERIFY(quick);
+        quick->setText(QStringLiteral("未提交的草稿"));
+        QVERIFY(panel.hasUncommittedDrafts(&what));
+        QVERIFY(what.contains(QStringLiteral("快速添加")));
+        quick->clear();
+        QVERIFY(!panel.hasUncommittedDrafts(&what));
+
+        const QString id = m_store->createTask(QStringLiteral("草稿保护"));
+        panel.showTask(id);
+        auto* check = panel.findChild<QLineEdit*>(QStringLiteral("ChecklistInput"));
+        QVERIFY(check);
+        check->setText(QStringLiteral("新检查项"));
+        QVERIFY(!panel.hasUncommittedDrafts(&what));  // 输入框隐藏：未进入添加检查项状态
+        check->show();
+        QVERIFY(panel.hasUncommittedDrafts(&what));
+        QVERIFY(what.contains(QStringLiteral("检查项")));
+        check->clear();
+        check->hide();
+        QVERIFY(!panel.hasUncommittedDrafts(&what));
+        QVERIFY(panel.flush());
+    }
     void workspaceUsesFourColumnsAndNoPermanentStatusBar() {
         TaskPanel panel(m_store.get());
         panel.resize(1240, 820);

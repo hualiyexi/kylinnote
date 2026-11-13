@@ -60,6 +60,11 @@ void TrayController::notify(const QString& text) {
     if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
         m_tray->showMessage(QStringLiteral("麒麟清单"), text, QSystemTrayIcon::Warning, 7000);
 }
+void TrayController::notifyInfo(const QString& text) {
+    m_lastReminderId.clear();
+    if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
+        m_tray->showMessage(QStringLiteral("麒麟清单"), text, QSystemTrayIcon::Information, 7000);
+}
 void TrayController::notifyReminder(QString entityId, const QString& title) {
     m_lastReminderId = entityId;
     if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())

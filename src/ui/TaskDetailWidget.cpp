@@ -1109,4 +1109,13 @@ void TaskDetailWidget::focusTitle() {
     m_title->setFocus();
     m_title->selectAll();
 }
+
+bool TaskDetailWidget::hasDraftInput(QString* what) const {
+    // isHidden() 反映控件自身显隐：检查项输入框默认隐藏，仅添加检查项时显示。
+    if (m_checkInput && !m_checkInput->isHidden() && !m_checkInput->text().trimmed().isEmpty()) {
+        if (what) *what = QStringLiteral("检查项输入框中有未提交内容");
+        return true;
+    }
+    return false;
+}
 }  // namespace kl

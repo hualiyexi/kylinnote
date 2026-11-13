@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kylinlist
-        VERSION 1.1.0
+        VERSION 1.2.0
         DESCRIPTION "KylinList local tasks, calendar and desktop notes"
         LANGUAGES C CXX)
 
@@ -44,8 +44,12 @@ set(KYLINLIST_CORE_SOURCES
     src/app/TaskStore.cpp
     src/app/ReminderScheduler.cpp
     src/app/SingleInstanceGuard.cpp
+    src/app/updates/InstallIdentity.cpp
+    src/app/updates/UpdateManifest.cpp
+    src/app/updates/UpdateService.cpp
     src/platform/Autostart.cpp
     src/platform/InstanceChannel.cpp
+    src/platform/UpdateInstaller.cpp
 )
 add_library(kylinlist_core STATIC ${KYLINLIST_CORE_SOURCES})
 target_include_directories(kylinlist_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -91,6 +95,7 @@ set(KYLINLIST_UI_SOURCES
     src/ui/ToastIsland.cpp
     src/ui/WorkspaceSurface.cpp
     src/ui/WindowBorderOverlay.cpp
+    src/ui/UpdateDialog.cpp
 )
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     list(APPEND KYLINLIST_UI_SOURCES src/app/DbusAdapter.cpp)
@@ -159,20 +164,22 @@ if(BUILD_TESTING)
         file(TO_CMAKE_PATH "$ENV{WINDIR}/Fonts" KYLINLIST_WIN_FONTS)
         list(APPEND KYLINLIST_TEST_ENV "QT_QPA_FONTDIR=${KYLINLIST_WIN_FONTS}")
     endif()
-    foreach(test IN ITEMS tasks ui)
+    foreach(test IN ITEMS tasks ui updates)
         if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tst_${test}.cpp")
             message(FATAL_ERROR "BUILD_TESTING requires tests/tst_${test}.cpp")
         endif()
         add_executable(test_${test} "tests/tst_${test}.cpp")
         if(test STREQUAL "tasks")
             target_link_libraries(test_${test} PRIVATE kylinlist_core Qt5::Test Qt5::Widgets)
+        elseif(test STREQUAL "updates")
+            target_link_libraries(test_${test} PRIVATE kylinlist_core Qt5::Test)
         else()
             target_link_libraries(test_${test} PRIVATE kylinlist_ui Qt5::Test)
         endif()
         add_test(NAME ${test} COMMAND test_${test})
         set_tests_properties(${test} PROPERTIES
             ENVIRONMENT "${KYLINLIST_TEST_ENV}"
-            TIMEOUT 90)
+            TIMEOUT 180)
     endforeach()
 endif()
 

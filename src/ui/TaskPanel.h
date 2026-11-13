@@ -36,9 +36,14 @@ public:
     void resetAfterRestore();
     void showTask(QString id = QString());
     void focusQuickAdd();
+    // 更新退出前的草稿保护：快速添加框、检查项新行等未提交输入不属于 flush() 保存范围。
+    bool hasUncommittedDrafts(QString* what = nullptr) const;
+    void showUpdateNotice(const QString& message);
 signals:
     void quitRequested();
     void importBackupRequested(QString path);
+    void updateCheckRequested();
+    void updateSettingsRequested();
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
