@@ -8,6 +8,7 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "../app/updates/UpdateService.h"
@@ -208,9 +209,29 @@ UpdateSettingsDialog::UpdateSettingsDialog(const QString &baseUrl, bool autoChec
     m_auto->setObjectName(QStringLiteral("UpdateAutoCheck"));
     m_auto->setChecked(autoCheckEnabled);
     layout->addWidget(m_auto);
+    m_error = new QLabel(this);
+    m_error->setObjectName(QStringLiteral("UpdateSettingsError"));
+    m_error->setWordWrap(true);
+    m_error->hide();
+    layout->addWidget(m_error);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     buttons->setObjectName(QStringLiteral("UpdateSettingsButtons"));
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::accepted, this, [this]() {
+        // 地址非法时留在对话框内提示，避免保存后静默变成“已停用”。
+        const QString text = m_url->text().trimmed();
+        if (!text.isEmpty()) {
+            QUrl url(text, QUrl::TolerantMode);
+            if (url.scheme().isEmpty() || url.host().isEmpty())
+                url = QUrl(QStringLiteral("http://") + text, QUrl::TolerantMode);
+            if (!url.isValid() || url.host().isEmpty()
+                || (url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https"))) {
+                m_error->setText(QStringLiteral("地址无效，应形如 http://主机:端口，或留空以停用检查。"));
+                m_error->show();
+                return;
+            }
+        }
+        accept();
+    });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 }

@@ -56,6 +56,7 @@ public:
 private:
     QLineEdit *m_url = nullptr;
     QCheckBox *m_auto = nullptr;
+    QLabel *m_error = nullptr;
 };
 
 } // namespace kl
