@@ -40,7 +40,7 @@ ARM64 和 x86_64 共用源码，分别编译。`--arch` 用于核对构建架构
 
 1. 在 Windows 开发、预览，保持 C++14 / Qt 5.12.8 可用的 API。
 2. 推送到 `main`，由 CI 在固定环境构建并运行现有测试；本地需要 deb 时复用 Ubuntu 20.04 Docker 镜像。命令见[构建文档](building.md)。
-3. 从对应运行的 Artifacts 下载 `kylinlist-linux-arm64`、`kylinlist-linux-amd64` 或 `kylinlist-windows-x64`。两个 Linux 架构各自包含普通包与 bundle。普通推送、PR 和手动运行只生成构建产物；`v*` 标签在三个构建目标全部通过后自动创建 Release。
+3. 从对应运行的 Artifacts 下载 `kylinlist-linux-arm64`、`kylinlist-linux-amd64` 或 `kylinlist-windows-x64`。两个 Linux 架构各自包含普通包与 bundle。普通推送、PR 和手动运行只生成构建产物；`v*` 标签在三个构建目标全部通过后自动创建 Release。`kylinlist-update-bundle` 是可直接交给内网发布服务的更新发布目录，部署与发布流程见[内网软件更新](updates.md)。
 4. 在麒麟上安装对应架构的 deb 并使用。首次真机试用时确认启动、任务与清单保存、中文输入、多提醒、托盘和便签表现；开发测试使用独立数据目录。新包不迁移旧数据，验收时不得把旧数据库是否存在当作新数据已导入。
 
 保留普通 CTest、包架构和依赖检查，以及打包后的安装启动测试。这些由脚本自动执行。Windows 的 Qt 插件路径、`qt.conf` 和 `windeployqt --release` 是已经定位并修复的问题，继续保留。
