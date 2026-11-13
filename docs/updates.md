@@ -85,13 +85,29 @@ flowchart LR
 
 日常发布不经过 GitHub 之外的外部服务；服务器无需访问公网（镜像可离线导入，见 server/README.md）。
 
+## 已经验证到什么程度
+
+2026-11-13 在功能分支上手动派发 CI（[运行 43470023611](https://github.com/hualiyexi/kylinnote/actions/runs/43470023611)）：Windows x64、Linux ARM64、Linux amd64 三个构建目标全部通过，`update-bundle` 作业产出完整六件套发布目录（六项产物、`partial=False`）并上传为 `kylinlist-update-bundle`；`release` 作业按预期跳过（分支推送，不是 `v*` 标签）。
+
+本地另外验证过：
+
+- Windows Qt 5.12.8 下 `tasks` / `ui` / `updates` 三套 CTest 通过。
+- 在 Ubuntu 20.04 容器中分别构建 arm64 与 amd64 的普通包和 bundle，包内 `install-info.json` 的版本、架构、安装形式与构建参数一致。
+- 用这四个真实 deb 运行生成器，再用 `server/tools/publish.py validate` 与 `publish` 发布，stable 清单与安装包可从数据目录原样取到。
+
+尚未验证：真实银河麒麟上的图形化 deb 安装器行为（文件关联、授权窗口、覆盖安装时序），以及飞腾 ARM64 真机。这两项必须由用户在实际设备上确认，不能由上述自动化结果代替。
+
 ## 测试
 
-- `tests/tst_updates.cpp`：版本解析与比较、清单校验各类错误、目标选择、安装身份、待安装判定、文件校验、`UpdateService` 检查/下载/取消/停滞/超时/哈希与大小不符（本地 HTTP 夹具）、基础地址前缀、假安装器交接。
+- `tests/tst_updates.cpp`：版本解析与比较、清单校验各类错误、目标选择、安装身份、待安装判定、文件校验、`UpdateService` 检查/下载/取消/停滞/超时/哈希与大小不符（本地 HTTP 夹具）、基础地址前缀、假安装器交接，以及一份与生成器输出同形的完整六件套清单解析——它把生成器与客户端之间的协议契约固定下来。
 - `server/tools/test_publish.py`：发布工具的事务性、幂等、拒绝规则与回退。
 - `packaging/test_update_manifest_generator.py`：生成器纯函数校验；完整六件套在 CI 的 `update-bundle` 作业中验证。
 - CI 保留既有三目标构建、CTest、安装启动检查；新增发布归档生成与 tag 校验。
 - 覆盖安装（旧 deb → 新 deb）与升级数据保留断言由打包脚本测试与 CI 安装检查承担；真实麒麟上的图形化安装器行为（授权窗口、关联打开）在虚拟机/真机试用时确认。
+
+### 已知风险
+
+Windows 的 `ui` 测试在 CI 上出现过“进程异常退出、日志为空”的偶发失败，本地与随后的重跑均通过，尚未定位到具体用例。测试已在 `initTestCase` 里关闭 stdout 缓冲，以后再发生会留下崩溃前的完整进度，便于定位；不要把它当作可通过重跑忽略的常规噪声。
 
 ## 与数据兼容的关系
 
