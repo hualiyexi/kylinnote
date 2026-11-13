@@ -236,3 +236,12 @@ GitHub Actions 的 Linux ARM64、Linux amd64 与 Windows x64 三个构建目标�
 默认令牌仅有 `contents: read`。只有已有 `v*` 标签触发、且两个 Linux 架构和 Windows 的打包 job 都成功后，独立 release job 才获得 `contents: write` 并上传该次产物；普通分支上的 push、PR、手工运行不会创建 Release，也不会自动创建标签。
 
 Qt 的 LGPLv3 文本、MD4C MIT 许可证及第三方说明会随包保留。Qt 对应版本源代码可从 https://code.qt.io/ 获取；组件版本与源地址见仓库根的第三方说明。
+
+三个构建目标全部通过后，`update-bundle` 作业运行 `packaging/generate-update-manifest.py`，把六个安装包汇总为内网更新发布目录并上传为 `kylinlist-update-bundle`；`v*` 标签构建还会校验标签与 `CMakeLists.txt` 项目版本严格一致。本地只验证单架构时，可对已有产物单独运行生成器：
+
+```bash
+python -I packaging/generate-update-manifest.py --dist dist --version 1.2.0 \
+  --output dist/update-release --allow-partial linux
+```
+
+包版本、安装身份与更新清单的约定见[内网软件更新](updates.md)；发布目录如何部署到内网服务器见 [server/README.md](../server/README.md)。
