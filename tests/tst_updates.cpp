@@ -177,6 +177,7 @@ private slots:
     void versionCompare();
     void manifestParsing();
     void artifactPathValidation();
+    void fullReleaseManifestParses();
     void manifestTargetSelection();
     void identityParsing();
     void identityReadFromOverride();
@@ -324,6 +325,55 @@ void UpdatesTest::artifactPathValidation()
     QVERIFY(!updates::isValidArtifactPath(QStringLiteral("/files/1.2.0/a/b"), QStringLiteral("1.2.0")));
     QVERIFY(!updates::isValidArtifactPath(QStringLiteral("files/1.2.0/a/../b/c"), QStringLiteral("1.2.0")));
     QVERIFY(!updates::isValidArtifactPath(QStringLiteral("files/1.3.0/a/b/c"), QStringLiteral("1.2.0")));
+}
+
+// 与 packaging/generate-update-manifest.py 的完整六件套输出保持同一形状：
+// 生成器与客户端之间的协议契约在这里锁定，任一侧改动都会让本用例失败。
+void UpdatesTest::fullReleaseManifestParses()
+{
+    const QByteArray json = QByteArrayLiteral(
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"channel\": \"stable\",\n"
+        "  \"version\": \"1.2.0\",\n"
+        "  \"publishedAt\": \"2026-11-13T16:51:33Z\",\n"
+        "  \"notes\": \"KylinList 1.2.0。\",\n"
+        "  \"artifacts\": [\n"
+        "    {\"platform\": \"linux\", \"arch\": \"arm64\", \"variant\": \"system-qt\", \"packageVersion\": \"1.2.0\","
+        " \"path\": \"files/1.2.0/linux-arm64-system-qt/kylinlist_1.2.0_arm64.deb\", \"size\": 555660,"
+        " \"sha256\": \"c6dec06e712acf6ffae779e11445a8416c5d7e0b82f7c84e83ae9c3c1da2c1a3\"},\n"
+        "    {\"platform\": \"linux\", \"arch\": \"arm64\", \"variant\": \"bundled-qt\", \"packageVersion\": \"1.2.0\","
+        " \"path\": \"files/1.2.0/linux-arm64-bundled-qt/kylinlist_1.2.0_arm64_bundle.deb\", \"size\": 17544488,"
+        " \"sha256\": \"37778c0d7cce93baa8a4e0139b9962eb438d9a852158ca4c3e2990018a1f735f\"},\n"
+        "    {\"platform\": \"linux\", \"arch\": \"amd64\", \"variant\": \"system-qt\", \"packageVersion\": \"1.2.0\","
+        " \"path\": \"files/1.2.0/linux-amd64-system-qt/kylinlist_1.2.0_amd64.deb\", \"size\": 627968,"
+        " \"sha256\": \"5ac55e0194d98014bfc4041d64588697b8767c65951432bfa6cd79a66bb53610\"},\n"
+        "    {\"platform\": \"linux\", \"arch\": \"amd64\", \"variant\": \"bundled-qt\", \"packageVersion\": \"1.2.0\","
+        " \"path\": \"files/1.2.0/linux-amd64-bundled-qt/kylinlist_1.2.0_amd64_bundle.deb\", \"size\": 18643592,"
+        " \"sha256\": \"254ec427ea34bc80b6275d14e74f699046fac7518becf9b9717c268860319dce\"},\n"
+        "    {\"platform\": \"windows\", \"arch\": \"amd64\", \"variant\": \"setup\", \"packageVersion\": \"1.2.0\","
+        " \"path\": \"files/1.2.0/windows-amd64-setup/KylinList-1.2.0-Windows-x64-Setup.exe\", \"size\": 13423401,"
+        " \"sha256\": \"709e46d72391670740d281068c9ee8606dbf1db78ef62e285b36253b21834a2b\"},\n"
+        "    {\"platform\": \"windows\", \"arch\": \"amd64\", \"variant\": \"portable\", \"packageVersion\": \"1.2.0\","
+        " \"path\": \"files/1.2.0/windows-amd64-portable/KylinList-1.2.0-Windows-x64.zip\", \"size\": 16747842,"
+        " \"sha256\": \"8608e8c6c0dc05d25b37941a76ea41a9b31577c35562c91d43718036312052b0\"}\n"
+        "  ]\n"
+        "}");
+    QString error;
+    const updates::UpdateManifest manifest = updates::parseManifest(json, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(manifest.artifacts.size(), 6);
+    // 每种安装形式各自独立命中，不会串包。
+    const QVector<QPair<QString, QString>> targets = {
+        {QStringLiteral("system-qt"), QStringLiteral("kylinlist_1.2.0_arm64.deb")},
+        {QStringLiteral("bundled-qt"), QStringLiteral("kylinlist_1.2.0_arm64_bundle.deb")},
+    };
+    for (const auto &target : targets) {
+        const updates::UpdateArtifact *artifact =
+            manifest.findArtifact(QStringLiteral("linux"), QStringLiteral("arm64"), target.first);
+        QVERIFY(artifact);
+        QVERIFY(artifact->path.endsWith(target.second));
+    }
 }
 
 void UpdatesTest::manifestTargetSelection()
