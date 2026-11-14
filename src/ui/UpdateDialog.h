@@ -23,15 +23,21 @@ class UpdateDialog : public QDialog {
 public:
     explicit UpdateDialog(updates::UpdateService *service, QWidget *parent = nullptr);
     void refresh();
+    void setAutomaticPrompt(bool automatic);
 
 signals:
     void installRequested(const QString &filePath);
     void settingsRequested();
+    void postponeRequested();
+
+public slots:
+    void reject() override;
 
 private slots:
     void downloadClicked();
     void installClicked();
     void retryClicked();
+    void postponeClicked();
 
 private:
     QPointer<updates::UpdateService> m_service;
@@ -41,7 +47,8 @@ private:
     QProgressBar *m_progress = nullptr;
     QLabel *m_error = nullptr;
     QPushButton *m_settings = nullptr, *m_retry = nullptr, *m_download = nullptr,
-                *m_cancel = nullptr, *m_install = nullptr, *m_close = nullptr;
+                *m_cancel = nullptr, *m_install = nullptr, *m_postpone = nullptr, *m_close = nullptr;
+    bool m_automaticPrompt = false;
 };
 
 // 更新服务器设置：基础地址 + 自动检查开关。

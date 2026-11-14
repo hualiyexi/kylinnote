@@ -1,12 +1,15 @@
 #include "KylinListApp.h"
 #include "../db/Database.h"
+#include "../platform/Autostart.h"
 #include "../platform/InstanceChannel.h"
 #include "../ui/ReminderPopup.h"
+#include "../ui/StatsDialog.h"
 #include "../ui/TaskPanel.h"
 #include "../ui/UpdateDialog.h"
 #include "NoteManager.h"
 #include "ReminderScheduler.h"
 #include "Settings.h"
+#include "StatsService.h"
 #include "TaskStore.h"
 #include "TrayController.h"
 #include "updates/InstallIdentity.h"
@@ -33,7 +36,8 @@ KylinListApp::KylinListApp(QObject* parent) : QObject(parent) {
 KylinListApp::~KylinListApp() {
     shutdown();
 }
-bool KylinListApp::init(QString* error, bool startHidden) {
+bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun) {
+    m_isolatedRun = isolatedRun || !qEnvironmentVariable("KYLINLIST_DATA_DIR").isEmpty();
     if (!Database::instance().open(error))
         return false;
     m_store = new TaskStore(Database::instance().connection(), this);
@@ -90,9 +94,12 @@ bool KylinListApp::init(QString* error, bool startHidden) {
     });
     QTimer::singleShot(500, m_reminders, &ReminderScheduler::start);
     setupUpdates();
+    setupStats();
     if (!startHidden || !QSystemTrayIcon::isSystemTrayAvailable())
         m_panel->showTask();
     connect(qApp, &QCoreApplication::aboutToQuit, this, &KylinListApp::shutdown);
+    if (!m_isolatedRun)
+        initializeDefaultAutostart();
     return true;
 }
 void KylinListApp::showReminder(QString entityId, QString reminderId) {
@@ -182,6 +189,14 @@ void KylinListApp::setupUpdates() {
     }
     QTimer::singleShot(300, this, &KylinListApp::evaluatePendingInstall);
 }
+void KylinListApp::setupStats() {
+    m_statsService = new StatsService(m_store, this);
+    m_statsService->setBaseUrl(Settings::instance().updateBaseUrl());
+    connect(m_panel, &TaskPanel::statsRequested, this, &KylinListApp::openStats);
+    // 隔离运行仍可在统计页查看本机数据，但绝不自动向默认生产地址发测试数据。
+    if (!m_isolatedRun && m_statsService->enabled())
+        m_statsService->startAutomaticReports();
+}
 UpdateDialog* KylinListApp::ensureUpdateDialog() {
     if (m_updateDialog) return m_updateDialog.data();
     m_updateDialog = new UpdateDialog(m_updateService, m_panel);
@@ -189,11 +204,15 @@ UpdateDialog* KylinListApp::ensureUpdateDialog() {
             this, &KylinListApp::requestUpdateInstall);
     connect(m_updateDialog, &UpdateDialog::settingsRequested,
             this, &KylinListApp::openUpdateSettings);
+    connect(m_updateDialog, &UpdateDialog::postponeRequested,
+            this, &KylinListApp::handleUpdatePostpone);
     return m_updateDialog.data();
 }
 void KylinListApp::openUpdateCheck() {
     if (!m_updateService) return;
     UpdateDialog* dialog = ensureUpdateDialog();
+    // 手动打开：普通交互模式，不显示“暂缓提醒”的自动弹窗文案。
+    dialog->setAutomaticPrompt(false);
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
@@ -208,6 +227,11 @@ void KylinListApp::openUpdateSettings() {
     settings.setUpdateAutoCheckEnabled(dialog.autoCheckEnabled());
     settings.sync();
     m_updateService->setBaseUrl(dialog.baseUrl());
+    if (m_statsService) {
+        m_statsService->setBaseUrl(dialog.baseUrl());
+        if (!m_isolatedRun && m_statsService->enabled())
+            m_statsService->startAutomaticReports();
+    }
     if (m_updateService->enabled() && m_updateService->identityValid()
         && dialog.autoCheckEnabled()) {
         m_updateService->startAutomaticChecks();
@@ -218,25 +242,52 @@ void KylinListApp::openUpdateSettings() {
     if (m_panel)
         m_panel->showUpdateNotice(m_updateService->enabled()
                                       ? QStringLiteral("更新服务器设置已保存。")
-                                      : QStringLiteral("已停用更新检查。"));
+                                      : QStringLiteral("已停用更新检查与统计上报。"));
 }
-void KylinListApp::handleCheckFinished(bool updateAvailable, const QString& message) {
+void KylinListApp::openStats() {
+    if (!m_store) return;
+    if (!m_statsDialog)
+        m_statsDialog = new StatsDialog(m_store, m_panel);
+    m_statsDialog->show();
+    m_statsDialog->raise();
+    m_statsDialog->activateWindow();
+}
+void KylinListApp::handleCheckFinished(bool updateAvailable, const QString& message, bool automatic) {
     Q_UNUSED(message);
     Settings& settings = Settings::instance();
     settings.setLastUpdateCheckAt(appNow());
     if (!updateAvailable) return;
-    // 自动检查发现新版：每个版本每天至多提醒一次；手动检查由更新对话框展示。
+    // 每个版本每天至多弹出一次；手动检查已经看到结果时当天也不再自动弹。
     const QString version = m_updateService->manifest().version;
     const QDate today = toAppTime(appNow()).date();
     if (settings.lastUpdateNoticeVersion() == version && settings.lastUpdateNoticeDate() == today)
         return;
+    if (!automatic) {
+        // 手动检查：结果由更新对话框自己展示，这里只记录提醒去重。
+        settings.setLastUpdateNoticeVersion(version);
+        settings.setLastUpdateNoticeDate(today);
+        return;
+    }
+    // 自动检查发现新版：暂缓期内完全静默（即使换了新版本也不打断）。
+    if (updates::updatePromptPostponed(settings.updatePostponeUntil(), appNow()))
+        return;
+    if (m_updateDialog && m_updateDialog->isVisible())
+        return;  // 用户正开着更新对话框（手动检查在途），不弹第二个窗。
     settings.setLastUpdateNoticeVersion(version);
     settings.setLastUpdateNoticeDate(today);
-    const QString text = QStringLiteral("发现新版本 %1，可在「备份与设置 ▸ 检查更新」安装。").arg(version);
-    if (m_panel && m_panel->isVisible())
-        m_panel->showUpdateNotice(text);
-    else if (m_tray)
-        m_tray->notifyInfo(text);
+    UpdateDialog* dialog = ensureUpdateDialog();
+    dialog->setAutomaticPrompt(true);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+void KylinListApp::handleUpdatePostpone() {
+    // “暂缓提醒”：7 天内自动检查发现新版也不弹窗，到期后恢复自动弹出。
+    Settings& settings = Settings::instance();
+    settings.setUpdatePostponeUntil(appNow().addDays(updates::UpdatePostponeDays));
+    settings.sync();
+    if (m_updateDialog)
+        m_updateDialog->close();
 }
 void KylinListApp::requestUpdateInstall(const QString& filePath) {
     if (m_updateBusy || m_shutdown || m_restoring || !m_updateService
@@ -339,12 +390,36 @@ void KylinListApp::pruneUpdateBackups() {
     for (int i = 0; i + keep < entries.size(); ++i)
         QFile::remove(entries.at(i).absoluteFilePath());
 }
+void KylinListApp::initializeDefaultAutostart() {
+    // 只有正式安装版默认登记；开发构建、便携版和隔离运行不得写真实自启动。
+    if (m_isolatedRun || !m_updateService || !m_updateService->identityValid())
+        return;
+    const QString variant = m_updateService->installVariant();
+    if (variant != QStringLiteral("setup") && variant != QStringLiteral("system-qt")
+        && variant != QStringLiteral("bundled-qt"))
+        return;
+    // 一次性键只在“已安装或本次安装成功”后落盘；失败仅告警、下次再试，
+    // 不影响本地功能；之后用户手动关闭自启不会被本逻辑复活。
+    Settings& settings = Settings::instance();
+    if (settings.autostartInitialized())
+        return;
+    QString error;
+    if (!Autostart::isInstalled() && !Autostart::ensureInstalled(&error)) {
+        qWarning() << "Default autostart:"
+                   << (error.isEmpty() ? QStringLiteral("登记开机自启失败") : error);
+        return;
+    }
+    settings.setAutostartInitialized(true);
+    settings.sync();
+}
 void KylinListApp::shutdown() {
     if (m_shutdown)
         return;
     m_shutdown = true;
     if (m_reminders)
         m_reminders->stop();
+    if (m_statsService)
+        m_statsService->stopAutomaticReports();
     if (m_panel)
         m_panel->flush();
     if (m_notes)
@@ -366,6 +441,8 @@ void KylinListApp::shutdown() {
     m_notes = nullptr;
     delete m_reminders;
     m_reminders = nullptr;
+    delete m_statsService;
+    m_statsService = nullptr;
     delete m_store;
     m_store = nullptr;
     delete m_updateService;

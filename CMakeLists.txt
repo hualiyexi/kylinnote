@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kylinlist
-        VERSION 1.2.0
+        VERSION 1.3.0
         DESCRIPTION "KylinList local tasks, calendar and desktop notes"
         LANGUAGES C CXX)
 
@@ -39,6 +39,9 @@ set(KYLINLIST_CORE_SOURCES
     src/db/Database.cpp
     src/db/TaskRepository.cpp
     src/app/Settings.cpp
+    src/app/Branding.cpp
+    src/app/UsageStatistics.cpp
+    src/app/StatsService.cpp
     src/app/AttachmentStore.cpp
     src/app/Journal.cpp
     src/app/TaskStore.cpp
@@ -96,6 +99,7 @@ set(KYLINLIST_UI_SOURCES
     src/ui/WorkspaceSurface.cpp
     src/ui/WindowBorderOverlay.cpp
     src/ui/UpdateDialog.cpp
+    src/ui/StatsDialog.cpp
 )
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     list(APPEND KYLINLIST_UI_SOURCES src/app/DbusAdapter.cpp)
@@ -164,14 +168,14 @@ if(BUILD_TESTING)
         file(TO_CMAKE_PATH "$ENV{WINDIR}/Fonts" KYLINLIST_WIN_FONTS)
         list(APPEND KYLINLIST_TEST_ENV "QT_QPA_FONTDIR=${KYLINLIST_WIN_FONTS}")
     endif()
-    foreach(test IN ITEMS tasks ui updates)
+    foreach(test IN ITEMS tasks ui updates stats branding)
         if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tst_${test}.cpp")
             message(FATAL_ERROR "BUILD_TESTING requires tests/tst_${test}.cpp")
         endif()
         add_executable(test_${test} "tests/tst_${test}.cpp")
-        if(test STREQUAL "tasks")
+        if(test STREQUAL "tasks" OR test STREQUAL "branding")
             target_link_libraries(test_${test} PRIVATE kylinlist_core Qt5::Test Qt5::Widgets)
-        elseif(test STREQUAL "updates")
+        elseif(test STREQUAL "updates" OR test STREQUAL "stats")
             target_link_libraries(test_${test} PRIVATE kylinlist_core Qt5::Test)
         else()
             target_link_libraries(test_${test} PRIVATE kylinlist_ui Qt5::Test)

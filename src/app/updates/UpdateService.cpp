@@ -11,9 +11,6 @@ namespace kl {
 namespace updates {
 namespace {
 
-const int AutoCheckIntervalMs = 6 * 60 * 60 * 1000;  // 6 小时
-const int FirstCheckDelayMs = 10 * 1000;
-
 QString networkErrorText(QNetworkReply::NetworkError error)
 {
     switch (error) {
@@ -46,17 +43,22 @@ PendingOutcome evaluatePendingInstall(const QString &appVersion, const QString &
     return order > 0 ? PendingOutcome::Superseded : PendingOutcome::StillPending;
 }
 
+bool updatePromptPostponed(const QDateTime &postponeUntil, const QDateTime &now)
+{
+    return postponeUntil.isValid() && now.isValid() && now < postponeUntil;
+}
+
 UpdateService::UpdateService(InstallIdentity identity, QObject *parent)
     : QObject(parent), m_identity(identity), m_nam(new QNetworkAccessManager(this))
 {
     if (!m_identity.isValid())
         m_identityError = QStringLiteral("当前安装缺少有效的 install-info.json 安装身份");
-    m_autoTimer.setInterval(AutoCheckIntervalMs);
+    m_autoTimer.setInterval(m_autoCheckIntervalMs);
     m_stallTimer.setSingleShot(true);
     connect(&m_autoTimer, &QTimer::timeout, this, [this]() {
         if (m_state == State::Checking || m_state == State::Downloading || m_state == State::Ready)
             return;
-        checkNow();
+        runCheck(true);
     });
     connect(&m_stallTimer, &QTimer::timeout, this, [this]() {
         if (m_downloadReply && m_downloadReply->isRunning())
@@ -108,14 +110,28 @@ void UpdateService::setBaseUrl(const QString &baseUrl)
     setState(State::Idle);
 }
 
+void UpdateService::setAutomaticCheckTiming(int firstDelayMs, int intervalMs)
+{
+    m_firstCheckDelayMs = firstDelayMs;
+    m_autoCheckIntervalMs = intervalMs;
+    m_autoTimer.setInterval(m_autoCheckIntervalMs);
+}
+
 void UpdateService::startAutomaticChecks()
 {
     if (m_baseUrl.isEmpty() || !m_identity.isValid()) return;
     if (!m_autoTimer.isActive()) m_autoTimer.start();
-    QTimer::singleShot(FirstCheckDelayMs, this, [this]() {
+    if (m_firstCheckPending) return;
+    m_firstCheckPending = true;
+    QTimer::singleShot(m_firstCheckDelayMs, this, [this]() {
+        m_firstCheckPending = false;
+        // 停止自动检查（用户关闭开关/改地址）后，已排程的首查一并作废。
+        if (!m_autoTimer.isActive()) return;
         if (m_baseUrl.isEmpty() || !m_identity.isValid()) return;
-        if (m_state == State::Checking || m_state == State::Downloading) return;
-        checkNow();
+        if (m_state == State::Checking || m_state == State::Downloading
+            || m_state == State::Ready)
+            return;
+        runCheck(true);
     });
 }
 
@@ -145,20 +161,33 @@ QString UpdateService::cacheFilePath(const UpdateArtifact &artifact) const
 
 void UpdateService::checkNow()
 {
+    runCheck(false);
+}
+
+// automatic 区分来源：手动检查无法执行时同步回报原因并保持状态可见，
+// 自动检查在同样情况下静默跳过（不打扰用户，也不伪造一次“已检查”）。
+// 已有检查在途时不重复发请求，结果按其真实来源发出，来源不会被覆盖。
+void UpdateService::runCheck(bool automatic)
+{
     if (m_state == State::Downloading) {
-        emit checkFinished(false, QStringLiteral("正在下载更新，请稍后再检查"));
+        if (!automatic)
+            emit checkFinished(false, QStringLiteral("正在下载更新，请稍后再检查"), false);
         return;
     }
     if (m_baseUrl.isEmpty()) {
-        emit checkFinished(false, QStringLiteral("未配置更新服务器地址"));
+        if (!automatic)
+            emit checkFinished(false, QStringLiteral("未配置更新服务器地址"), false);
         return;
     }
     if (!m_identity.isValid()) {
-        setState(State::Failed, QStringLiteral("无法确定安装身份：%1").arg(m_identityError));
-        emit checkFinished(false, m_error);
+        if (!automatic) {
+            setState(State::Failed, QStringLiteral("无法确定安装身份：%1").arg(m_identityError));
+            emit checkFinished(false, m_error, false);
+        }
         return;
     }
     if (m_checkReply) return;
+    m_checkAutomatic = automatic;
     m_verifiedFilePath.clear();
     setState(State::Checking);
     QNetworkRequest request(m_base.resolved(QUrl(QStringLiteral("updates/v1/stable/manifest.json"))));
@@ -172,7 +201,7 @@ void UpdateService::checkNow()
             guard->abort();
         }
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, automatic]() {
         reply->deleteLater();
         if (m_checkReply.data() != reply) return;
         m_checkReply.clear();
@@ -186,7 +215,7 @@ void UpdateService::checkNow()
             else
                 message = reason.isEmpty() ? networkErrorText(reply->error()) : reason;
             setState(State::Failed, message);
-            emit checkFinished(false, message);
+            emit checkFinished(false, message, automatic);
             return;
         }
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -194,20 +223,20 @@ void UpdateService::checkNow()
         if (status != 200) {
             const QString message = QStringLiteral("服务器没有返回更新清单（HTTP %1）").arg(status);
             setState(State::Failed, message);
-            emit checkFinished(false, message);
+            emit checkFinished(false, message, automatic);
             return;
         }
         if (body.size() > ManifestMaxBytes) {
             const QString message = QStringLiteral("更新清单过大，已拒绝处理");
             setState(State::Failed, message);
-            emit checkFinished(false, message);
+            emit checkFinished(false, message, automatic);
             return;
         }
-        finishCheck(body);
+        finishCheck(body, automatic);
     });
 }
 
-void UpdateService::finishCheck(const QByteArray &body)
+void UpdateService::finishCheck(const QByteArray &body, bool automatic)
 {
     QString error;
     const UpdateManifest manifest = parseManifest(body, &error);
@@ -215,7 +244,7 @@ void UpdateService::finishCheck(const QByteArray &body)
         const QString message = error.isEmpty()
             ? QStringLiteral("更新清单没有任何安装包") : error;
         setState(State::Failed, message);
-        emit checkFinished(false, message);
+        emit checkFinished(false, message, automatic);
         return;
     }
     m_manifest = manifest;
@@ -224,7 +253,7 @@ void UpdateService::finishCheck(const QByteArray &body)
         const QString message = QStringLiteral("服务器没有提供与当前安装匹配的更新包（%1）")
                                      .arg(m_identity.targetKey());
         setState(State::Failed, message);
-        emit checkFinished(false, message);
+        emit checkFinished(false, message, automatic);
         return;
     }
     VersionTriple current, remote;
@@ -234,10 +263,11 @@ void UpdateService::finishCheck(const QByteArray &body)
         setState(State::UpdateAvailable);
         const QString message = QStringLiteral("发现新版本 %1（当前 %2）")
                                     .arg(m_manifest.version, m_identity.version);
-        emit checkFinished(true, message);
+        emit checkFinished(true, message, automatic);
     } else {
         setState(State::UpToDate);
-        emit checkFinished(false, QStringLiteral("已是最新版本 %1").arg(m_identity.version));
+        emit checkFinished(false, QStringLiteral("已是最新版本 %1").arg(m_identity.version),
+                           automatic);
     }
 }
 

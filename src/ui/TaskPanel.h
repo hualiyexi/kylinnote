@@ -44,6 +44,7 @@ signals:
     void importBackupRequested(QString path);
     void updateCheckRequested();
     void updateSettingsRequested();
+    void statsRequested();
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;

@@ -21,7 +21,13 @@ NoteLayer Settings::defaultLayer() const {
 void Settings::setDefaultLayer(NoteLayer layer) {
     m_store.setValue(QStringLiteral("ui/defaultLayer"), layerToInt(layer));
 }
+QString Settings::defaultUpdateBaseUrl() {
+    return QStringLiteral("http://143.147.10.31:11924");
+}
 QString Settings::updateBaseUrl() const {
+    // 只有键不存在时才回退默认服务器；显式保存的空串仍表示禁用。
+    if (!m_store.contains(QStringLiteral("updates/baseUrl")))
+        return defaultUpdateBaseUrl();
     return m_store.value(QStringLiteral("updates/baseUrl")).toString().trimmed();
 }
 void Settings::setUpdateBaseUrl(const QString& url) {
@@ -38,6 +44,18 @@ QDateTime Settings::lastUpdateCheckAt() const {
 }
 void Settings::setLastUpdateCheckAt(const QDateTime& at) {
     m_store.setValue(QStringLiteral("updates/lastCheckAt"), at);
+}
+QDateTime Settings::updatePostponeUntil() const {
+    return m_store.value(QStringLiteral("updates/postponeUntil")).toDateTime();
+}
+void Settings::setUpdatePostponeUntil(const QDateTime& at) {
+    m_store.setValue(QStringLiteral("updates/postponeUntil"), at);
+}
+bool Settings::autostartInitialized() const {
+    return m_store.value(QStringLiteral("autostart/initialized"), false).toBool();
+}
+void Settings::setAutostartInitialized(bool done) {
+    m_store.setValue(QStringLiteral("autostart/initialized"), done);
 }
 QString Settings::lastUpdateNoticeVersion() const {
     return m_store.value(QStringLiteral("updates/lastNoticeVersion")).toString();

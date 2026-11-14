@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include "../app/Settings.h"
 #include "../app/updates/UpdateService.h"
 
 namespace kl {
@@ -81,9 +82,13 @@ UpdateDialog::UpdateDialog(updates::UpdateService *service, QWidget *parent)
     m_install->setObjectName(QStringLiteral("UpdateInstall"));
     connect(m_install, &QPushButton::clicked, this, &UpdateDialog::installClicked);
     buttons->addWidget(m_install);
+    m_postpone = new QPushButton(QStringLiteral("暂缓 7 天"), this);
+    m_postpone->setObjectName(QStringLiteral("UpdatePostpone"));
+    connect(m_postpone, &QPushButton::clicked, this, &UpdateDialog::postponeClicked);
+    buttons->addWidget(m_postpone);
     m_close = new QPushButton(QStringLiteral("关闭"), this);
     m_close->setObjectName(QStringLiteral("UpdateClose"));
-    connect(m_close, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_close, &QPushButton::clicked, this, [this]() { reject(); });
     buttons->addWidget(m_close);
     layout->addLayout(buttons);
 
@@ -104,7 +109,7 @@ void UpdateDialog::refresh()
     if (!m_service) return;
     const updates::UpdateService::State state = m_service->state();
     const updates::UpdateArtifact *artifact = m_service->targetArtifact();
-    const QString current = QStringLiteral(KYLINLIST_VERSION);
+    const QString current = m_service->currentVersion();
     QString status, meta;
     m_progress->setVisible(false);
     m_progress->setRange(0, 100);
@@ -152,18 +157,65 @@ void UpdateDialog::refresh()
     }
     m_status->setText(status);
     m_meta->setText(meta);
-    m_notes->setPlainText(m_service->manifest().notes);
+    if (state == updates::UpdateService::State::UpdateAvailable
+        || state == updates::UpdateService::State::Downloading
+        || state == updates::UpdateService::State::Ready) {
+        const auto history = updates::releaseNotesForUpgrade(m_service->manifest(), current);
+        QString notesText;
+        for (const auto &release : history) {
+            if (!notesText.isEmpty()) notesText += QStringLiteral("\n\n────────────────\n\n");
+            notesText += QStringLiteral("v%1").arg(release.version);
+            if (!release.publishedAt.isEmpty())
+                notesText += QStringLiteral(" · %1").arg(release.publishedAt.left(10));
+            notesText += QStringLiteral("\n") + release.notes.trimmed();
+        }
+        m_notes->setPlainText(notesText);
+    } else {
+        m_notes->setPlainText(m_service->manifest().notes);
+    }
+    m_notes->setMaximumHeight(m_automaticPrompt ? 220 : 140);
     m_settings->setVisible(state == updates::UpdateService::State::Disabled);
-    m_retry->setVisible(state != updates::UpdateService::State::Checking
+    m_retry->setVisible(!m_automaticPrompt
+                        && state != updates::UpdateService::State::Checking
                         && state != updates::UpdateService::State::Downloading
                         && state != updates::UpdateService::State::Disabled);
     m_retry->setText(state == updates::UpdateService::State::Failed
                          ? QStringLiteral("重试") : QStringLiteral("检查更新"));
+    m_download->setText(QStringLiteral("立即更新"));
     m_download->setVisible(state == updates::UpdateService::State::UpdateAvailable);
     m_cancel->setVisible(state == updates::UpdateService::State::Downloading);
     m_install->setVisible(state == updates::UpdateService::State::Ready);
     m_install->setEnabled(state == updates::UpdateService::State::Ready
                           && !m_service->verifiedFilePath().isEmpty());
+    m_postpone->setVisible(m_automaticPrompt
+                           && state == updates::UpdateService::State::UpdateAvailable);
+    m_close->setVisible(!m_automaticPrompt
+                        || state != updates::UpdateService::State::UpdateAvailable);
+}
+
+void UpdateDialog::setAutomaticPrompt(bool automatic)
+{
+    m_automaticPrompt = automatic;
+    refresh();
+}
+
+void UpdateDialog::reject()
+{
+    if (m_automaticPrompt && m_service
+        && m_service->state() == updates::UpdateService::State::UpdateAvailable) {
+        postponeClicked();
+        return;
+    }
+    QDialog::reject();
+}
+
+void UpdateDialog::postponeClicked()
+{
+    if (!m_automaticPrompt) return;
+    // 先退出自动提醒语境，避免上层关闭对话框时再次进入 reject()。
+    m_automaticPrompt = false;
+    emit postponeRequested();
+    QDialog::reject();
 }
 
 void UpdateDialog::downloadClicked()
@@ -197,14 +249,22 @@ UpdateSettingsDialog::UpdateSettingsDialog(const QString &baseUrl, bool autoChec
     setMinimumWidth(420);
     auto *layout = new QVBoxLayout(this);
     auto *hint = new QLabel(
-        QStringLiteral("内网更新服务器的基础地址，例如 http://192.168.1.10:8080 。"
-                       "留空表示不检查更新。"), this);
+        QStringLiteral("可信内网服务器的基础地址。生产默认值为 %1，留空表示停用更新检查与统计上报。")
+            .arg(Settings::defaultUpdateBaseUrl()), this);
     hint->setWordWrap(true);
     layout->addWidget(hint);
+    auto *urlRow = new QHBoxLayout();
     m_url = new QLineEdit(baseUrl, this);
     m_url->setObjectName(QStringLiteral("UpdateServerUrl"));
     m_url->setPlaceholderText(QStringLiteral("http://主机:端口"));
-    layout->addWidget(m_url);
+    urlRow->addWidget(m_url, 1);
+    auto *restore = new QPushButton(QStringLiteral("恢复默认"), this);
+    restore->setObjectName(QStringLiteral("UpdateServerRestoreDefault"));
+    connect(restore, &QPushButton::clicked, this, [this]() {
+        m_url->setText(Settings::defaultUpdateBaseUrl());
+    });
+    urlRow->addWidget(restore);
+    layout->addLayout(urlRow);
     m_auto = new QCheckBox(QStringLiteral("启动后自动检查更新"), this);
     m_auto->setObjectName(QStringLiteral("UpdateAutoCheck"));
     m_auto->setChecked(autoCheckEnabled);
@@ -225,7 +285,7 @@ UpdateSettingsDialog::UpdateSettingsDialog(const QString &baseUrl, bool autoChec
                 url = QUrl(QStringLiteral("http://") + text, QUrl::TolerantMode);
             if (!url.isValid() || url.host().isEmpty()
                 || (url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https"))) {
-                m_error->setText(QStringLiteral("地址无效，应形如 http://主机:端口，或留空以停用检查。"));
+                m_error->setText(QStringLiteral("地址无效，应形如 http://主机:端口，或留空以停用更新与统计上报。"));
                 m_error->show();
                 return;
             }

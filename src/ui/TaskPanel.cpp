@@ -34,6 +34,7 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include "../app/Branding.h"
 #include "../app/TaskStore.h"
 #include "../platform/Autostart.h"
 #include "AppIcons.h"
@@ -97,7 +98,7 @@ IconId scopeIcon(ViewScope scope) {
 
 TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m_store(store) {
     setObjectName(QStringLiteral("TaskPanel"));
-    setWindowTitle(QStringLiteral("麒麟清单"));
+    setWindowTitle(Branding::displayName());
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
     setAttribute(Qt::WA_StyledBackground, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
@@ -1323,7 +1324,7 @@ void TaskPanel::backupMenu() {
         if (!flush()) return;
         const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出备份"),
             QStringLiteral("KylinList-%1.klb").arg(toAppTime(appNow()).date().toString(Qt::ISODate)),
-            QStringLiteral("麒麟清单备份（含附件） (*.klb)"));
+            Branding::displayName() + QStringLiteral("备份（含附件） (*.klb)"));
         if (!path.isEmpty() && m_store->exportBackup(path))
             showNotice(QStringLiteral("备份已保存：") + path);
     });
@@ -1333,7 +1334,7 @@ void TaskPanel::backupMenu() {
         if (!flush()) return;
         const QString path = QFileDialog::getOpenFileName(this,
             QStringLiteral("导入备份（覆盖本机数据）"), QString(),
-            QStringLiteral("麒麟清单备份 (*.klb)"));
+            Branding::displayName() + QStringLiteral("备份 (*.klb)"));
         if (path.isEmpty()) return;
         if (QMessageBox::warning(this, QStringLiteral("确认覆盖恢复"),
                 QStringLiteral("本机现有全部任务、笔记与清单都会被删除。建议先导出当前备份。\n\n此操作无法撤销，是否继续？"),
@@ -1381,6 +1382,9 @@ void TaskPanel::backupMenu() {
     connect(openData, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(dataDirPath()));
     });
+    auto* usageStats = menu.addAction(QStringLiteral("使用统计…"));
+    usageStats->setObjectName(QStringLiteral("CmdUsageStats"));
+    connect(usageStats, &QAction::triggered, this, &TaskPanel::statsRequested);
     menu.addSeparator();
     auto* checkUpdate = menu.addAction(QStringLiteral("检查更新…"));
     checkUpdate->setObjectName(QStringLiteral("CmdCheckUpdate"));
@@ -1389,7 +1393,7 @@ void TaskPanel::backupMenu() {
     updateServer->setObjectName(QStringLiteral("CmdUpdateServer"));
     connect(updateServer, &QAction::triggered, this, &TaskPanel::updateSettingsRequested);
     menu.addSeparator();
-    auto* quit = menu.addAction(QStringLiteral("退出麒麟清单"));
+    auto* quit = menu.addAction(QStringLiteral("退出%1").arg(Branding::displayName()));
     quit->setObjectName(QStringLiteral("CmdQuit"));
     connect(quit, &QAction::triggered, this, [this]() { if (flush()) emit quitRequested(); });
     menu.exec(QCursor::pos());

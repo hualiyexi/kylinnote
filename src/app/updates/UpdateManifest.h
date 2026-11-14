@@ -21,6 +21,13 @@ struct UpdateArtifact {
     qint64 size = -1;       // 字节数
 };
 
+// 单个版本的发布公告；history 数组的每一项。
+struct ReleaseNote {
+    QString version;       // 合法的 X.Y.Z
+    QString publishedAt;   // 非空
+    QString notes;
+};
+
 struct UpdateManifest {
     int schemaVersion = 0;
     QString channel;
@@ -28,6 +35,9 @@ struct UpdateManifest {
     QString publishedAt;
     QString notes;
     QVector<UpdateArtifact> artifacts;
+    // 可选的逐版本发布公告（协议 v1 扩展；旧清单没有该数组）。
+    // 解析时已按版本升序规范化且版本互不重复。
+    QVector<ReleaseNote> history;
 
     const UpdateArtifact *findArtifact(const QString &platform, const QString &arch,
                                        const QString &variant) const;
@@ -46,6 +56,14 @@ UpdateManifest parseManifest(const QByteArray &json, QString *error = nullptr);
 
 // path 合法性：必须是 files/<版本>/<目录>/<文件> 形式的相对路径，禁止 .. 与绝对路径。
 bool isValidArtifactPath(const QString &path, const QString &version);
+
+// 升级公告：给定当前版本与目标清单，返回满足
+//   当前版本 < version <= manifest.version
+// 的公告，按版本升序排列。旧清单没有 history 时回退为仅包含清单自身
+// （也要求 manifest.version 比当前新，否则返回空）。
+// 当前版本不合法时按“无法比较”处理：无 history 时回退清单自身，有 history 时返回空。
+QVector<ReleaseNote> releaseNotesForUpgrade(const UpdateManifest &manifest,
+                                            const QString &currentVersion);
 
 } // namespace updates
 } // namespace kl

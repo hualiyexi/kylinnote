@@ -1,4 +1,5 @@
 #include "Autostart.h"
+#include "../app/Branding.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -162,9 +163,9 @@ bool Autostart::setEnabled(bool enabled, QString *error)
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Version=1.0\n"
-        "Name=麒麟清单\n"
+        "Name=%2\n"
         "GenericName=Entity List\n"
-        "Comment=麒麟清单本地任务与桌面便签\n"
+        "Comment=%2：本地任务与桌面便签\n"
         "Exec=%1\n"
         "Icon=kylinlist\n"
         "Terminal=false\n"
@@ -173,7 +174,7 @@ bool Autostart::setEnabled(bool enabled, QString *error)
         "StartupNotify=false\n"
         "X-GNOME-Autostart-enabled=true\n"
         "X-KDE-autostart-after=panel\n"
-        "Hidden=false\n").arg(linuxExecLine());
+        "Hidden=false\n").arg(linuxExecLine(), Branding::displayName());
 
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {

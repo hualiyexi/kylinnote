@@ -7,6 +7,7 @@
 #include <cstdio>
 #include "Common.h"
 #include "app/KylinListApp.h"
+#include "app/Branding.h"
 #include "app/SingleInstanceGuard.h"
 #include "app/TrayController.h"
 #include "platform/InstanceChannel.h"
@@ -17,15 +18,16 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationName(QStringLiteral("kylinlist"));
     QCoreApplication::setApplicationVersion(QStringLiteral(KYLINLIST_VERSION));
     QCoreApplication::setOrganizationName(QStringLiteral("kylinlist"));
-    QApplication::setApplicationDisplayName(QStringLiteral("麒麟清单"));
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication app(argc, argv);
+    kl::Branding::load();
+    QApplication::setApplicationDisplayName(kl::Branding::displayName());
     app.setQuitOnLastWindowClosed(false);
     // 所有窗口阴影由应用自绘：禁止系统给无边框浮层补直角投影。
     kl::disableNativeWindowShadows();
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("麒麟清单：本地任务、日程与桌面便签"));
+    parser.setApplicationDescription(kl::Branding::displayName() + QStringLiteral("：本地任务、日程与桌面便签"));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption({QStringLiteral("background"), QStringLiteral("在后台启动（用于用户开启的登录自启）")});
@@ -58,6 +60,10 @@ int main(int argc, char* argv[]) {
         QSettings::setPath(
             QSettings::IniFormat, QSettings::UserScope, kl::dataDirPath() + QStringLiteral("/settings"));
     }
+    // --smoke-test / --data-dir / KYLINLIST_DATA_DIR 都是隔离运行：
+    // 不写真实开机自启，也不自动上报测试统计。
+    const bool isolatedRun = parser.isSet(QStringLiteral("smoke-test"))
+        || !qEnvironmentVariable("KYLINLIST_DATA_DIR").isEmpty();
     kl::AppStyle::apply(app);
     app.setWindowIcon(kl::TrayController::trayIcon());
     kl::SingleInstanceGuard guard(kl::lockFilePath());
@@ -74,12 +80,12 @@ int main(int argc, char* argv[]) {
     }
     kl::KylinListApp application;
     QString error;
-    if (!application.init(&error, parser.isSet(QStringLiteral("background")))) {
+    if (!application.init(&error, parser.isSet(QStringLiteral("background")), isolatedRun)) {
         if (parser.isSet(QStringLiteral("smoke-test")))
             std::fprintf(stderr, "Startup failed: %s\n", qPrintable(error));
         else
             QMessageBox::critical(nullptr,
-                                  QStringLiteral("无法启动麒麟清单"),
+                                  QStringLiteral("无法启动%1").arg(kl::Branding::displayName()),
                                   error + QStringLiteral("\n请检查数据目录权限后重试。原有数据不会被覆盖。"));
         return 1;
     }

@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFrame>
+#include <QHostAddress>
 #include <QImage>
 #include <QLabel>
 #include <QLayout>
@@ -15,6 +16,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
@@ -25,6 +27,8 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTemporaryDir>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextCursor>
@@ -44,7 +48,10 @@
 #include "app/NoteManager.h"
 #include "app/KylinListApp.h"
 #include "app/ReminderScheduler.h"
+#include "app/Settings.h"
 #include "app/TaskStore.h"
+#include "app/updates/InstallIdentity.h"
+#include "app/updates/UpdateService.h"
 #include "db/Database.h"
 #include "domain/InternalLink.h"
 #include "domain/ViewSpec.h"
@@ -61,12 +68,14 @@
 #include "ui/NoteChecklist.h"
 #include "ui/NoteWidget.h"
 #include "ui/ReminderPopup.h"
+#include "ui/StatsDialog.h"
 #include "ui/ResizeGrip.h"
 #include "ui/TaskDetailWidget.h"
 #include "ui/TaskDelegate.h"
 #include "ui/TaskListModel.h"
 #include "ui/TaskPanel.h"
 #include "ui/ToastIsland.h"
+#include "ui/UpdateDialog.h"
 #include "ui/WindowChrome.h"
 #include "ui/design/TypeSystem.h"
 using namespace kl;
@@ -148,6 +157,38 @@ bool triggerDetailCommand(TaskDetailWidget& detail, const QString& actionName) {
     while (!settled && elapsed.elapsed() < 1200) QTest::qWait(10);
     return triggered;
 }
+
+class UpdateDialogFixtureServer : public QObject {
+public:
+    bool start(const QByteArray& manifest) {
+        m_manifest = manifest;
+        connect(&m_server, &QTcpServer::newConnection, this, [this]() {
+            while (m_server.hasPendingConnections()) {
+                auto* socket = m_server.nextPendingConnection();
+                connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
+                    const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    if (!request.contains("\r\n\r\n")) {
+                        socket->setProperty("request", request);
+                        return;
+                    }
+                    const QByteArray packet = "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                        + QByteArray("Content-Length: ") + QByteArray::number(m_manifest.size())
+                        + "\r\nConnection: close\r\n\r\n" + m_manifest;
+                    socket->write(packet);
+                    socket->disconnectFromHost();
+                });
+                connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            }
+        });
+        return m_server.listen(QHostAddress::LocalHost, 0);
+    }
+    QString baseUrl() const {
+        return QStringLiteral("http://127.0.0.1:%1").arg(m_server.serverPort());
+    }
+private:
+    QTcpServer m_server;
+    QByteArray m_manifest;
+};
 } // namespace
 
 class UiTest : public QObject {
@@ -176,6 +217,81 @@ private slots:
         m_store.reset();
         Database::instance().close();
         m_dir.reset();
+    }
+    void updateDialogShowsAccumulatedNotesAndPostpone() {
+        updates::InstallIdentity identity;
+        identity.product = QStringLiteral("kylinlist");
+        identity.platform = updates::currentBuildPlatform();
+        identity.arch = updates::currentBuildArch();
+        identity.variant = identity.platform == QStringLiteral("linux")
+            ? QStringLiteral("system-qt") : QStringLiteral("setup");
+        identity.version = QStringLiteral("1.1.0");
+        const QString artifactPath = QStringLiteral("files/1.3.0/%1-%2-%3/update.pkg")
+            .arg(identity.platform, identity.arch, identity.variant);
+        const QByteArray manifest = QStringLiteral(R"JSON({
+  "schemaVersion": 1, "channel": "stable", "version": "1.3.0",
+  "publishedAt": "2026-11-14T08:00:00Z", "notes": "THIRD_RELEASE",
+  "history": [
+    {"version":"1.3.0","publishedAt":"2026-11-14T08:00:00Z","notes":"THIRD_RELEASE"},
+    {"version":"1.1.0","publishedAt":"2026-11-12T08:00:00Z","notes":"OLD_RELEASE"},
+    {"version":"1.2.0","publishedAt":"2026-11-13T08:00:00Z","notes":"SECOND_RELEASE"}
+  ],
+  "artifacts": [{"platform":"%1","arch":"%2","variant":"%3",
+    "packageVersion":"1.3.0","path":"%4","size":4,
+    "sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]
+})JSON").arg(identity.platform, identity.arch, identity.variant, artifactPath).toUtf8();
+        UpdateDialogFixtureServer server;
+        QVERIFY(server.start(manifest));
+        updates::UpdateService service(identity);
+        service.setBaseUrl(server.baseUrl());
+        service.checkNow();
+        QTRY_VERIFY_WITH_TIMEOUT(service.state() == updates::UpdateService::State::UpdateAvailable, 5000);
+
+        UpdateDialog dialog(&service);
+        dialog.setAutomaticPrompt(true);
+        dialog.show();
+        auto* notes = dialog.findChild<QPlainTextEdit*>(QStringLiteral("UpdateNotes"));
+        auto* postpone = dialog.findChild<QPushButton*>(QStringLiteral("UpdatePostpone"));
+        auto* retry = dialog.findChild<QPushButton*>(QStringLiteral("UpdateRetryCheck"));
+        auto* close = dialog.findChild<QPushButton*>(QStringLiteral("UpdateClose"));
+        QVERIFY(notes && postpone && retry && close);
+        const QString text = notes->toPlainText();
+        QVERIFY(!text.contains(QStringLiteral("OLD_RELEASE")));
+        QVERIFY(text.indexOf(QStringLiteral("SECOND_RELEASE")) >= 0);
+        QVERIFY(text.indexOf(QStringLiteral("SECOND_RELEASE")) < text.indexOf(QStringLiteral("THIRD_RELEASE")));
+        QVERIFY(postpone->isVisible());
+        QVERIFY(!retry->isVisible());
+        QVERIFY(!close->isVisible());
+        QSignalSpy postponed(&dialog, &UpdateDialog::postponeRequested);
+        QTest::mouseClick(postpone, Qt::LeftButton);
+        QCOMPARE(postponed.count(), 1);
+        QVERIFY(!dialog.isVisible());
+    }
+    void updateSettingsRestoreDefaultServer() {
+        UpdateSettingsDialog dialog(QStringLiteral("http://127.0.0.1:9000"), true);
+        dialog.show();
+        auto* url = dialog.findChild<QLineEdit*>(QStringLiteral("UpdateServerUrl"));
+        auto* restore = dialog.findChild<QPushButton*>(QStringLiteral("UpdateServerRestoreDefault"));
+        QVERIFY(url && restore);
+        QTest::mouseClick(restore, Qt::LeftButton);
+        QCOMPARE(url->text(), Settings::defaultUpdateBaseUrl());
+        dialog.reject();
+    }
+    void statsDialogShowsOnlyLocalSummary() {
+        const QString taskId = m_store->createTask(QStringLiteral("仅用于本机统计的任务"));
+        QVERIFY(!taskId.isEmpty());
+        QVERIFY(!m_store->createNote(QStringLiteral("仅用于本机统计的笔记")).isEmpty());
+        QVERIFY(m_store->setCompleted(taskId, true));
+        StatsDialog dialog(m_store.get());
+        dialog.show();
+        QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("StatsLocalTasks"))->text(), QStringLiteral("1"));
+        QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("StatsLocalNotes"))->text(), QStringLiteral("1"));
+        QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("StatsLocalCompleted"))->text(), QStringLiteral("1"));
+        QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("StatsLocalDays"))->text(), QStringLiteral("0 天"));
+        QVERIFY(!dialog.findChild<QLabel*>(QStringLiteral("StatsGlobalUsers")));
+        QVERIFY(!dialog.findChild<QTreeWidget*>(QStringLiteral("StatsDownloads")));
+        QVERIFY(!dialog.findChild<QPushButton*>(QStringLiteral("StatsRefresh")));
+        dialog.reject();
     }
     void markdownFormattingAndSafety() {
         const QString html = Markdown::toHtml(QStringLiteral(
@@ -1413,7 +1529,8 @@ private slots:
         const QString backup = m_dir->path() + QStringLiteral("/app-restore.klb"); QVERIFY(m_store->exportBackup(backup));
         const QString sentinel = m_store->createTask(QStringLiteral("应用恢复覆盖哨兵")); QVERIFY(!sentinel.isEmpty());
 
-        KylinListApp app; QString error; QVERIFY2(app.init(&error, true), qPrintable(error));
+        KylinListApp app; QString error; QVERIFY2(app.init(&error, true, true), qPrintable(error));
+        QVERIFY(!Settings::instance().autostartInitialized());
         auto* notes = app.findChild<NoteManager*>(); auto* scheduler = app.findChild<ReminderScheduler*>();
         QVERIFY(notes && scheduler); QCOMPARE(notes->count(), 1);
         QSignalSpy triggered(scheduler, &ReminderScheduler::reminderTriggered);

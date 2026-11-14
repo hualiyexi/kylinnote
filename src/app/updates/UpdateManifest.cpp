@@ -6,6 +6,8 @@
 #include <QJsonParseError>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 namespace kl {
 namespace updates {
 namespace {
@@ -160,8 +162,81 @@ UpdateManifest parseManifest(const QByteArray &json, QString *error)
         targets.append(target);
         manifest.artifacts.append(artifact);
     }
+    // 可选的 history 数组：每项严格含合法 version、非空 publishedAt、notes 字符串；
+    // 版本重复即拒绝，结果按版本升序规范化（与数组书写顺序无关）。
+    if (object.contains(QStringLiteral("history"))) {
+        const QJsonValue historyValue = object.value(QStringLiteral("history"));
+        if (!historyValue.isArray())
+            return fail(QStringLiteral("更新清单 history 不是数组"));
+        const QJsonArray history = historyValue.toArray();
+        QVector<ReleaseNote> notes;
+        QVector<VersionTriple> seen;
+        for (int i = 0; i < history.size(); ++i) {
+            const QJsonValue value = history.at(i);
+            if (!value.isObject())
+                return fail(QStringLiteral("history[%1] 不是对象").arg(i));
+            const QJsonObject item = value.toObject();
+            ReleaseNote note;
+            note.version = item.value(QStringLiteral("version")).toString().trimmed();
+            if (!parseStrictVersion(note.version, nullptr))
+                return fail(QStringLiteral("history[%1] 版本号 %2 不是有效的 X.Y.Z")
+                                .arg(i).arg(note.version));
+            note.publishedAt = item.value(QStringLiteral("publishedAt")).toString().trimmed();
+            if (note.publishedAt.isEmpty())
+                return fail(QStringLiteral("history[%1] 缺少发布时间").arg(i));
+            if (!item.value(QStringLiteral("notes")).isString())
+                return fail(QStringLiteral("history[%1] 缺少 notes 字符串").arg(i));
+            note.notes = item.value(QStringLiteral("notes")).toString();
+            VersionTriple triple;
+            parseStrictVersion(note.version, &triple);
+            for (const VersionTriple &existing : seen) {
+                if (compareVersions(existing, triple) == 0)
+                    return fail(QStringLiteral("history[%1] 版本 %2 重复")
+                                    .arg(i).arg(note.version));
+            }
+            seen.append(triple);
+            notes.append(note);
+        }
+        std::sort(notes.begin(), notes.end(), [](const ReleaseNote &left, const ReleaseNote &right) {
+            VersionTriple a, b;
+            parseStrictVersion(left.version, &a);
+            parseStrictVersion(right.version, &b);
+            return compareVersions(a, b) < 0;
+        });
+        manifest.history = notes;
+    }
     if (error) error->clear();
     return manifest;
+}
+
+QVector<ReleaseNote> releaseNotesForUpgrade(const UpdateManifest &manifest,
+                                            const QString &currentVersion)
+{
+    QVector<ReleaseNote> result;
+    VersionTriple target;
+    if (!parseStrictVersion(manifest.version, &target))
+        return result;
+    VersionTriple current;
+    const bool comparable = parseStrictVersion(currentVersion, &current);
+    if (manifest.history.isEmpty()) {
+        // 旧清单协议：没有逐版本公告，回退为清单自身的 notes。
+        if (!comparable || compareVersions(target, current) > 0) {
+            ReleaseNote note;
+            note.version = manifest.version;
+            note.publishedAt = manifest.publishedAt;
+            note.notes = manifest.notes;
+            result.append(note);
+        }
+        return result;
+    }
+    for (const ReleaseNote &note : manifest.history) {
+        VersionTriple version;
+        if (!parseStrictVersion(note.version, &version)) continue;
+        if (!comparable) continue;
+        if (compareVersions(current, version) < 0 && compareVersions(version, target) <= 0)
+            result.append(note);
+    }
+    return result;
 }
 
 } // namespace updates

@@ -4,6 +4,7 @@
 #include "../db/TaskRepository.h"
 #include "AttachmentStore.h"
 #include "Journal.h"
+#include "UsageStatistics.h"
 
 #include <QObject>
 #include <QSqlDatabase>
@@ -82,6 +83,9 @@ public:
     bool copyAttachmentTo(const QString &attachmentId, const QString &destinationPath);
 
     QVector<EntityEvent> events(const QString &entityId);
+    // 从事件日志汇总本机累计使用统计；早期无事件的实体用当前快照补齐。
+    // 只在计算内部用实体 id 去重，返回值不含任何 id 或内容。
+    UsageStatistics usageStatistics(QString *error = nullptr);
     QString beginEditSession(const QString &entityId);
     bool endEditSession(const QString &sessionId);
     bool endAllSessions();

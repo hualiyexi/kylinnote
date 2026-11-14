@@ -22,6 +22,7 @@
 #include "MarkdownEditor.h"
 #include "NoteChecklist.h"
 #include "ResizeGrip.h"
+#include "../app/Branding.h"
 #include "../app/TaskStore.h"
 #include "../domain/ViewSpec.h"
 #include "TitleBar.h"
@@ -204,7 +205,7 @@ void NoteWidget::updateView() {
     m_checklist->setItems(m_task.checklist);
     m_checklist->setInkColor(QColor(ColorTheme::spec(m_task.color).text));
     m_checklist->setVisible(!m_task.checklist.isEmpty());
-    setWindowTitle(m_task.title + QStringLiteral(" — 麒麟清单"));
+    setWindowTitle(m_task.title + QStringLiteral(" — ") + Branding::displayName());
 }
 
 void NoteWidget::setStore(TaskStore* store) {

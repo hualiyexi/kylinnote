@@ -6,12 +6,13 @@
 #include <QPainter>
 #include <QPixmap>
 #include "NoteManager.h"
+#include "Branding.h"
 #include "../ui/AppIcons.h"
 #include "../ui/design/ThemeManager.h"
 namespace kl {
 TrayController::TrayController(NoteManager* manager, QObject* parent) : QObject(parent), m_manager(manager) {
     m_tray = new QSystemTrayIcon(trayIcon(), this);
-    m_tray->setToolTip(QStringLiteral("麒麟清单 · 我的待办"));
+    m_tray->setToolTip(Branding::displayName() + QStringLiteral(" · 我的待办"));
     m_menu = new QMenu;
     m_menu->setWindowFlags(m_menu->windowFlags() | Qt::WindowStaysOnTopHint);
     QAction* openPanel = m_menu->addAction(AppIcons::icon(IconId::TaskList), QStringLiteral("打开待办面板"));
@@ -58,12 +59,12 @@ void TrayController::tryShow() {
 void TrayController::notify(const QString& text) {
     m_lastReminderId.clear();
     if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
-        m_tray->showMessage(QStringLiteral("麒麟清单"), text, QSystemTrayIcon::Warning, 7000);
+        m_tray->showMessage(Branding::displayName(), text, QSystemTrayIcon::Warning, 7000);
 }
 void TrayController::notifyInfo(const QString& text) {
     m_lastReminderId.clear();
     if (m_tray->isVisible() && QSystemTrayIcon::supportsMessages())
-        m_tray->showMessage(QStringLiteral("麒麟清单"), text, QSystemTrayIcon::Information, 7000);
+        m_tray->showMessage(Branding::displayName(), text, QSystemTrayIcon::Information, 7000);
 }
 void TrayController::notifyReminder(QString entityId, const QString& title) {
     m_lastReminderId = entityId;
@@ -71,6 +72,8 @@ void TrayController::notifyReminder(QString entityId, const QString& title) {
         m_tray->showMessage(QStringLiteral("待办提醒"), title, QSystemTrayIcon::Information, 15000);
 }
 QIcon TrayController::trayIcon() {
+    const QIcon custom = Branding::appIcon();
+    if (!custom.isNull()) return custom;
     QPixmap pixmap(64, 64);
     pixmap.fill(Qt::transparent);
     QPainter p(&pixmap);

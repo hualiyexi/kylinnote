@@ -7,6 +7,7 @@
 #include <QScreen>
 #include <QVBoxLayout>
 #include "../domain/ViewSpec.h"
+#include "../app/Branding.h"
 #include "AppIcons.h"
 namespace kl {
 ReminderPopup::ReminderPopup(const Entity& task, QWidget* parent)
@@ -20,7 +21,7 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
             m_reminderId = task.reminders.at(primary).id;
     }
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle(QStringLiteral("待办提醒 · 麒麟清单"));
+    setWindowTitle(QStringLiteral("待办提醒 · %1").arg(Branding::displayName()));
     setObjectName(QStringLiteral("ReminderPopup"));
     setMinimumWidth(390);
     auto* layout = new QVBoxLayout(this);

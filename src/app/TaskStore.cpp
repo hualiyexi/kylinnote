@@ -999,6 +999,72 @@ QVector<EntityEvent> TaskStore::events(const QString &entityId)
     if (!failure.isEmpty()) { fail(failure); return QVector<EntityEvent>(); }
     m_lastError.clear(); return result;
 }
+
+// 统计口径（全部基于事件日志，永久删除后事件仍在，计数不回退）：
+// - tasksCreated / notesCreated：出现过 created 事件的实体按 kind 去重计数；
+//   kind 取创建时事件里的类型，之后 convertKind 不回溯调整。
+// - tasksCompleted：发生过 active/abandoned -> completed 状态事件的不同 Task 数；
+//   完成后再打开、再次完成只计一次。
+// - firstTaskAt：最早一个 Task created 事件的 occurredAt。
+// 早期版本数据库/导入数据可能缺少 created 事件：用 m_snapshot 补齐，
+// 但以实体 id 去重，与事件绝不重复计数。
+UsageStatistics TaskStore::usageStatistics(QString *error)
+{
+    if (!ensureLoaded()) {
+        if (error) *error = m_lastError;
+        return UsageStatistics();
+    }
+    QString failure;
+    const QVector<EntityEvent> allEvents = m_repository.allEvents(&failure);
+    if (!failure.isEmpty()) { fail(failure, error); return UsageStatistics(); }
+
+    // 去重只发生在本函数内部；返回的 UsageStatistics 不携带任何 id。
+    QSet<QString> createdTaskIds, createdNoteIds, completedTaskIds;
+    QDateTime firstTaskAt;
+    for (const EntityEvent &event : allEvents) {
+        if (event.entityId.isEmpty()) continue;
+        if (event.type == QStringLiteral("created")) {
+            if (event.entityKind == EntityKind::Note) {
+                createdNoteIds.insert(event.entityId);
+            } else {
+                createdTaskIds.insert(event.entityId);
+                if (event.occurredAt.isValid()
+                    && (!firstTaskAt.isValid() || event.occurredAt < firstTaskAt))
+                    firstTaskAt = event.occurredAt;
+            }
+        } else if (event.entityKind == EntityKind::Task
+                   && event.type == QStringLiteral("changed")
+                   && event.field == QStringLiteral("status")
+                   && event.newValue.type() == QVariant::String
+                   && event.newValue.toString() == QStringLiteral("completed")
+                   && !(event.oldValue.type() == QVariant::String
+                        && event.oldValue.toString() == QStringLiteral("completed"))) {
+            completedTaskIds.insert(event.entityId);
+        }
+    }
+    for (const StoredEntity &stored : m_snapshot.entities) {
+        const Entity &entity = stored.entity;
+        if (entity.kind == EntityKind::Note) {
+            if (!createdNoteIds.contains(entity.id)) createdNoteIds.insert(entity.id);
+        } else if (!createdTaskIds.contains(entity.id)) {
+            createdTaskIds.insert(entity.id);
+            if (entity.createdAt.isValid()
+                && (!firstTaskAt.isValid() || entity.createdAt < firstTaskAt))
+                firstTaskAt = entity.createdAt;
+        }
+        // 事件缺失时代完成的早期任务：当前仍是完成态则补计一次（有事件则已在集合中）。
+        if (entity.kind == EntityKind::Task && entity.completed)
+            completedTaskIds.insert(entity.id);
+    }
+    UsageStatistics stats;
+    stats.tasksCreated = createdTaskIds.size();
+    stats.notesCreated = createdNoteIds.size();
+    stats.tasksCompleted = completedTaskIds.size();
+    stats.firstTaskAt = firstTaskAt;
+    m_lastError.clear();
+    if (error) error->clear();
+    return stats;
+}
 QString TaskStore::beginEditSession(const QString &entityId)
 {
     if (!ensureLoaded()) return QString();

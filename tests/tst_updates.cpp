@@ -9,12 +9,14 @@
 #include <QHostAddress>
 #include <QMap>
 #include <QPointer>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
 
 #include "Common.h"
+#include "app/Settings.h"
 #include "app/updates/InstallIdentity.h"
 #include "platform/UpdateInstaller.h"
 #include "app/updates/UpdateManifest.h"
@@ -149,6 +151,39 @@ QString manifestRoute(const QString &prefix = QString())
     return prefix + QStringLiteral("/updates/v1/stable/manifest.json");
 }
 
+// 带可选 history 的清单：historyValue 为原样 JSON 值（null QString 表示完全省略该键）。
+QByteArray manifestWithHistory(const QString &version, const QString &historyValue,
+                               const QByteArray &artifactBody)
+{
+    const QString sha = sha256Hex(artifactBody);
+    const QString relative = QStringLiteral("files/%1/%2-%3-%4/pkg%5")
+        .arg(version, updates::currentBuildPlatform(), updates::currentBuildArch(),
+             makeIdentity(QStringLiteral("1.0.0")).variant, artifactSuffix());
+    QString historyLine;
+    if (!historyValue.isNull())
+        historyLine = QStringLiteral("  \"history\": %1,\n").arg(historyValue);
+    const QString json = QStringLiteral(
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"channel\": \"stable\",\n"
+        "  \"version\": \"%1\",\n"
+        "  \"publishedAt\": \"2026-11-14T08:00:00Z\",\n"
+        "  \"notes\": \"顶部公告\",\n"
+        "%2"
+        "  \"artifacts\": [\n"
+        "    {\"platform\": \"%3\", \"arch\": \"%4\", \"variant\": \"%5\", "
+        "\"packageVersion\": \"%1\",\n"
+        "     \"path\": \"%6\", \"size\": %7, \"sha256\": \"%8\"}\n"
+        "  ]\n"
+        "}")
+        .arg(version, historyLine,
+             updates::currentBuildPlatform(), updates::currentBuildArch(),
+             makeIdentity(QStringLiteral("1.0.0")).variant, relative)
+        .arg(artifactBody.size())
+        .arg(sha);
+    return json.toUtf8();
+}
+
 // 等待条件成立或超时。
 bool waitFor(int timeoutMs, const std::function<bool()> &condition)
 {
@@ -167,6 +202,7 @@ bool waitFor(int timeoutMs, const std::function<bool()> &condition)
 class UpdatesTest : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase();
     void init() { m_dir.reset(new QTemporaryDir); QVERIFY(m_dir->isValid());
         qputenv("KYLINLIST_DATA_DIR", m_dir->path().toUtf8()); }
     void cleanup() { qputenv("KYLINLIST_UPDATE_INSTALL_INFO_PATH", "");
@@ -176,13 +212,17 @@ private slots:
     void versionParsing();
     void versionCompare();
     void manifestParsing();
+    void manifestHistoryParsing();
+    void releaseNotesForUpgrade();
     void artifactPathValidation();
     void fullReleaseManifestParses();
     void manifestTargetSelection();
     void identityParsing();
     void identityReadFromOverride();
     void pendingEvaluation();
+    void postponeDecision();
     void verifyInstallerFileChecks();
+    void settingsUpdateDefaults();
     void baseUrlNormalization();
     void serviceCheckFindsUpdate();
     void serviceCheckUpToDate();
@@ -190,6 +230,8 @@ private slots:
     void serviceCheckTimeout();
     void serviceCheckMissingTarget();
     void serviceCheckNotConfigured();
+    void serviceCheckAutomaticSource();
+    void serviceAutomaticSkipsWhenReady();
     void serviceDownloadSucceeds();
     void serviceDownloadHashMismatch();
     void serviceDownloadSizeMismatch();
@@ -199,8 +241,19 @@ private slots:
     void installerHandOffFake();
 
 private:
+    QScopedPointer<QTemporaryDir> m_settingsDir;
     QScopedPointer<QTemporaryDir> m_dir;
 };
+
+void UpdatesTest::initTestCase()
+{
+    // 把 QSettings(IniFormat, UserScope) 重定向到本测试专属目录：
+    // Settings 单例只构造一次，此后的所有读写都不触碰真实用户配置。
+    m_settingsDir.reset(new QTemporaryDir);
+    QVERIFY2(m_settingsDir->isValid(), "cannot create settings temp dir");
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       m_settingsDir->path() + QStringLiteral("/settings"));
+}
 
 void UpdatesTest::versionParsing_data()
 {
@@ -314,6 +367,132 @@ void UpdatesTest::manifestParsing()
             .toUtf8();
         expectFail(json, "duplicate target");
     }
+}
+
+void UpdatesTest::manifestHistoryParsing()
+{
+    const QByteArray body = QByteArrayLiteral("history-pkg");
+    // 乱序书写也会按版本升序规范化。
+    const QString entries = QStringLiteral(
+        "[{\"version\":\"1.4.0\",\"publishedAt\":\"2026-11-05T08:00:00Z\",\"notes\":\"1.4 公告\"},"
+        "{\"version\":\"1.2.0\",\"publishedAt\":\"2026-10-01T08:00:00Z\",\"notes\":\"1.2 公告\"},"
+        "{\"version\":\"1.3.0\",\"publishedAt\":\"2026-10-20T08:00:00Z\",\"notes\":\"1.3 公告\"}]");
+    QString error;
+    updates::UpdateManifest manifest = updates::parseManifest(
+        manifestWithHistory(QStringLiteral("1.4.0"), entries, body), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(manifest.history.size(), 3);
+    QCOMPARE(manifest.history.at(0).version, QStringLiteral("1.2.0"));
+    QCOMPARE(manifest.history.at(1).version, QStringLiteral("1.3.0"));
+    QCOMPARE(manifest.history.at(2).version, QStringLiteral("1.4.0"));
+    QCOMPARE(manifest.history.at(1).notes, QStringLiteral("1.3 公告"));
+    QCOMPARE(manifest.history.at(1).publishedAt, QStringLiteral("2026-10-20T08:00:00Z"));
+    // notes 允许为空字符串（但键必须存在且是字符串）。
+    const QString emptyNotes = QStringLiteral(
+        "[{\"version\":\"1.4.0\",\"publishedAt\":\"2026-11-05T08:00:00Z\",\"notes\":\"\"}]");
+    error.clear();
+    manifest = updates::parseManifest(
+        manifestWithHistory(QStringLiteral("1.4.0"), emptyNotes, body), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(manifest.history.size(), 1);
+    QVERIFY(manifest.history.at(0).notes.isEmpty());
+    // 空 history 数组等价于旧清单：无逐版本公告。
+    error.clear();
+    manifest = updates::parseManifest(
+        manifestWithHistory(QStringLiteral("1.4.0"), QStringLiteral("[]"), body), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(manifest.history.isEmpty());
+
+    auto expectFail = [body](const QString &historyValue, const char *what) {
+        QString error;
+        updates::UpdateManifest manifest = updates::parseManifest(
+            manifestWithHistory(QStringLiteral("1.4.0"), historyValue, body), &error);
+        QVERIFY2(!error.isEmpty(), what);
+        QVERIFY2(manifest.artifacts.isEmpty(), what);
+    };
+    // history 不是数组
+    expectFail(QStringLiteral("\"text\""), "history not array");
+    expectFail(QStringLiteral("3"), "history number");
+    // 项不是对象
+    expectFail(QStringLiteral("[\"1.2.0\"]"), "item not object");
+    // 版本不合法 / 缺失
+    expectFail(QStringLiteral(
+        "[{\"version\":\"1.2\",\"publishedAt\":\"t\",\"notes\":\"n\"}]"), "bad item version");
+    expectFail(QStringLiteral(
+        "[{\"publishedAt\":\"t\",\"notes\":\"n\"}]"), "missing item version");
+    // publishedAt 为空 / 缺失
+    expectFail(QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"publishedAt\":\"\",\"notes\":\"n\"}]"), "empty publishedAt");
+    expectFail(QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"notes\":\"n\"}]"), "missing publishedAt");
+    // notes 缺失或不是字符串
+    expectFail(QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"publishedAt\":\"t\"}]"), "missing notes");
+    expectFail(QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"publishedAt\":\"t\",\"notes\":3}]"), "notes not string");
+    // 重复版本（与书写顺序无关）
+    expectFail(QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"publishedAt\":\"t\",\"notes\":\"a\"},"
+        "{\"version\":\"1.2.0\",\"publishedAt\":\"t2\",\"notes\":\"b\"}]"), "duplicate version");
+}
+
+void UpdatesTest::releaseNotesForUpgrade()
+{
+    const QByteArray body = QByteArrayLiteral("notes-pkg");
+    const QString entries = QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"publishedAt\":\"2026-10-01T08:00:00Z\",\"notes\":\"1.2 公告\"},"
+        "{\"version\":\"1.3.0\",\"publishedAt\":\"2026-10-20T08:00:00Z\",\"notes\":\"1.3 公告\"},"
+        "{\"version\":\"1.4.0\",\"publishedAt\":\"2026-11-05T08:00:00Z\",\"notes\":\"1.4 公告\"}]");
+    QString error;
+    const updates::UpdateManifest manifest = updates::parseManifest(
+        manifestWithHistory(QStringLiteral("1.4.0"), entries, body), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    using updates::ReleaseNote;
+    auto versionsOf = [](const QVector<ReleaseNote> &notes) {
+        QStringList versions;
+        for (const ReleaseNote &note : notes) versions << note.version;
+        return versions;
+    };
+    // 当前 < 版本 <= 目标：升序返回。
+    QCOMPARE(versionsOf(updates::releaseNotesForUpgrade(
+                  manifest, QStringLiteral("1.1.0"))),
+             QStringList({QStringLiteral("1.2.0"), QStringLiteral("1.3.0"), QStringLiteral("1.4.0")}));
+    QCOMPARE(versionsOf(updates::releaseNotesForUpgrade(
+                  manifest, QStringLiteral("1.2.0"))),
+             QStringList({QStringLiteral("1.3.0"), QStringLiteral("1.4.0")}));
+    // 当前已是目标版本：无公告。
+    QVERIFY(updates::releaseNotesForUpgrade(manifest, QStringLiteral("1.4.0")).isEmpty());
+    QVERIFY(updates::releaseNotesForUpgrade(manifest, QStringLiteral("2.0.0")).isEmpty());
+    // 高于目标的 history 条目不纳入。
+    const QString withFuture = QStringLiteral(
+        "[{\"version\":\"1.2.0\",\"publishedAt\":\"2026-10-01T08:00:00Z\",\"notes\":\"1.2 公告\"},"
+        "{\"version\":\"1.9.0\",\"publishedAt\":\"2026-12-01T08:00:00Z\",\"notes\":\"未来版本\"}]");
+    error.clear();
+    const updates::UpdateManifest capped = updates::parseManifest(
+        manifestWithHistory(QStringLiteral("1.3.0"), withFuture, body), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(versionsOf(updates::releaseNotesForUpgrade(
+                  capped, QStringLiteral("1.1.0"))),
+             QStringList({QStringLiteral("1.2.0")}));
+
+    // 旧清单（无 history）：目标比当前新时回退为清单自身公告。
+    error.clear();
+    const updates::UpdateManifest legacy = updates::parseManifest(
+        manifestWithHistory(QStringLiteral("1.4.0"), QString(), body), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    const QVector<ReleaseNote> fallback =
+        updates::releaseNotesForUpgrade(legacy, QStringLiteral("1.3.0"));
+    QCOMPARE(fallback.size(), 1);
+    QCOMPARE(fallback.at(0).version, QStringLiteral("1.4.0"));
+    QCOMPARE(fallback.at(0).publishedAt, QStringLiteral("2026-11-14T08:00:00Z"));
+    QCOMPARE(fallback.at(0).notes, QStringLiteral("顶部公告"));
+    // 旧清单且当前不低于目标：空。
+    QVERIFY(updates::releaseNotesForUpgrade(legacy, QStringLiteral("1.4.0")).isEmpty());
+    QVERIFY(updates::releaseNotesForUpgrade(legacy, QStringLiteral("2.0.0")).isEmpty());
+    // 当前版本无法比较时按“未知当前”处理：旧清单回退为清单自身。
+    QCOMPARE(updates::releaseNotesForUpgrade(legacy, QStringLiteral("abc")).size(), 1);
+    QVERIFY(updates::releaseNotesForUpgrade(manifest, QStringLiteral("abc")).isEmpty());
 }
 
 void UpdatesTest::artifactPathValidation()
@@ -466,6 +645,17 @@ void UpdatesTest::pendingEvaluation()
              PendingOutcome::StillPending);
 }
 
+void UpdatesTest::postponeDecision()
+{
+    const QDateTime now(QDate(2026, 11, 14), QTime(12, 0), Qt::UTC);
+    QCOMPARE(updates::updatePromptPostponed(QDateTime(), now), false);   // 从未暂缓
+    QCOMPARE(updates::updatePromptPostponed(now, QDateTime()), false);   // 当前时刻无效
+    QCOMPARE(updates::updatePromptPostponed(now.addDays(1), now), true); // 暂缓未到期
+    QCOMPARE(updates::updatePromptPostponed(now, now), false);           // 恰好到期：不再暂缓
+    QCOMPARE(updates::updatePromptPostponed(now.addSecs(-1), now), false);
+    QCOMPARE(updates::UpdatePostponeDays, 7);
+}
+
 void UpdatesTest::verifyInstallerFileChecks()
 {
     const QByteArray body = QByteArrayLiteral("installer-content-0123456789");
@@ -481,6 +671,33 @@ void UpdatesTest::verifyInstallerFileChecks()
     QVERIFY(!updates::verifyInstallerFile(path, body.size(), QString(64, QLatin1Char('0')), &error));
     QVERIFY(!updates::verifyInstallerFile(m_dir->path() + QStringLiteral("/nope.bin"), 1,
                                           sha256Hex(body), &error));
+}
+
+void UpdatesTest::settingsUpdateDefaults()
+{
+    Settings& settings = Settings::instance();
+    QCOMPARE(Settings::defaultUpdateBaseUrl(), QStringLiteral("http://143.147.10.31:11924"));
+    // 全新安装（键不存在）：默认服务器。
+    QCOMPARE(settings.updateBaseUrl(), Settings::defaultUpdateBaseUrl());
+    // 显式保存空串仍表示禁用。
+    settings.setUpdateBaseUrl(QString());
+    settings.sync();
+    QCOMPARE(settings.updateBaseUrl(), QString());
+    // 用户自定义地址按原样保留。
+    settings.setUpdateBaseUrl(QStringLiteral("http://10.0.0.8:8080"));
+    settings.sync();
+    QCOMPARE(settings.updateBaseUrl(), QStringLiteral("http://10.0.0.8:8080"));
+    // 暂缓时刻：默认无效，读写往返保持同一时刻。
+    QCOMPARE(settings.updatePostponeUntil().isValid(), false);
+    const QDateTime until(QDate(2026, 11, 21), QTime(8, 0), Qt::UTC);
+    settings.setUpdatePostponeUntil(until);
+    settings.sync();
+    QCOMPARE(utcMs(settings.updatePostponeUntil()), utcMs(until));
+    // 默认自启的一次性键：默认未初始化，写入后持久。
+    QCOMPARE(settings.autostartInitialized(), false);
+    settings.setAutostartInitialized(true);
+    settings.sync();
+    QCOMPARE(settings.autostartInitialized(), true);
 }
 
 void UpdatesTest::baseUrlNormalization()
@@ -518,6 +735,7 @@ void UpdatesTest::serviceCheckFindsUpdate()
     QCOMPARE(finishedSpy.first().at(0).toBool(), true);
     QVERIFY(service.targetArtifact() != nullptr);
     QCOMPARE(service.targetArtifact()->path, relative);
+    QCOMPARE(service.currentVersion(), QStringLiteral("1.0.0"));
 }
 
 void UpdatesTest::serviceCheckUpToDate()
@@ -603,6 +821,129 @@ void UpdatesTest::serviceCheckNotConfigured()
     QVERIFY(waitFor(2000, [&]() { return finishedSpy.size() >= 1; }));
     QCOMPARE(finishedSpy.first().at(1).toString(), QStringLiteral("未配置更新服务器地址"));
     QCOMPARE(service.state(), updates::UpdateService::State::Disabled);
+}
+
+// ---------- 自动检查来源 ----------
+
+void UpdatesTest::serviceCheckAutomaticSource()
+{
+    const QByteArray artifact = QByteArray(32, 's');
+    const QString relative = QStringLiteral("files/9.9.9/%1-%2-%3/pkg%4")
+        .arg(updates::currentBuildPlatform(), updates::currentBuildArch(),
+             makeIdentity(QStringLiteral("1.0.0")).variant, artifactSuffix());
+    const QByteArray manifestJson = buildManifestJson(QStringLiteral("9.9.9"), relative, artifact);
+
+    // 手动检查：automatic == false。
+    {
+        FixtureHttpServer server;
+        QVERIFY(server.start());
+        server.setRoute(manifestRoute(), {200, manifestJson});
+        updates::UpdateService service(makeIdentity(QStringLiteral("1.0.0")));
+        QSignalSpy spy(&service, &updates::UpdateService::checkFinished);
+        service.setBaseUrl(server.baseUrl());
+        service.checkNow();
+        QVERIFY(waitFor(5000, [&]() { return spy.size() >= 1; }));
+        QCOMPARE(spy.first().at(2).toBool(), false);
+        QCOMPARE(service.lastCheckAutomatic(), false);
+    }
+    // 自动检查（首查延时触发）：automatic == true。
+    {
+        FixtureHttpServer server;
+        QVERIFY(server.start());
+        server.setRoute(manifestRoute(), {200, manifestJson});
+        updates::UpdateService service(makeIdentity(QStringLiteral("1.0.0")));
+        service.setAutomaticCheckTiming(150, 3600 * 1000);
+        QSignalSpy spy(&service, &updates::UpdateService::checkFinished);
+        service.setBaseUrl(server.baseUrl());
+        service.startAutomaticChecks();
+        QVERIFY(waitFor(5000, [&]() { return spy.size() >= 1; }));
+        QCOMPARE(spy.first().at(2).toBool(), true);
+        QCOMPARE(service.lastCheckAutomatic(), true);
+        service.stopAutomaticChecks();
+    }
+    // 自动检查在途时手动触发：不重复发请求，结果来源保持为自动。
+    {
+        FixtureHttpServer server;
+        QVERIFY(server.start());
+        FixtureHttpServer::Response response;
+        response.body = manifestJson;
+        response.delayMs = 900;  // 让自动检查保持在途
+        server.setRoute(manifestRoute(), response);
+        updates::UpdateService service(makeIdentity(QStringLiteral("1.0.0")));
+        service.setAutomaticCheckTiming(100, 3600 * 1000);
+        QSignalSpy spy(&service, &updates::UpdateService::checkFinished);
+        service.setBaseUrl(server.baseUrl());
+        service.startAutomaticChecks();
+        QVERIFY(waitFor(2000, [&]() {
+            return service.state() == updates::UpdateService::State::Checking;
+        }));
+        service.checkNow();  // 并发手动检查：不卡住、不错标
+        QVERIFY(waitFor(5000, [&]() { return spy.size() >= 1; }));
+        QCOMPARE(spy.size(), 1);
+        QCOMPARE(spy.first().at(2).toBool(), true);
+        QCOMPARE(service.state(), updates::UpdateService::State::UpdateAvailable);
+        service.stopAutomaticChecks();
+    }
+    // 首查排程后立刻停止自动检查：已排程的首查作废，不产生任何结果。
+    {
+        FixtureHttpServer server;
+        QVERIFY(server.start());
+        server.setRoute(manifestRoute(), {200, manifestJson});
+        updates::UpdateService service(makeIdentity(QStringLiteral("1.0.0")));
+        service.setAutomaticCheckTiming(150, 3600 * 1000);
+        QSignalSpy spy(&service, &updates::UpdateService::checkFinished);
+        service.setBaseUrl(server.baseUrl());
+        service.startAutomaticChecks();
+        service.stopAutomaticChecks();
+        QTest::qWait(700);
+        QCOMPARE(spy.size(), 0);
+        QCOMPARE(service.state(), updates::UpdateService::State::Idle);
+    }
+    // 首查等待期间重复启动只保留一个排程，避免每次保存设置都追加请求。
+    {
+        FixtureHttpServer server;
+        QVERIFY(server.start());
+        server.setRoute(manifestRoute(), {200, manifestJson});
+        updates::UpdateService service(makeIdentity(QStringLiteral("1.0.0")));
+        service.setAutomaticCheckTiming(250, 3600 * 1000);
+        QSignalSpy spy(&service, &updates::UpdateService::checkFinished);
+        service.setBaseUrl(server.baseUrl());
+        service.startAutomaticChecks();
+        QTest::qWait(100);
+        service.startAutomaticChecks();
+        QVERIFY(waitFor(5000, [&]() { return spy.size() >= 1; }));
+        QTest::qWait(400);
+        QCOMPARE(spy.size(), 1);
+        service.stopAutomaticChecks();
+    }
+}
+
+void UpdatesTest::serviceAutomaticSkipsWhenReady()
+{
+    FixtureHttpServer server;
+    QVERIFY(server.start());
+    const QByteArray artifact = QByteArray(512, 'r');
+    const QString relative = QStringLiteral("files/2.0.0/%1-%2-%3/pkg%4")
+        .arg(updates::currentBuildPlatform(), updates::currentBuildArch(),
+             makeIdentity(QStringLiteral("1.0.0")).variant, artifactSuffix());
+    server.setRoute(manifestRoute(), {200, buildManifestJson(QStringLiteral("2.0.0"), relative, artifact)});
+    server.setRoute(QStringLiteral("/updates/") + relative, {200, artifact});
+    updates::UpdateService service(makeIdentity(QStringLiteral("1.0.0")));
+    QSignalSpy checkSpy(&service, &updates::UpdateService::checkFinished);
+    QSignalSpy doneSpy(&service, &updates::UpdateService::downloadSucceeded);
+    service.setBaseUrl(server.baseUrl());
+    service.checkNow();
+    QVERIFY(waitFor(5000, [&]() { return checkSpy.size() >= 1; }));
+    service.download();
+    QVERIFY(waitFor(5000, [&]() { return doneSpy.size() >= 1; }));
+    QCOMPARE(service.state(), updates::UpdateService::State::Ready);
+    // Ready 状态下自动检查不得重复发起。
+    service.setAutomaticCheckTiming(150, 3600 * 1000);
+    service.startAutomaticChecks();
+    QTest::qWait(700);
+    QCOMPARE(checkSpy.size(), 1);
+    QCOMPARE(service.state(), updates::UpdateService::State::Ready);
+    service.stopAutomaticChecks();
 }
 
 // ---------- 下载流程 ----------
