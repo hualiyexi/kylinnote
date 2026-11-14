@@ -3,7 +3,7 @@
 
 Usage:
 
-    python -I deploy/fetch_ci_release.py <RUN_ID> <NEW_OUTPUT_DIR>
+    python -I kylinlist-deploy/fetch_ci_release.py <RUN_ID> <NEW_OUTPUT_DIR>
 
 RUN_ID is the GitHub Actions run id of a "Build and package" workflow run
 (hualiyexi/kylinnote, .github/workflows/build.yml) that uploaded the
@@ -25,7 +25,7 @@ Only the Python standard library and the locally installed gh CLI are used:
      safely into the new empty output directory: members with absolute
      paths, drive letters, backslashes or ".." segments, and symlink or
      other special (device/socket/fifo) members are rejected.
-  4. deploy/ci_release.py validate_ci_release() validates the extracted
+  4. kylinlist-deploy/ci_release.py validate_ci_release() validates the extracted
      RELEASE-INFO.json (exactly the six release targets, partial=false,
      self-declared ci metadata consistent with this repository), and the
      ci.runId / ci.headSha recorded in the bundle must match the GitHub
@@ -49,7 +49,7 @@ REPOSITORY = "hualiyexi/kylinnote"
 EXPECTED_WORKFLOW_PATH = ".github/workflows/build.yml"
 ARTIFACT_NAME = "kylinlist-update-bundle"
 
-USAGE = "usage: python -I deploy/fetch_ci_release.py <RUN_ID> <NEW_OUTPUT_DIR>"
+USAGE = "usage: python -I kylinlist-deploy/fetch_ci_release.py <RUN_ID> <NEW_OUTPUT_DIR>"
 
 # python -I does not put this script's directory on sys.path, so load the
 # sibling validation module explicitly. It is our own file in the same

@@ -23,7 +23,7 @@ flowchart LR
 
 - `server/`：Compose 定义、nginx 配置与发布工具，部署与命令见 [server/README.md](../server/README.md)；`server/site/` 是同源产品首屏，直接读取 stable 清单提供下载与完整更新日志，客户端与网站的品牌覆盖见[品牌说明](branding.md)。
 - `server/stats/`：聚合统计后端，按真实 IP 保存最新使用快照，并从 nginx 下载日志统计各版本实际 GET/200 次数；协议与隐私边界见 [stats.md](stats.md)。
-- `deploy/`：生产自包含离线部署目录，包含版本化镜像 tar、宿主 nginx、安装包和发布配置；tar 与运行数据不入库。
+- `kylinlist-deploy/`：生产自包含离线部署目录，包含版本化镜像 tar、宿主 nginx、安装包和发布配置；tar 与运行数据不入库。
 - `packaging/generate-update-manifest.py`：CI 在三目标构建通过后生成发布目录（含 manifest 与安装包）。
 - 客户端：`src/app/updates/`（身份、协议、服务）、`src/platform/UpdateInstaller.cpp`（安装交接）、`src/ui/UpdateDialog.cpp`（界面）、`KylinListApp` 协调保存与安装。
 
@@ -88,11 +88,11 @@ flowchart LR
 ## 发布流程
 
 1. GitHub CI 在 Windows x64、Linux ARM64、Linux amd64 构建通过后，运行生成器产出完整六目标发布目录并上传为 `kylinlist-update-bundle`；更新公告必须来自 `docs/release-notes/<版本>.txt`。RELEASE-INFO 记录 run、workflow、headSha 等溯源字段；标签发布仍校验 tag 与版本一致并附到 GitHub Release。
-2. 开发机用 `python -I deploy/fetch_ci_release.py <RUN_ID> <新目录>` 下载并交叉核验指定 CI 运行，再执行 `bash deploy/package.sh <目录>`。该入口拒绝 partial/本地手工包，只生成带 SHA256SUMS 与 READY 的 incoming，不编译客户端、不构建服务端镜像。
+2. 开发机用 `python -I kylinlist-deploy/fetch_ci_release.py <RUN_ID> <新目录>` 下载并交叉核验指定 CI 运行，再执行 `bash kylinlist-deploy/package.sh <目录>`。该入口拒绝 partial/本地手工包，只生成带 SHA256SUMS 与 READY 的 incoming，不编译客户端、不构建服务端镜像。
 3. 把结果复制到生产 `data/incoming/.kylinlist-<版本>.uploading/`，完成后在同一文件系统原子改名为正式版本目录。常驻 publisher 自动校验 CI 来源、校验清单、manifest 与安装包，安装文件、合并完整 history 并原子替换 stable。无需手动 publish、重启服务或更新服务端镜像。
-4. 回退用显式 `publisher rollback [--to <版本>]`；watch 的一次性消费状态保证回滚后不会被旧 incoming 自动升回。publish/rollback/watch 共用跨进程锁。安装包发布与服务端镜像升级由 `deploy/package.sh` / `deploy/package-images.sh` 分开执行。
+4. 回退用显式 `publisher rollback [--to <版本>]`；watch 的一次性消费状态保证回滚后不会被旧 incoming 自动升回。publish/rollback/watch 共用跨进程锁。安装包发布与服务端镜像升级由 `kylinlist-deploy/package.sh` / `kylinlist-deploy/package-images.sh` 分开执行。
 
-日常发布不经过 GitHub 之外的外部服务；服务器无需访问公网。所有业务数据使用宿主 bind mount，不使用 named/anonymous volume。完整操作见 `deploy/README.txt`。
+日常发布不经过 GitHub 之外的外部服务；服务器无需访问公网。所有业务数据使用宿主 bind mount，不使用 named/anonymous volume。完整操作见 `kylinlist-deploy/README.txt`。
 
 ## 已经验证到什么程度
 

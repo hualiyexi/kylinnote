@@ -20,7 +20,7 @@
 
 ## 首次启动
 
-前置：宿主机已有 Docker 与 Compose 插件。开发机可直接构建服务端镜像；生产离线镜像由 `deploy/package-images.sh` 单独生成，不需要构建客户端。
+前置：宿主机已有 Docker 与 Compose 插件。开发机可直接构建服务端镜像；生产离线镜像由 `kylinlist-deploy/package-images.sh` 单独生成，不需要构建客户端。
 
 ```bash
 cd server
@@ -30,7 +30,7 @@ curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/api/v1/stats/healthz
 ```
 
-客户端更新基础地址为 `http://<宿主机IP>:<HTTP_PORT>`。除已确认的客户端默认生产入口外，不要在文档或示例中新增其他真实内网 IP。生产固定拓扑、宿主 nginx 与真实 IP 配置见根目录 `deploy/README.txt`。
+客户端更新基础地址为 `http://<宿主机IP>:<HTTP_PORT>`。除已确认的客户端默认生产入口外，不要在文档或示例中新增其他真实内网 IP。生产固定拓扑、宿主 nginx 与真实 IP 配置见根目录 `kylinlist-deploy/README.txt`。
 
 ## 产品首页、/s 统计页与品牌覆盖
 
@@ -46,14 +46,14 @@ curl http://127.0.0.1:8080/api/v1/stats/healthz
 在开发机仓库根目录：
 
 ```bash
-python -I deploy/fetch_ci_release.py <RUN_ID> dist/ci-release
-bash deploy/package.sh dist/ci-release
+python -I kylinlist-deploy/fetch_ci_release.py <RUN_ID> dist/ci-release
+bash kylinlist-deploy/package.sh dist/ci-release
 ```
 
 `fetch_ci_release.py` 使用已有 `gh` 下载并交叉核验指定成功运行；只接受本仓库的 push / workflow_dispatch，不接受 PR 或 fork 运行。`package.sh` 要求完整 CI 六目标、非 partial、匹配的 headSha/run 信息，调用现有校验器核对所有文件，然后生成：
 
 ```
-deploy/data/incoming/kylinlist-<版本>/
+kylinlist-deploy/data/incoming/kylinlist-<版本>/
   updates/...
   RELEASE-INFO.json
   SHA256SUMS
@@ -71,14 +71,14 @@ deploy/data/incoming/kylinlist-<版本>/
 - 已成功目录在管理员 rollback 后不会自动升回。watch、手工 publish 和 rollback 共用 `data/.publisher.lock`。
 - CI 字段是流程与溯源门禁，不是密码学来源证明；实际来源由从可信 GitHub 仓库/运行下载来保证。
 
-完整命令与生产目录见 [deploy/README.txt](../deploy/README.txt)。
+完整命令与生产目录见 [kylinlist-deploy/README.txt](../kylinlist-deploy/README.txt)。
 
 ## 显式恢复、回滚与查看
 
 日常不需要这些命令；它们用于故障恢复和管理员回滚：
 
 ```bash
-# 开发 server/ 目录；生产改用 deploy/README.txt 中的 compose 文件与 .env.prod
+# 开发 server/ 目录；生产改用 kylinlist-deploy/README.txt 中的 compose 文件与 .env.prod
 docker compose run --rm publisher status
 docker compose run --rm publisher validate /data/incoming/<release目录>
 docker compose run --rm publisher publish /data/incoming/<release目录>
@@ -107,11 +107,11 @@ docker run --rm -v "$(pwd)/stats":/stats:ro --entrypoint python \
 服务端镜像与客户端 release 已解耦：
 
 ```bash
-bash deploy/package-images.sh <服务端镜像版本>   # 仅服务自身变化时
-bash deploy/package.sh <完整CI release目录>      # 日常客户端发布
+bash kylinlist-deploy/package-images.sh <服务端镜像版本>   # 仅服务自身变化时
+bash kylinlist-deploy/package.sh <完整CI release目录>      # 日常客户端发布
 ```
 
-前者生成 `deploy/images/*.tar` 与独立 SHA256SUMS，后者只生成 incoming。生产导入、升级和回滚步骤见 deploy 文档。
+前者生成 `kylinlist-deploy/images/*.tar` 与独立 SHA256SUMS，后者只生成 incoming。生产导入、升级和回滚步骤见 kylinlist-deploy 文档。
 
 ## 常见问题
 

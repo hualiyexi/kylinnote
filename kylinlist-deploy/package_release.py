@@ -2,25 +2,25 @@
 # -*- coding: utf-8 -*-
 """KylinList 日常发布打包（仅 Python 标准库）。
 
-用法（一般经 deploy/package.sh 薄入口以隔离模式调用）：
+用法（一般经 kylinlist-deploy/package.sh 薄入口以隔离模式调用）：
 
-    python -I deploy/package_release.py <release目录>
+    python -I kylinlist-deploy/package_release.py <release目录>
 
 release 目录是 GitHub CI 产出的不可信输入；本脚本与输入分离（不从输入目录
 加载任何代码、绝不修改输入），流程：
 
-  1. deploy/ci_release.py 的 validate_ci_release 校验 CI 来源：
+  1. kylinlist-deploy/ci_release.py 的 validate_ci_release 校验 CI 来源：
      完整 CI 六目标、非 partial、run/headSha 元数据，返回 (version, info)；
   2. 直接读取 manifest，复核 artifacts 恰好覆盖完整 CI 六目标；
   3. 以隔离子进程运行 server/tools/publish.py validate，复核清单结构与
      安装包大小/sha256 一致；
-  4. 复制到隐藏暂存 deploy/data/incoming/.kylinlist-<版本>.packaging-<pid>/，
+  4. 复制到隐藏暂存 kylinlist-deploy/data/incoming/.kylinlist-<版本>.packaging-<pid>/，
      在暂存内生成标准 SHA256SUMS（覆盖全部原始文件、相对路径，不含
      自身/READY/state 文件），最后写 READY，再原子改名为
-     deploy/data/incoming/kylinlist-<版本>/。
+     kylinlist-deploy/data/incoming/kylinlist-<版本>/。
 
 目标目录已存在或任何失败都拒绝覆盖并清理本次暂存；本脚本不构建任何
-客户端或服务端镜像（服务端变化用 deploy/package-images.sh）。
+客户端或服务端镜像（服务端变化用 kylinlist-deploy/package-images.sh）。
 """
 
 import argparse
@@ -100,7 +100,7 @@ def is_within(child, ancestor):
 # ---------------------------------------------------------------- 校验步骤
 
 def load_ci_release_validator():
-    """按文件路径加载 deploy/ci_release.py（-I 模式下 sys.path 不含脚本目录）。
+    """按文件路径加载 kylinlist-deploy/ci_release.py（-I 模式下 sys.path 不含脚本目录）。
 
     ci_release.py 是仓库内的可信脚本，与不可信的 release 输入分离。
     """
@@ -222,14 +222,14 @@ def write_ready(staging):
 def package(release_dir):
     """完整流水线；返回 (version, 文件数, 最终目录)。"""
     root = repo_root()
-    incoming = root / "deploy" / "data" / "incoming"
+    incoming = root / "kylinlist-deploy" / "data" / "incoming"
     release = Path(os.path.realpath(str(release_dir)))
 
     if not release.is_dir():
         raise PackagingError("release 目录不存在或不是目录: %s" % release_dir)
     if is_within(incoming, release):
         raise PackagingError(
-            "输入目录不得是 deploy/data 的上级或包含它（%s）" % release)
+            "输入目录不得是 kylinlist-deploy/data 的上级或包含它（%s）" % release)
     for name in STALE_INPUT_NAMES:
         if (release / name).exists():
             raise PackagingError(
@@ -276,7 +276,7 @@ def package(release_dir):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="package_release.py",
-        description="校验 CI release 并投递到 deploy/data/incoming（不构建镜像）")
+        description="校验 CI release 并投递到 kylinlist-deploy/data/incoming（不构建镜像）")
     parser.add_argument("release_dir", metavar="release目录",
                         help="CI 产出的 release 目录（不可信输入，只读不修改）")
     args = parser.parse_args(argv)

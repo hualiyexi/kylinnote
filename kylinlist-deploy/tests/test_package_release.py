@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""deploy/package_release.py 的本地回归测试（仅标准库）。
+"""kylinlist-deploy/package_release.py 的本地回归测试（仅标准库）。
 
-运行：python -I deploy/test_package_release.py
+运行：python -I kylinlist-deploy/tests/test_package_release.py
 
 全部在临时目录进行：把真实的 package_release.py、server/tools/publish.py
 和一个 ci_release.py 测试替身组装成沙箱仓库，再以 `python -I` 子进程跑
-完整流水线。不打 Docker、不联网、不触碰真实 deploy/data。
+完整流水线。不打 Docker、不联网、不触碰真实 kylinlist-deploy/data。
 """
 
 import hashlib
@@ -18,7 +18,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-DEPLOY_DIR = Path(__file__).resolve().parent
+DEPLOY_DIR = Path(__file__).resolve().parent.parent
 ROOT = DEPLOY_DIR.parent
 
 # ci_release.py 测试替身：模拟另一模块提供的 validate_ci_release 接口。
@@ -58,7 +58,7 @@ TARGET_FILES = (
 def build_release(dest, version, partial=False, skip_target=None, real_ci=False):
     """构造一个能通过 publish.py validate 的六目标 release 目录。
 
-    real_ci=True 时附带能通过真实 deploy/ci_release.py 校验的 ci 元数据。
+    real_ci=True 时附带能通过真实 kylinlist-deploy/ci_release.py 校验的 ci 元数据。
     """
     dest = Path(dest)
     artifacts = []
@@ -111,9 +111,9 @@ def build_release(dest, version, partial=False, skip_target=None, real_ci=False)
 
 
 def make_sandbox(tmp, with_stub=True):
-    """组装沙箱仓库：deploy/package_release.py(+替身) 与 server/tools/publish.py。"""
+    """组装沙箱仓库：kylinlist-deploy/package_release.py(+替身) 与 server/tools/publish.py。"""
     sandbox = Path(tmp)
-    deploy = sandbox / "deploy"
+    deploy = sandbox / "kylinlist-deploy"
     deploy.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(DEPLOY_DIR / "package_release.py"), str(deploy / "package_release.py"))
     if with_stub:
@@ -126,7 +126,7 @@ def make_sandbox(tmp, with_stub=True):
 
 def run_packager(sandbox, release_dir):
     cmd = [sys.executable, "-I",
-           str(sandbox / "deploy" / "package_release.py"), str(release_dir)]
+           str(sandbox / "kylinlist-deploy" / "package_release.py"), str(release_dir)]
     return subprocess.run(cmd, capture_output=True, text=True, errors="replace")
 
 
@@ -150,7 +150,7 @@ def sha256_of(path):
 
 
 def incoming_entries(sandbox):
-    incoming = sandbox / "deploy" / "data" / "incoming"
+    incoming = sandbox / "kylinlist-deploy" / "data" / "incoming"
     if not incoming.is_dir():
         return []
     return sorted(p.name for p in incoming.iterdir())
@@ -174,7 +174,7 @@ def test_happy_path(tmp):
     proc = run_packager(sandbox, release)
     assert proc.returncode == 0, "happy path 失败:\n%s\n%s" % (proc.stdout, proc.stderr)
 
-    final = sandbox / "deploy" / "data" / "incoming" / "kylinlist-9.9.9"
+    final = sandbox / "kylinlist-deploy" / "data" / "incoming" / "kylinlist-9.9.9"
     assert final.is_dir(), "缺少最终目录: %s" % final
     assert (final / "READY").is_file(), "缺少 READY"
     assert incoming_entries(sandbox) == ["kylinlist-9.9.9"], \
@@ -206,7 +206,7 @@ def test_refuse_existing_final(tmp):
     release = Path(tmp) / "release-in"
     release.mkdir()
     build_release(release, "1.2.3")
-    final = sandbox / "deploy" / "data" / "incoming" / "kylinlist-1.2.3"
+    final = sandbox / "kylinlist-deploy" / "data" / "incoming" / "kylinlist-1.2.3"
     final.mkdir(parents=True)
     (final / "sentinel").write_text("keep", encoding="utf-8")
 
@@ -274,13 +274,13 @@ def test_stale_state_file(tmp):
 
 
 def test_integration_real_ci_module(tmp):
-    """用仓库内真实的 deploy/ci_release.py 走通完整流水线（仍在临时目录）。"""
+    """用仓库内真实的 kylinlist-deploy/ci_release.py 走通完整流水线（仍在临时目录）。"""
     real = DEPLOY_DIR / "ci_release.py"
     if not real.is_file():
-        print("SKIP test_integration_real_ci_module（deploy/ci_release.py 尚未提供）")
+        print("SKIP test_integration_real_ci_module（kylinlist-deploy/ci_release.py 尚未提供）")
         return
     sandbox = make_sandbox(tmp, with_stub=False)
-    shutil.copy2(str(real), str(sandbox / "deploy" / "ci_release.py"))
+    shutil.copy2(str(real), str(sandbox / "kylinlist-deploy" / "ci_release.py"))
     release = Path(tmp) / "release-in"
     release.mkdir()
     build_release(release, "7.7.7", real_ci=True)
@@ -289,7 +289,7 @@ def test_integration_real_ci_module(tmp):
     proc = run_packager(sandbox, release)
     assert proc.returncode == 0, "真实 ci_release 集成失败:\n%s\n%s" % (
         proc.stdout, proc.stderr)
-    final = sandbox / "deploy" / "data" / "incoming" / "kylinlist-7.7.7"
+    final = sandbox / "kylinlist-deploy" / "data" / "incoming" / "kylinlist-7.7.7"
     assert final.is_dir() and (final / "READY").is_file()
     assert incoming_entries(sandbox) == ["kylinlist-7.7.7"]
     assert snapshot(release) == before, "输入目录被修改"

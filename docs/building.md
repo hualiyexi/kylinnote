@@ -12,7 +12,7 @@ KylinList 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固�
 
 麒麟默认选择没有 `_bundle` 后缀的几百 KB 小包。安装命令为 `sudo apt install ./kylinlist_<版本>_<架构>.deb`，架构填 `arm64` 或 `amd64`；系统依赖已齐时也可离线 `sudo dpkg -i 文件名.deb`。目标机无需 qmake 或开发工具。Artifacts 保留 14 天；`v*` 标签对应的三个构建目标全部通过后，产物会放入 [Releases](https://github.com/hualiyexi/kylinnote/releases)。
 
-具体环境、已验证结果及何时需要重新检查见[兼容性基线](kylin-development-workflow.md)。**部署用客户端安装包只从上述 GitHub CI 获取，不在开发机本地编译。**日常内网发布可直接用 `python -I deploy/fetch_ci_release.py <RUN_ID> <新目录>` 下载并核验完整 `kylinlist-update-bundle`，再用 `bash deploy/package.sh <目录>` 生成自动发布的 incoming；详见[更新流程](updates.md)与 `deploy/README.txt`。以下本地构建命令只用于开发、兼容性诊断或单独测试，不是日常发布步骤。
+具体环境、已验证结果及何时需要重新检查见[兼容性基线](kylin-development-workflow.md)。**部署用客户端安装包只从上述 GitHub CI 获取，不在开发机本地编译。**日常内网发布可直接用 `python -I kylinlist-deploy/fetch_ci_release.py <RUN_ID> <新目录>` 下载并核验完整 `kylinlist-update-bundle`，再用 `bash kylinlist-deploy/package.sh <目录>` 生成自动发布的 incoming；详见[更新流程](updates.md)与 `kylinlist-deploy/README.txt`。以下本地构建命令只用于开发、兼容性诊断或单独测试，不是日常发布步骤。
 
 ## Windows 本地工具（全部位于仓库 .tools）
 

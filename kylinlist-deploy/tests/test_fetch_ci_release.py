@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for deploy/ci_release.py and deploy/fetch_ci_release.py.
+"""Tests for kylinlist-deploy/ci_release.py and kylinlist-deploy/fetch_ci_release.py.
 
-Run with: python -I deploy/test_fetch_ci_release.py
+Run with: python -I kylinlist-deploy/tests/test_fetch_ci_release.py
 
 No network access: the gh CLI calls in fetch_ci_release.py are redirected
 to a local fake gh (a small Python script in a per-test temporary
@@ -30,7 +30,7 @@ def _load_module(name, path):
     return module
 
 
-_HERE = Path(__file__).resolve().parent
+_HERE = Path(__file__).resolve().parent.parent
 ci_release = _load_module("ci_release", _HERE / "ci_release.py")
 fetch = _load_module("fetch_ci_release_under_test", _HERE / "fetch_ci_release.py")
 

@@ -1,7 +1,7 @@
 # KylinList 可信局域网 HTTP 更新、统计与产品页服务。
 # publisher 常驻监视 data/incoming，自动消费带 READY 的发布目录；
 # 手工 status / rollback / publish 用 `docker compose run --rm publisher <命令>` 按需运行。
-# 镜像与运行数据由根目录 deploy/ 打包后拷贝到生产机；生产入口由宿主 nginx 提供。
+# 镜像与运行数据由根目录 kylinlist-deploy/ 打包后拷贝到生产机；生产入口由宿主 nginx 提供。
 services:
   http:
     image: kylinlist-http:${KYLINLIST_IMAGE_VERSION:-1.3.0}
@@ -9,7 +9,7 @@ services:
       context: ..
       dockerfile: server/Dockerfile.http
     # 开发直连可用于本机/虚拟机验收，但不能作为真实 IP 信任边界；
-    # 生产使用 deploy 编排，仅绑定回环并由宿主 nginx 覆盖来源请求头。
+    # 生产使用 kylinlist-deploy 编排，仅绑定回环并由宿主 nginx 覆盖来源请求头。
     ports:
       - "${HTTP_PORT:-8080}:80"
     volumes:

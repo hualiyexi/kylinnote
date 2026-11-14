@@ -21,8 +21,8 @@ KylinList 可信内网生产部署
    只选本仓库的 push / workflow_dispatch 运行，不使用 Pull Request 或 fork 运行。
    在开发机仓库根目录执行（需要本机已有 gh 和 Python）：
 
-   python -I deploy/fetch_ci_release.py RUN_ID dist/ci-release
-   bash deploy/package.sh dist/ci-release
+   python -I kylinlist-deploy/fetch_ci_release.py RUN_ID dist/ci-release
+   bash kylinlist-deploy/package.sh dist/ci-release
 
    fetch_ci_release.py 会核验 GitHub run、workflow、headSha，并安全解压到全新目录。
    package.sh 只校验并复制 CI release，不编译客户端，也不构建/导出服务端镜像。
@@ -32,7 +32,7 @@ KylinList 可信内网生产部署
 
 2) 打包结果：
 
-   deploy/data/incoming/kylinlist-<版本>/
+   kylinlist-deploy/data/incoming/kylinlist-<版本>/
      updates/...             安装包与原始清单
      RELEASE-INFO.json       CI 来源与文件信息
      SHA256SUMS              逐文件完整性校验
@@ -70,7 +70,7 @@ KylinList 可信内网生产部署
 
 仅首次部署，或 nginx/publisher/stats 代码、配置发生变化时执行：
 
-  bash deploy/package-images.sh <服务端镜像版本>
+  bash kylinlist-deploy/package-images.sh <服务端镜像版本>
 
 该脚本只构建/导出 kylinlist-http、publisher、stats 三个服务端镜像，
 不读取 CMake 客户端版本，不生成 incoming。输出：
@@ -82,7 +82,18 @@ KylinList 可信内网生产部署
 
 首次部署：
 1) 准备 CI release（见第一节），并生成服务端镜像包。
-2) 把整个 deploy 目录复制到生产机，例如 /opt/kylinlist/。
+2) 把 kylinlist-deploy 复制到生产机，例如 /opt/kylinlist/。
+   从开发工作区复制时排除本机运行数据与配置，避免把演练数据带上生产：
+
+   rsync -a --exclude 'data/' --exclude '.env.prod' --exclude '.publisher.lock' \
+     kylinlist-deploy/ <用户>@<生产机>:/opt/kylinlist/
+
+   生产机先建好 data 子目录并交给部署用户：
+
+   sudo mkdir -p /opt/kylinlist/data/{incoming,public,branding/site,stats,logs}
+   sudo chown -R "$USER":"$USER" /opt/kylinlist
+
+   再把已打包的 release 目录单独投递到 data/incoming/（见第一节第 3 步）。
 3) 导入镜像并核对：
 
    cd /opt/kylinlist
@@ -160,3 +171,25 @@ KylinList 可信内网生产部署
 
 tar、.env.prod、incoming、public、stats、日志、品牌素材与校验文件均不入 Git。
 真实生产宿主和麒麟/飞腾真机验收由用户完成，不能以开发机演练替代。
+
+----------------------------------------
+五、目录结构与备份
+----------------------------------------
+
+生产目录（示例 /opt/kylinlist/，内容即复制后的 kylinlist-deploy）：
+
+  docker-compose-prod.yml  编排；所有持久化都是 ./data 下的宿主 bind mount
+  .env.prod                端口与镜像版本（不入 Git）
+  host_nginx.conf          宿主 nginx 反代配置
+  images/                  服务端镜像 tar 与 SHA256SUMS（可由源码重新生成）
+  data/                    全部运行数据，备份重点：
+    incoming/              待发布与已消费的 CI release（回滚需要）
+    public/                对外清单与历史安装包
+    stats/                 统计 SQLite
+    branding/site/         网站品牌覆盖
+    logs/                  nginx 访问/下载日志
+  tests/                   发布工具回归测试，仅开发机使用
+
+备份：在低写入窗口内整体打包 data/ 与 .env.prod，即可完整恢复业务状态。
+镜像 tar 与 incoming 都可由 CI release 重新生成，但历史 incoming 建议保留，
+因为显式回滚依赖其中的安装包。kylinlist-deploy 之外没有需要单独备份的运行数据。

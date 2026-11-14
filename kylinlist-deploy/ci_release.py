@@ -27,10 +27,10 @@ job that wrote RELEASE-INFO.json. These checks prove the metadata is
 internally consistent and points at the expected repository, workflow and
 run id; they are NOT a cryptographic signature and they cannot prove the
 bundle really came from that run. The external binding must come from
-cross-checking the GitHub API (deploy/fetch_ci_release.py does that before
+cross-checking the GitHub API (kylinlist-deploy/fetch_ci_release.py does that before
 calling this module) or from the human reviewing the run page.
 File bytes inside the release directory are not re-hashed here; package
-integrity is enforced later by deploy/package.sh and the publisher's own
+integrity is enforced later by kylinlist-deploy/package.sh and the publisher's own
 validate step.
 """
 
@@ -211,7 +211,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) != 2:
-        print("usage: python -I deploy/ci_release.py <release-dir>", file=sys.stderr)
+        print("usage: python -I kylinlist-deploy/ci_release.py <release-dir>", file=sys.stderr)
         sys.exit(2)
     try:
         release_version, _ = validate_ci_release(sys.argv[1])

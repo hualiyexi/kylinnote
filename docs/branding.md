@@ -75,7 +75,7 @@ sudo update-desktop-database /usr/local/share/applications
 
 网站的品牌覆盖放在**运行数据**里，不进源码、不重建镜像：
 
-- 覆盖目录：`server/data/branding/site/`（开发）与 `deploy/data/branding/site/`（生产），两套 Compose 都以只读挂载到容器 `/usr/share/nginx/html/local`。
+- 覆盖目录：`server/data/branding/site/`（开发）与 `kylinlist-deploy/data/branding/site/`（生产），两套 Compose 都以只读挂载到容器 `/usr/share/nginx/html/local`。
 - 配置文件 `config.json`，四个字段，**值为空字符串表示不覆盖**：
 
 ```json
@@ -92,7 +92,7 @@ sudo update-desktop-database /usr/local/share/applications
 - 修改运行数据里的 `config.json`/Logo 文件后刷新页面即生效（页面以 no-cache 拉取 `local/config.json`），**无需重建镜像，也无需重启容器**。
 - `logo` 只允许 `local/` 目录内的相对文件名：不能是绝对路径、不能含反斜杠、路径段不能为空或 `.` / `..`；图片加载失败自动回退默认 Logo。
 - 首页与 `/s/` 统计管理页共用同一套覆盖（`/s/` 以 `../local/...` 前缀加载），换一次品牌两端同时生效。
-- 运行数据不入 Git：仓库里 `server/data/`、`deploy/data/` 均被忽略，本机测试用的覆盖文件不会带入版本库；生产值由管理员在生产机 `data/branding/site/` 下自行填写。
+- 运行数据不入 Git：仓库里 `server/data/`、`kylinlist-deploy/data/` 均被忽略，本机测试用的覆盖文件不会带入版本库；生产值由管理员在生产机 `data/branding/site/` 下自行填写。
 
 网站脚本按 Chromium 78 基线编写（不用 `:focus-visible` 等新特性）；改品牌逻辑后请以 Chrome 78 起步验证。
 

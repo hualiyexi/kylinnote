@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 导出三个服务端镜像。镜像须先由 deploy/package-images.sh 构建；tar 不纳入 Git。
+# 导出三个服务端镜像。镜像须先由 kylinlist-deploy/package-images.sh 构建；tar 不纳入 Git。
 set -euo pipefail
 cd "$(dirname "$0")"
 VERSION="${1:-}"

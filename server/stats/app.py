@@ -62,7 +62,7 @@ DOWNLOAD_PATH_RE = re.compile(
     r"^/updates/files/(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})"
     r"/[^/]+/[^/]+$")
 
-# 参与扫描：*.log / *.json，以及数字序号或 deploy 脚本 UTC 时间戳轮转文件。
+# 参与扫描：*.log / *.json，以及数字序号或轮转脚本 UTC 时间戳轮转文件。
 LOG_FILE_NAME_RE = re.compile(
     r"^.+\.(?:log|json)(?:\.\d+|\.\d{8}T\d{6}Z)?(?:\.gz)?$", re.IGNORECASE)
 

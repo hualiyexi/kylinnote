@@ -76,7 +76,7 @@
 }
 ```
 
-响应不包含 IP 明细或原始上报内容。服务端实现与部署说明见 `server/stats/README.md`；部署、日志轮转与备份见 `deploy/README.txt`。
+响应不包含 IP 明细或原始上报内容。服务端实现与部署说明见 `server/stats/README.md`；部署、日志轮转与备份见 `kylinlist-deploy/README.txt`。
 
 ## 测试
 

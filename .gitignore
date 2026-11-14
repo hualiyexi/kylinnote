@@ -44,8 +44,8 @@ Thumbs.db
 server/.env
 server/data/*
 !server/data/README.md
-deploy/.env.prod
-deploy/SHA256SUMS
-deploy/images/SHA256SUMS
-deploy/data/*
-!deploy/data/README.md
+kylinlist-deploy/.env.prod
+kylinlist-deploy/SHA256SUMS
+kylinlist-deploy/images/SHA256SUMS
+kylinlist-deploy/data/*
+!kylinlist-deploy/data/README.md
