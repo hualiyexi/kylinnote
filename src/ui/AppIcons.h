@@ -16,8 +16,8 @@ namespace kl {
 enum class IconId {
     None,
     // 导航
-    Inbox, Today, Upcoming, Overdue, Done, Abandoned, Trash,
-    Folder, Note, TaskList, Pin,
+    All, Inbox, Today, Tomorrow, Upcoming, Overdue, Done, Abandoned, Trash,
+    Folder, Note, TaskList, Pin, Archive, Unarchive, SmartSettings,
     // 操作
     Search, More, Add, Close, Check,
     Calendar, Clock, Reminder, Repeat,
@@ -43,6 +43,7 @@ void paint(QPainter* painter, IconId id, const QRectF& rect, const QColor& color
 // 按图标名直取（如 "quick-today"）。名字不存在时返回空图标。
 QIcon icon(const QString& name, int size = 16);
 QIcon icon(const QString& name, ds::ColorToken colorToken, int size = 16);
+QIcon icon(const QString& name, const QColor& color, int size = 16);
 void paint(QPainter* painter, const QString& name, const QRectF& rect, const QColor& color);
 bool hasIcon(const QString& name);
 // 枚举对应的图标名；没有对应时返回空串。

@@ -18,8 +18,14 @@ ThemeManager& ThemeManager::instance() {
 }
 
 ThemeManager::ThemeManager() {
-    QSettings settings;
-    const QString stored = settings.value(QLatin1String(kSettingsKey)).toString();
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
+    QString stored = settings.value(QLatin1String(kSettingsKey)).toString();
+    if (!settings.contains(QLatin1String(kSettingsKey))) {
+        // 兼容早期 NativeFormat 主题偏好；后续写入统一走可隔离的 INI。
+        QSettings legacy;
+        stored = legacy.value(QLatin1String(kSettingsKey)).toString();
+    }
     if (stored == QLatin1String("dark")) m_preference = Preference::Dark;
     else if (stored == QLatin1String("system")) m_preference = Preference::System;
     else m_preference = Preference::Light;  // 默认或非法值回落浅色
@@ -72,11 +78,11 @@ void ThemeManager::setPreference(Preference pref) {
     if (pref == m_preference) return;
     m_preference = pref;
     m_resolved = resolve(pref);
-    QSettings settings;
-    // 默认浅色不写盘（等价前端默认主题不挂 data-theme）。
-    if (pref == Preference::Light) settings.remove(QLatin1String(kSettingsKey));
-    else settings.setValue(QLatin1String(kSettingsKey),
-                           pref == Preference::Dark ? QStringLiteral("dark") : QStringLiteral("system"));
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
+    const QString stored = pref == Preference::Light ? QStringLiteral("light")
+        : pref == Preference::Dark ? QStringLiteral("dark") : QStringLiteral("system");
+    settings.setValue(QLatin1String(kSettingsKey), stored);
 
     if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
         applyBootstrap(*app);

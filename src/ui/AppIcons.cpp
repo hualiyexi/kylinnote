@@ -21,8 +21,10 @@ constexpr qreal kMinInsetPx = 0.5;
 // 语义枚举 -> 图标名。换图标只动这张表。
 const char* iconNameFor(IconId id) {
     switch (id) {
+        case IconId::All: return "all-list";
         case IconId::Inbox: return "inbox-list";
         case IconId::Today: return "today-list";
+        case IconId::Tomorrow: return "tomorrow-list";
         case IconId::Upcoming: return "ndays-later";
         case IconId::Overdue: return "overdue";
         case IconId::Done: return "completed";
@@ -32,6 +34,9 @@ const char* iconNameFor(IconId id) {
         case IconId::Note: return "note";
         case IconId::TaskList: return "normal-list";
         case IconId::Pin: return "pin-task";
+        case IconId::Archive: return "archive";
+        case IconId::Unarchive: return "unarchive";
+        case IconId::SmartSettings: return "setting-smart";
 
         case IconId::Search: return "search";
         case IconId::More: return "more";
@@ -208,6 +213,10 @@ QIcon icon(const QString& name, ds::ColorToken colorToken, int size) {
     return buildIcon(lookup(name), ThemeManager::instance().color(colorToken), size);
 }
 
+QIcon icon(const QString& name, const QColor& color, int size) {
+    return buildIcon(lookup(name), color, size);
+}
+
 void paint(QPainter* painter, const QString& name, const QRectF& rect, const QColor& color) {
     paintEntry(painter, lookup(name), rect, color);
 }
@@ -223,9 +232,11 @@ QString iconName(IconId id) {
 
 QString accessibleName(IconId id) {
     switch (id) {
+        case IconId::All: return QStringLiteral("所有");
         case IconId::Inbox: return QStringLiteral("收集箱");
         case IconId::Today: return QStringLiteral("今天");
-        case IconId::Upcoming: return QStringLiteral("七天内");
+        case IconId::Tomorrow: return QStringLiteral("明天");
+        case IconId::Upcoming: return QStringLiteral("最近7天");
         case IconId::Overdue: return QStringLiteral("已逾期");
         case IconId::Done: return QStringLiteral("已完成");
         case IconId::Abandoned: return QStringLiteral("已放弃");
@@ -234,6 +245,9 @@ QString accessibleName(IconId id) {
         case IconId::Note: return QStringLiteral("笔记");
         case IconId::TaskList: return QStringLiteral("任务清单");
         case IconId::Pin: return QStringLiteral("置顶");
+        case IconId::Archive: return QStringLiteral("归档清单");
+        case IconId::Unarchive: return QStringLiteral("取消归档");
+        case IconId::SmartSettings: return QStringLiteral("智能清单设置");
         case IconId::Search: return QStringLiteral("搜索");
         case IconId::More: return QStringLiteral("更多");
         case IconId::Add: return QStringLiteral("添加");

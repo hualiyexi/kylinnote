@@ -8,6 +8,12 @@ QString hex(ColorToken token, Theme theme) {
     return color(token, theme).name();
 }
 
+QString rgba(ColorToken token, Theme theme) {
+    const QColor value = color(token, theme);
+    return QStringLiteral("rgba(%1,%2,%3,%4)")
+        .arg(value.red()).arg(value.green()).arg(value.blue()).arg(value.alpha());
+}
+
 }  // namespace
 
 QString buildStyleSheet(Theme theme) {
@@ -33,11 +39,11 @@ QString buildStyleSheet(Theme theme) {
     const QString dangerBg = hex(ColorToken::DangerBg, theme);
     const QString scrollbar = hex(ColorToken::Scrollbar, theme);
     const QString scrollbarHover = hex(ColorToken::ScrollbarHover, theme);
-    const QString tooltipBg = hex(ColorToken::TooltipBg, theme);
+    const QString tooltipBg = rgba(ColorToken::TooltipBg, theme);
     const QString tooltipText = hex(ColorToken::TooltipText, theme);
 
     return QStringLiteral(
-        "QToolTip{color:%1;background:%2;border:1px solid %3;padding:6px 8px;border-radius:4px;}"
+        "QToolTip{color:%26;background:%2;border:0;padding:5px 7px;border-radius:4px;font-size:12px;}"
         "QLabel[muted=\"true\"]{color:%4;}"
         "QLabel[section=\"true\"]{color:%5;font-weight:600;padding-top:10px;}"
         "QPushButton,QToolButton{background:transparent;border:1px solid transparent;"
@@ -49,6 +55,9 @@ QString buildStyleSheet(Theme theme) {
         "QPushButton[primary=\"true\"]{background:%8;border:1px solid %8;color:%10;}"
         "QPushButton[primary=\"true\"]:hover{background:%11;border-color:%11;}"
         "QPushButton[primary=\"true\"]:pressed{background:%11;border-color:%11;}"
+        "QPushButton[primary=\"true\"]:disabled{background:%13;border-color:%13;color:%9;}"
+        "QPushButton[danger=\"true\"]{background:%21;border:1px solid %21;color:%10;}"
+        "QPushButton[danger=\"true\"]:disabled{background:%20;border-color:%20;color:%9;}"
         "QPushButton[quiet=\"true\"]{color:%5;text-align:left;padding:7px 10px;}"
         "QPushButton[quiet=\"true\"]:hover{background:%12;color:%1;}"
         "QLineEdit,QDateTimeEdit,QComboBox,QSpinBox{background:%13;border:1px solid transparent;"
@@ -56,6 +65,7 @@ QString buildStyleSheet(Theme theme) {
         "QLineEdit:hover,QDateTimeEdit:hover,QComboBox:hover,QSpinBox:hover{background:%15;}"
         "QLineEdit:focus,QDateTimeEdit:focus,QComboBox:focus,QSpinBox:focus{background:%16;"
         "border:1px solid %8;}"
+        "QLineEdit[invalid=\"true\"]{border:1px solid %21;}"
         "QComboBox::drop-down,QDateTimeEdit::drop-down{border:0;width:22px;}"
         "QComboBox QAbstractItemView{background:%17;border:1px solid %3;"
         "border-radius:6px;padding:4px;selection-background-color:%14;selection-color:%1;outline:0;}"
@@ -131,6 +141,7 @@ QString buildStyleSheet(Theme theme) {
         .arg(menuDisabled)  // %23
         .arg(scrollbar)     // %24
         .arg(scrollbarHover)// %25
+        .arg(tooltipText)   // %26
         + QStringLiteral(
             "QWidget#TaskDetailHost,QWidget#TaskDetailForm,QScrollArea#DetailScroll,"
             "QScrollArea#DetailScroll>QWidget{background:%1;}"
@@ -188,13 +199,13 @@ QString buildStyleSheet(Theme theme) {
             "QWidget#WindowControls QToolButton#WindowClose:hover{background:%4;color:%6;"
             "border-top-right-radius:10px;}"
             "QWidget#WindowDragArea{background:transparent;}"
-            "QLabel#WorkspaceNotice{background:%10;color:%6;border:1px solid %2;"
+            "QLabel#WorkspaceNotice{background:%9;color:%6;border:1px solid %2;"
             "border-radius:8px;padding:9px 14px;}"
             "QListView#TaskList{background:transparent;}"
             "QFrame#ToastIsland{background:transparent;border:0;}")
             .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
             .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar)
-            .arg(onPrimary).arg(menuBg);
+            .arg(menuBg);
 }
 
 QString buildPreviewCss(Theme theme) {
