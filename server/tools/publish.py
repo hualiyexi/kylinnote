@@ -16,6 +16,11 @@ KYLIN_UPDATE_DATA_DIR 覆盖（主要供测试使用）。
       RELEASE-INFO.json        # 可选；只透传归档，不解析、不强依赖
 
 manifest 内 artifact.path 相对于「服务器基础地址 + /updates/」。
+
+stable 清单自带可选的 history 数组（每项 {version, publishedAt, notes}，
+按版本升序）：publish 会汇总新 release、当前 stable 与全部归档的版本公告
+（同版本冲突取最近一次发布），rollback 保留全部已知历史、artifacts 仍取
+归档目标版本。
 """
 
 import argparse
@@ -34,8 +39,8 @@ ENV_DATA_DIR = "KYLIN_UPDATE_DATA_DIR"
 
 VERSION_RE = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-# 归档文件名 manifest-<版本>-<UTC时间戳>.json，末尾 -N 为同秒冲突时的序号
-ARCHIVE_RE = re.compile(r"^manifest-(\d+\.\d+\.\d+)-(\d{8}T\d{6}Z)(?:-\d+)?\.json$")
+# 归档文件名 manifest-<版本>-<UTC时间戳>.json，末尾 -N 为同秒冲突时的序号（按数值递增）
+ARCHIVE_RE = re.compile(r"^manifest-(\d+\.\d+\.\d+)-(\d{8}T\d{6}Z)(?:-(\d+))?\.json$")
 
 PLATFORMS = ("linux", "windows")
 ARCHES = ("arm64", "amd64")
@@ -97,7 +102,11 @@ def version_tuple(version):
 # ---------------------------------------------------------------- 清单校验
 
 def validate_manifest(manifest, source="manifest.json"):
-    """严格校验清单结构，返回 (version, 规范化 artifacts 列表)。任何不符合直接抛错。"""
+    """严格校验清单结构，返回 (version, 规范化 artifacts, 规范化 history 或 None)。
+
+    history 是可选字段：新发布输入可以不带；一旦带就必须是合法数组。
+    任何不符合直接抛错。
+    """
 
     def err(msg):
         raise PublishError("%s: %s" % (source, msg))
@@ -112,6 +121,12 @@ def validate_manifest(manifest, source="manifest.json"):
     version = manifest.get("version")
     if not isinstance(version, str) or not VERSION_RE.match(version):
         err("version 非法: %r（应形如 1.2.0，各段无前导零）" % (version,))
+    published_at = manifest.get("publishedAt")
+    if not isinstance(published_at, str) or not published_at:
+        err("publishedAt 必须是非空字符串")
+    notes = manifest.get("notes")
+    if not isinstance(notes, str):
+        err("notes 必须是字符串（可为空）")
     arts = manifest.get("artifacts")
     if not isinstance(arts, list) or not arts:
         err("artifacts 必须为非空数组")
@@ -171,11 +186,44 @@ def validate_manifest(manifest, source="manifest.json"):
             "size": size,
             "sha256": sha,
         })
-    return version, normalized
+
+    history = manifest.get("history")
+    normalized_history = None
+    if history is not None:
+        if not isinstance(history, list):
+            err("history 必须是数组")
+        seen_versions = set()
+        normalized_history = []
+        for i, item in enumerate(history):
+            prefix = "%s: history[%d]" % (source, i)
+
+            def herr(msg, prefix=prefix):
+                raise PublishError("%s: %s" % (prefix, msg))
+
+            if not isinstance(item, dict):
+                herr("必须是 JSON 对象")
+            hversion = item.get("version")
+            if not isinstance(hversion, str) or not VERSION_RE.match(hversion):
+                herr("version 非法: %r（应形如 1.2.0，各段无前导零）" % (hversion,))
+            if hversion in seen_versions:
+                herr("同版本重复出现: %s（同版本公告不得重复）" % hversion)
+            seen_versions.add(hversion)
+            hpublished = item.get("publishedAt")
+            if not isinstance(hpublished, str) or not hpublished:
+                herr("publishedAt 必须是非空字符串")
+            hnotes = item.get("notes")
+            if not isinstance(hnotes, str):
+                herr("notes 必须是字符串（可为空）")
+            normalized_history.append({
+                "version": hversion,
+                "publishedAt": hpublished,
+                "notes": hnotes,
+            })
+    return version, normalized, normalized_history
 
 
 def load_release(release_dir):
-    """读取并校验 release 目录的清单，返回 (manifest_bytes, version, artifacts)。"""
+    """读取并校验 release 目录的清单，返回 (manifest dict, version, artifacts)。"""
     release_dir = Path(release_dir)
     manifest_path = release_dir / "updates" / "v1" / "stable" / "manifest.json"
     if not manifest_path.is_file():
@@ -185,8 +233,8 @@ def load_release(release_dir):
         manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as e:
         raise PublishError("manifest.json 读取或解析失败: %s" % e)
-    version, artifacts = validate_manifest(manifest)
-    return manifest_bytes, version, artifacts
+    version, artifacts, _ = validate_manifest(manifest)
+    return manifest, version, artifacts
 
 
 def verify_release_files(release_dir, version, artifacts):
@@ -242,17 +290,75 @@ def do_validate(release_dir):
     print("校验通过: 版本 %s，%d 个文件大小与 sha256 均与清单一致" % (version, len(artifacts)))
 
 
+# ---------------------------------------------------------------- 历史公告合并
+
+def merge_history(sources):
+    """把若干清单的版本公告合并成一份完整的 history。
+
+    sources 是按优先级从高到低排列的清单 dict（均已通过 validate_manifest）。
+    每份清单先取顶层公告（version/publishedAt/notes），再取其 history 各项；
+    同版本公告冲突时保留优先级更高来源的条目（即"最近一次发布/当前新 release"）。
+    返回按版本数值升序排序的 history 列表，结果只取决于 sources 顺序，
+    与文件遍历顺序无关。
+    """
+    merged = {}
+    for manifest in sources:
+        candidates = [{
+            "version": manifest["version"],
+            "publishedAt": manifest["publishedAt"],
+            "notes": manifest["notes"],
+        }]
+        for item in manifest.get("history") or ():
+            candidates.append({
+                "version": item["version"],
+                "publishedAt": item["publishedAt"],
+                "notes": item["notes"],
+            })
+        for cand in candidates:
+            if cand["version"] not in merged:
+                merged[cand["version"]] = cand
+    return [merged[v] for v in sorted(merged, key=version_tuple)]
+
+
+def render_manifest(manifest, history):
+    """生成带完整 history 的最终清单字节；落盘前自检，保证写出的清单始终合法。"""
+    final = dict(manifest)
+    final["history"] = [dict(item) for item in history]
+    data = json.dumps(final, ensure_ascii=False, indent=2).encode("utf-8")
+    _parse_manifest_bytes(data, "最终 stable 清单")
+    return data
+
+
 def do_publish(release_dir, data_dir):
-    """发布 release 目录：先全部校验，再安装文件，最后原子替换 stable 清单。"""
+    """发布 release 目录：先全部校验，再安装文件，最后原子替换 stable 清单。
+
+    stable 清单始终带完整 history：汇总新 release、当前 stable 与全部归档的
+    版本公告（同版本冲突取最近一次发布），先生成最终字节再做幂等比较，
+    重复发布同一 release 不会改写 stable、也不会归档自己。
+    """
     release_dir = Path(release_dir)
     data_dir = Path(data_dir)
-    manifest_bytes, version, artifacts = load_release(release_dir)
+    manifest, version, artifacts = load_release(release_dir)
     verify_release_files(release_dir, version, artifacts)
 
     updates_root = data_dir / "public" / "updates"
     stable_path = updates_root / "v1" / "stable" / "manifest.json"
 
-    # 1) 安装安装包文件（同哈希幂等，不同哈希拒绝原地替换）
+    # 1) 汇总版本公告，生成带完整 history 的最终清单字节。
+    #    优先级：新 release > 当前 stable > 归档（按时间新->旧）。
+    #    任何来源（stable/归档）损坏都在此明确报错，绝不静默丢历史。
+    stable_bytes = stable_path.read_bytes() if stable_path.is_file() else None
+    stable_manifest = (_parse_manifest_bytes(stable_bytes, "当前 stable 清单")
+                       if stable_bytes is not None else None)
+    archives = list_archives(updates_root / "v1" / "archive")
+    sources = [manifest]
+    if stable_manifest is not None:
+        sources.append(stable_manifest)
+    sources.extend(load_archive_manifests(archives))
+    history = merge_history(sources)
+    final_bytes = render_manifest(manifest, history)
+
+    # 2) 安装安装包文件（同哈希幂等，不同哈希拒绝原地替换）
     print("校验通过，开始安装 %d 个文件（版本 %s）" % (len(artifacts), version))
     for art in artifacts:
         src = release_dir / "updates" / art["path"]
@@ -269,25 +375,25 @@ def do_publish(release_dir, data_dir):
                 "请升版本号或先人工清理）" % art["path"])
         install_file(src, dst, art["sha256"], art["path"])
 
-    # 2) 幂等：stable 清单与本次完全一致则直接结束
-    if stable_path.is_file() and stable_path.read_bytes() == manifest_bytes:
+    # 3) 幂等：与最终清单字节完全一致则直接结束（不改写 stable、不新增归档）
+    if stable_bytes == final_bytes:
         print("stable 清单已是 %s（内容一致），发布幂等完成" % version)
         return
 
-    # 3) 归档当前 stable 清单（如有）
+    # 4) 归档当前 stable 清单（原字节，含其已有 history）
     ts = utc_timestamp()
-    if stable_path.is_file():
-        old_bytes = stable_path.read_bytes()
-        old_version = _manifest_version_of(old_bytes, "当前 stable 清单")
+    if stable_bytes is not None:
+        old_version = stable_manifest["version"]
         archive_dir = updates_root / "v1" / "archive"
         dst = unique_archive_path(archive_dir, "manifest-%s" % old_version, ts, ".json")
-        atomic_write_bytes(dst, old_bytes)
+        atomic_write_bytes(dst, stable_bytes)
         print("已归档原 stable 清单 %s -> archive/%s" % (old_version, dst.name))
 
-    # 4) 原子替换 stable 清单（任何前置步骤失败都不会走到这里）
-    atomic_write_bytes(stable_path, manifest_bytes)
+    # 5) 原子替换 stable 清单为带完整 history 的最终清单
+    #    （任何前置步骤失败都不会走到这里）
+    atomic_write_bytes(stable_path, final_bytes)
 
-    # 5) RELEASE-INFO.json 透传归档：不解析、不强依赖，存在即原样归档
+    # 6) RELEASE-INFO.json 透传归档：不解析、不强依赖，存在即原样归档
     info_path = release_dir / "RELEASE-INFO.json"
     if info_path.is_file():
         archive_dir = updates_root / "v1" / "archive"
@@ -295,42 +401,74 @@ def do_publish(release_dir, data_dir):
         atomic_write_bytes(info_dst, info_path.read_bytes())
         print("已透传归档 RELEASE-INFO.json -> archive/%s" % info_dst.name)
 
-    print("发布完成: stable 版本 -> %s" % version)
+    print("发布完成: stable 版本 -> %s（history %d 条）" % (version, len(history)))
 
 
-def _manifest_version_of(data, source):
+def _parse_manifest_bytes(data, source):
+    """解析并完整校验一份清单字节（当前 stable / 归档 / 待落盘的最终清单）。"""
     try:
         manifest = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as e:
-        raise PublishError("%s 解析失败: %s" % (source, e))
-    version = manifest.get("version") if isinstance(manifest, dict) else None
-    if not isinstance(version, str):
-        raise PublishError("%s 缺少 version 字段" % source)
-    return version
+        raise PublishError("%s 读取或解析失败: %s" % (source, e))
+    validate_manifest(manifest, source=source)
+    return manifest
 
 
 def list_archives(archive_dir):
-    """返回归档清单列表 [(版本元组, 版本串, 时间戳, 路径)]，按时间戳升序。"""
+    """返回归档清单列表 [(版本元组, 版本串, 时间戳, 同秒序号, 路径)]。
+
+    按（时间戳, 版本数值, 同秒序号）升序，完全确定、不依赖目录遍历顺序。
+    """
     result = []
     archive_dir = Path(archive_dir)
     if archive_dir.is_dir():
         for p in archive_dir.iterdir():
             m = ARCHIVE_RE.match(p.name)
             if p.is_file() and m:
-                result.append((version_tuple(m.group(1)), m.group(1), m.group(2), p))
-    result.sort(key=lambda item: (item[2], item[1]))
+                seq = int(m.group(3)) if m.group(3) else 0
+                result.append((version_tuple(m.group(1)), m.group(1), m.group(2), seq, p))
+    result.sort(key=lambda item: (item[2], item[0], item[3]))
     return result
 
 
+def load_archive_manifests(archives):
+    """校验并读取归档清单（入参为 list_archives 的升序结果）。
+
+    返回按"新->旧"排列的 manifest dict 列表。任何归档损坏都立即报错终止：
+    宁可发布失败，也不能静默丢掉历史公告；同名 release-info-* 与不匹配
+    ARCHIVE_RE 的文件不属于清单归档，不参与校验。
+    """
+    manifests = []
+    for _, _, _, _, p in reversed(archives):
+        try:
+            data = p.read_bytes()
+        except OSError as e:
+            raise PublishError("归档清单 %s 读取失败: %s（请修复后重试）" % (p.name, e))
+        try:
+            manifests.append(_parse_manifest_bytes(data, "归档清单 %s" % p.name))
+        except PublishError as e:
+            raise PublishError(
+                "%s；损坏归档会导致发布丢失更新历史，已终止"
+                "（请修复或移除该归档后重试）" % e)
+    return manifests
+
+
 def do_rollback(data_dir, to_version=None):
-    """把 stable 清单回退到归档中的旧版本；默认取最近一份早于当前版本的归档。"""
+    """把 stable 清单回退到归档中的旧版本；默认取最近一份早于当前版本的归档。
+
+    回退后的清单保留当前已知的全部版本公告（包括高于目标版本的），
+    artifacts 与顶层公告仍取归档目标版本；客户端自行忽略高于自身的公告，
+    网站则可以展示历次公告。
+    """
     data_dir = Path(data_dir)
     updates_root = data_dir / "public" / "updates"
     stable_path = updates_root / "v1" / "stable" / "manifest.json"
 
     current_version = None
+    stable_manifest = None
     if stable_path.is_file():
-        current_version = _manifest_version_of(stable_path.read_bytes(), "当前 stable 清单")
+        stable_manifest = _parse_manifest_bytes(stable_path.read_bytes(), "当前 stable 清单")
+        current_version = stable_manifest["version"]
 
     archives = list_archives(updates_root / "v1" / "archive")
     if not archives:
@@ -354,16 +492,26 @@ def do_rollback(data_dir, to_version=None):
         chosen = candidates[-1]
 
     # 回退目标清单本身仍需合法，且其指向的文件必须还在
-    archive_bytes = chosen[3].read_bytes()
-    manifest = json.loads(archive_bytes.decode("utf-8"))
-    version, artifacts = validate_manifest(manifest, source=chosen[3].name)
-    for art in artifacts:
+    target_manifest = _parse_manifest_bytes(chosen[4].read_bytes(),
+                                            "归档清单 %s" % chosen[4].name)
+    version = target_manifest["version"]
+    for art in target_manifest["artifacts"]:
         if not (updates_root / art["path"]).is_file():
             raise PublishError("回退目标文件缺失: %s（不要手工删除 files/ 下的历史版本）" % art["path"])
 
-    atomic_write_bytes(stable_path, archive_bytes)
+    # history 保留当前已知全部公告：目标归档 > 当前 stable > 其他归档（新->旧）。
+    # 目标版本自身的公告以归档目标为准，保证顶层公告与 history 条目一致。
+    sources = [target_manifest]
+    if stable_manifest is not None:
+        sources.append(stable_manifest)
+    sources.extend(load_archive_manifests(archives))
+    history = merge_history(sources)
+    final_bytes = render_manifest(target_manifest, history)
+
+    atomic_write_bytes(stable_path, final_bytes)
     before = current_version if current_version is not None else "（无）"
-    print("回退完成: %s -> %s（使用归档 %s）" % (before, version, chosen[3].name))
+    print("回退完成: %s -> %s（使用归档 %s，history %d 条）"
+          % (before, version, chosen[4].name, len(history)))
 
 
 def do_status(data_dir):
@@ -374,7 +522,7 @@ def do_status(data_dir):
     if stable_path.is_file():
         try:
             manifest = json.loads(stable_path.read_bytes().decode("utf-8"))
-            version, artifacts = validate_manifest(manifest)
+            version, artifacts, history = validate_manifest(manifest)
         except (PublishError, UnicodeDecodeError, ValueError) as e:
             print("当前 stable 清单存在但无法解析: %s" % e)
         else:
@@ -382,11 +530,15 @@ def do_status(data_dir):
             for art in artifacts:
                 print("  - %s-%s-%s  %d 字节  %s"
                       % (art["platform"], art["arch"], art["variant"], art["size"], art["path"]))
+            if history:
+                ordered = sorted(history, key=lambda h: version_tuple(h["version"]))
+                print("历史公告 (%d 条): %s"
+                      % (len(ordered), ", ".join(h["version"] for h in ordered)))
     else:
         print("当前 stable 版本: （尚未发布）")
     archives = list_archives(updates_root / "v1" / "archive")
     print("归档清单 (%d 份):" % len(archives))
-    for _, version, ts, p in reversed(archives):
+    for _, version, ts, _, p in reversed(archives):
         print("  %s  %s  %s" % (version, ts, p.name))
 
 

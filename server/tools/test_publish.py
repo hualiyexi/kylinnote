@@ -80,6 +80,32 @@ def edit_manifest(root, fn):
     write_manifest(root, manifest)
 
 
+def manifest_dict(version, notes, published_at="2026-01-01T00:00:00Z"):
+    """构造一份结构完整、可通过校验的最小清单 dict（供手工放置归档使用）。"""
+    return {
+        "schemaVersion": 1,
+        "channel": "stable",
+        "version": version,
+        "publishedAt": published_at,
+        "notes": notes,
+        "artifacts": [{
+            "platform": "linux",
+            "arch": "arm64",
+            "variant": "system-qt",
+            "packageVersion": version,
+            "path": "files/%s/linux-arm64-system-qt/kylinlist_%s_arm64.deb" % (version, version),
+            "size": 3,
+            "sha256": hashlib.sha256(b"pkg").hexdigest(),
+        }],
+    }
+
+
+def write_archive(data_dir, name, manifest):
+    """把清单 dict 写成数据目录归档文件（不校验文件是否存在，与真实归档同构）。"""
+    write_bytes(Path(data_dir) / "public" / "updates" / "v1" / "archive" / name,
+                json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
 def quiet(fn, *args, **kwargs):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -110,6 +136,31 @@ class PublishTestBase(unittest.TestCase):
     def stable_version(self):
         return json.loads(self.stable_bytes().decode("utf-8"))["version"]
 
+    def stable_manifest(self):
+        return json.loads(self.stable_bytes().decode("utf-8"))
+
+    def stable_history(self):
+        return self.stable_manifest()["history"]
+
+    def history_entry(self, version):
+        for item in self.stable_history():
+            if item["version"] == version:
+                return item
+        self.fail("history 中没有版本 %s: %r" % (version, self.stable_history()))
+
+    def publish_versions(self, *specs):
+        """依次发布若干版本。specs: (name, version, notes)，publishedAt 按序号生成。"""
+        published = []
+        for i, (name, version, notes) in enumerate(specs, 1):
+            release = self.new_release(
+                name, version=version,
+                contents={("linux", "arm64", "system-qt"): ("pkg-" + version).encode()})
+            edit_manifest(release, lambda m, i=i, notes=notes: m.update(
+                notes=notes, publishedAt="2026-02-%02dT00:00:00Z" % i))
+            self.publish(release)
+            published.append(release)
+        return published
+
     def archive_names(self):
         archive = self.data / "public" / "updates" / "v1" / "archive"
         if not archive.is_dir():
@@ -126,8 +177,15 @@ class PublishFlowTests(PublishTestBase):
         }, release_info=b"{not-even-json")  # RELEASE-INFO 内容不合法也不影响发布
         self.publish(self.release)
 
-        self.assertEqual(self.stable_bytes(),
-                         (self.release / "updates" / "v1" / "stable" / "manifest.json").read_bytes())
+        # stable 是 release 清单注入完整 history 后的产物，逐字段等价（而非字节原样）
+        stable = self.stable_manifest()
+        for key in ("schemaVersion", "channel", "version", "publishedAt", "notes", "artifacts"):
+            self.assertEqual(stable[key], manifest[key], key)
+        self.assertEqual(stable["history"], [{
+            "version": "1.0.0",
+            "publishedAt": manifest["publishedAt"],
+            "notes": manifest["notes"],
+        }])
         for art in manifest["artifacts"]:
             installed = self.data / "public" / "updates" / art["path"]
             self.assertTrue(installed.is_file(), art["path"])
@@ -302,8 +360,15 @@ class RollbackTests(PublishTestBase):
     def test_rollback_to_previous_version(self):
         quiet(publish.do_rollback, self.data)
         self.assertEqual(self.stable_version(), "1.1.0")
-        self.assertEqual(self.stable_bytes(),
-                         (self.r11 / "updates" / "v1" / "stable" / "manifest.json").read_bytes())
+        archived = json.loads(
+            (self.r11 / "updates" / "v1" / "stable" / "manifest.json").read_bytes().decode("utf-8"))
+        stable = self.stable_manifest()
+        # artifacts 与顶层公告取归档目标；history 保留全部已知版本（含更高的 1.2.0）
+        self.assertEqual(stable["artifacts"], archived["artifacts"])
+        self.assertEqual(stable["publishedAt"], archived["publishedAt"])
+        self.assertEqual(stable["notes"], archived["notes"])
+        self.assertEqual([h["version"] for h in stable["history"]],
+                         ["1.0.0", "1.1.0", "1.2.0"])
 
     def test_rollback_to_explicit_version(self):
         quiet(publish.do_rollback, self.data, "1.0.0")
@@ -341,6 +406,7 @@ class StatusTests(PublishTestBase):
             publish.do_status(self.data)
         out = buf.getvalue()
         self.assertIn("1.1.0", out)
+        self.assertIn("历史公告 (2 条): 1.0.0, 1.1.0", out)
         self.assertIn("manifest-1.0.0-", out.replace("\n", ""))
 
     def test_status_empty_data(self):
@@ -348,6 +414,258 @@ class StatusTests(PublishTestBase):
         with contextlib.redirect_stdout(buf):
             publish.do_status(self.data)
         self.assertIn("尚未发布", buf.getvalue())
+
+
+class HistoryValidationTests(PublishTestBase):
+    """validate_manifest 对可选 history 的结构校验。"""
+
+    def test_history_optional(self):
+        make_release(self.release, "1.0.0")
+        quiet(publish.do_validate, self.release)  # 新输入不带 history 依然合法
+
+    def test_valid_history_accepted(self):
+        make_release(self.release, "1.1.0")
+        edit_manifest(self.release, lambda m: m.update(history=[
+            {"version": "1.0.0", "publishedAt": "2026-01-01T00:00:00Z", "notes": ""},
+            {"version": "1.1.0", "publishedAt": "2026-02-01T00:00:00Z", "notes": "x"},
+        ]))
+        quiet(publish.do_validate, self.release)
+
+    def check_history_rejected(self, history):
+        make_release(self.release, "1.1.0")
+        edit_manifest(self.release, lambda m: m.update(history=history))
+        with self.assertRaises(publish.PublishError):
+            quiet(publish.do_validate, self.release)
+
+    def test_history_not_array(self):
+        self.check_history_rejected({"version": "1.0.0"})
+
+    def test_item_not_object(self):
+        self.check_history_rejected(["1.0.0"])
+
+    def test_item_bad_version(self):
+        self.check_history_rejected([
+            {"version": "1.2", "publishedAt": "t", "notes": ""}])
+
+    def test_item_missing_published_at(self):
+        self.check_history_rejected([
+            {"version": "1.0.0", "publishedAt": "", "notes": ""}])
+
+    def test_item_notes_not_string(self):
+        self.check_history_rejected([
+            {"version": "1.0.0", "publishedAt": "t", "notes": 5}])
+
+    def test_duplicate_versions(self):
+        self.check_history_rejected([
+            {"version": "1.0.0", "publishedAt": "t1", "notes": ""},
+            {"version": "1.0.0", "publishedAt": "t2", "notes": ""}])
+
+    def test_top_level_published_at_required(self):
+        make_release(self.release, "1.0.0")
+        edit_manifest(self.release, lambda m: m.pop("publishedAt"))
+        with self.assertRaises(publish.PublishError):
+            quiet(publish.do_validate, self.release)
+
+    def test_top_level_notes_must_be_string(self):
+        make_release(self.release, "1.0.0")
+        edit_manifest(self.release, lambda m: m.update(notes=None))
+        with self.assertRaises(publish.PublishError):
+            quiet(publish.do_validate, self.release)
+
+
+class HistoryPublishTests(PublishTestBase):
+    """publish 的 history 汇总、数值升序与幂等。"""
+
+    def test_first_publish_history_contains_only_self(self):
+        manifest = make_release(self.release, "1.0.0")
+        self.publish(self.release)
+        self.assertEqual(self.stable_history(), [{
+            "version": "1.0.0",
+            "publishedAt": manifest["publishedAt"],
+            "notes": manifest["notes"],
+        }])
+
+    def test_history_accumulates_in_numeric_order(self):
+        specs = (("r19", "1.9.0", "notes-1.9.0"),
+                 ("r110", "1.10.0", "notes-1.10.0"),
+                 ("r20", "2.0.0", "notes-2.0.0"))
+        self.publish_versions(*specs)
+        # 数值升序：1.9.0 < 1.10.0（字符串序会排错）
+        self.assertEqual([h["version"] for h in self.stable_history()],
+                         ["1.9.0", "1.10.0", "2.0.0"])
+        for item, (_, _, notes) in zip(self.stable_history(), specs):
+            self.assertEqual(item["notes"], notes)
+            self.assertEqual(sorted(item), ["notes", "publishedAt", "version"])
+
+    def test_republish_same_release_idempotent(self):
+        self.publish_versions(("r10", "1.0.0", "n10"), ("r11", "1.1.0", "n11"))
+        first = self.stable_bytes()
+        archives_before = self.archive_names()
+        self.publish(self.tmp / "r11")  # 同一 release 目录重复发布
+        self.assertEqual(self.stable_bytes(), first)
+        # 幂等：不改写 stable，也不把当前 stable 归档
+        self.assertEqual(self.archive_names(), archives_before)
+
+    def test_conflict_new_release_overrides_stable_announcement(self):
+        # 同版本重发（文件同哈希）：新 release 的公告覆盖当前 stable 的旧公告
+        make_release(self.release, "1.0.0")
+        edit_manifest(self.release, lambda m: m.update(notes="first-notes"))
+        self.publish(self.release)
+        again = self.new_release("again", version="1.0.0")  # 默认内容一致 → 同哈希
+        edit_manifest(again, lambda m: m.update(notes="second-notes"))
+        self.publish(again)
+        self.assertEqual(self.stable_manifest()["notes"], "second-notes")
+        self.assertEqual(self.history_entry("1.0.0")["notes"], "second-notes")
+
+    def test_conflict_release_history_overrides_stable_history(self):
+        make_release(self.release, "1.0.0")
+        edit_manifest(self.release, lambda m: m.update(notes="stable-notes"))
+        self.publish(self.release)
+        r11 = self.new_release("r11", version="1.1.0",
+                               contents={("linux", "arm64", "system-qt"): b"pkg-1.1.0"})
+        edit_manifest(r11, lambda m: m.update(history=[
+            {"version": "1.0.0", "publishedAt": "2026-06-01T00:00:00Z", "notes": "from-release"},
+        ]))
+        self.publish(r11)
+        self.assertEqual(self.history_entry("1.0.0")["notes"], "from-release")
+
+
+class ArchiveMergeConflictTests(PublishTestBase):
+    """归档来源的同版本公告冲突：取最近归档，且与文件遍历顺序无关。"""
+
+    def new_1_2_0(self):
+        return self.new_release("r12", version="1.2.0",
+                                contents={("linux", "arm64", "system-qt"): b"pkg-1.2.0"})
+
+    def test_latest_timestamp_archive_wins(self):
+        self.publish_versions(("r11", "1.1.0", "notes-1.1.0"))
+        write_archive(self.data, "manifest-1.0.0-20260101T000000Z.json",
+                      manifest_dict("1.0.0", notes="old-1.0.0"))
+        write_archive(self.data, "manifest-1.0.0-20260201T000000Z.json",
+                      manifest_dict("1.0.0", notes="new-1.0.0"))
+        self.publish(self.new_1_2_0())
+        self.assertEqual(self.history_entry("1.0.0")["notes"], "new-1.0.0")
+
+    def test_same_timestamp_higher_numeric_suffix_wins(self):
+        # 同秒序号按数值比较：-10 晚于 -2（字典序会得到相反结论）
+        self.publish_versions(("r11", "1.1.0", "notes-1.1.0"))
+        write_archive(self.data, "manifest-1.0.0-20260101T000000Z-2.json",
+                      manifest_dict("1.0.0", notes="suffix-two"))
+        write_archive(self.data, "manifest-1.0.0-20260101T000000Z-10.json",
+                      manifest_dict("1.0.0", notes="suffix-ten"))
+        self.publish(self.new_1_2_0())
+        self.assertEqual(self.history_entry("1.0.0")["notes"], "suffix-ten")
+
+    def test_stable_announcement_beats_archives(self):
+        # 当前 stable 已知的公告优先于任何归档（归档时间戳更晚也一样）
+        self.publish_versions(("r10", "1.0.0", "notes-stable"),
+                              ("r11", "1.1.0", "notes-1.1.0"))
+        write_archive(self.data, "manifest-1.0.0-20990101T000000Z.json",
+                      manifest_dict("1.0.0", notes="notes-from-archive"))
+        self.publish(self.new_1_2_0())
+        self.assertEqual(self.history_entry("1.0.0")["notes"], "notes-stable")
+
+
+class CorruptArchiveTests(PublishTestBase):
+    """损坏的 stable/归档清单必须让发布明确失败，不允许静默丢历史。"""
+
+    def setUp(self):
+        super().setUp()
+        make_release(self.release, "1.1.0")
+        self.publish(self.release)
+        self.stable_before = self.stable_bytes()
+        self.next = self.new_release("next", version="1.2.0",
+                                     contents={("linux", "arm64", "system-qt"): b"pkg-1.2.0"})
+
+    def archive_dir(self):
+        return self.data / "public" / "updates" / "v1" / "archive"
+
+    def assert_publish_blocked_before_mutation(self):
+        with self.assertRaises(publish.PublishError) as ctx:
+            self.publish(self.next)
+        self.assertEqual(self.stable_bytes(), self.stable_before)
+        # 先整体校验后安装：1.2.0 的任何文件都不应落盘
+        self.assertFalse((self.data / "public" / "updates" / "files" / "1.2.0").exists())
+        return str(ctx.exception)
+
+    def test_corrupt_archive_json_blocks_publish(self):
+        write_bytes(self.archive_dir() / "manifest-0.9.0-20260101T000000Z.json", b"{not-json")
+        msg = self.assert_publish_blocked_before_mutation()
+        self.assertIn("manifest-0.9.0-20260101T000000Z.json", msg)
+
+    def test_corrupt_archive_structure_blocks_publish(self):
+        bad = manifest_dict("0.9.0", notes="bad")
+        bad["schemaVersion"] = 2
+        write_archive(self.data, "manifest-0.9.0-20260101T000000Z.json", bad)
+        self.assert_publish_blocked_before_mutation()
+
+    def test_corrupt_stable_blocks_publish(self):
+        self.stable_path().write_bytes(b"{broken")
+        with self.assertRaises(publish.PublishError):
+            self.publish(self.next)
+        # 不动损坏现场，交由人工处理
+        self.assertEqual(self.stable_bytes(), b"{broken")
+
+    def test_corrupt_non_manifest_files_ignored(self):
+        # release-info-* 与不匹配归档命名的文件不属于清单归档，不阻塞发布
+        write_bytes(self.archive_dir() / "release-info-0.9.0-20260101T000000Z.json", b"junk")
+        write_bytes(self.archive_dir() / "README.txt", b"hello")
+        self.publish(self.next)
+        self.assertEqual(self.stable_version(), "1.2.0")
+
+
+class RollbackHistoryTests(PublishTestBase):
+    """rollback 保留全部已知历史（含高于目标版本），目标公告以归档为准。"""
+
+    def setUp(self):
+        super().setUp()
+        self.publish_versions(
+            ("r10", "1.0.0", "notes-1.0.0"),
+            ("r11", "1.1.0", "notes-1.1.0"),
+            ("r12", "1.2.0", "notes-1.2.0"))
+
+    def test_rollback_keeps_all_history_including_newer(self):
+        quiet(publish.do_rollback, self.data)  # 默认回退到 1.1.0
+        stable = self.stable_manifest()
+        self.assertEqual(stable["version"], "1.1.0")
+        self.assertEqual(stable["notes"], "notes-1.1.0")
+        self.assertTrue(all(a["path"].startswith("files/1.1.0/")
+                            for a in stable["artifacts"]))
+        self.assertEqual([h["version"] for h in stable["history"]],
+                         ["1.0.0", "1.1.0", "1.2.0"])
+
+    def test_rollback_deterministic(self):
+        quiet(publish.do_rollback, self.data, "1.1.0")
+        first = self.stable_bytes()
+        quiet(publish.do_rollback, self.data, "1.1.0")
+        self.assertEqual(self.stable_bytes(), first)
+
+    def test_rollback_target_announcement_wins(self):
+        # 1.1.0 曾以 notes-1.1.0 归档；同版本重发换公告后回退到 1.1.0，
+        # 顶层公告与 history 条目都应以归档目标为准，而不是重发版本
+        rerelease = self.new_release("r11b", version="1.1.0",
+                                     contents={("linux", "arm64", "system-qt"): b"pkg-1.1.0"})
+        edit_manifest(rerelease, lambda m: m.update(notes="notes-1.1.0-revised"))
+        self.publish(rerelease)  # 同哈希文件跳过，stable 换成重发的 1.1.0 公告
+        self.assertEqual(self.stable_manifest()["notes"], "notes-1.1.0-revised")
+
+        quiet(publish.do_rollback, self.data, "1.1.0")
+        stable = self.stable_manifest()
+        self.assertEqual(stable["notes"], "notes-1.1.0")
+        self.assertEqual(self.history_entry("1.1.0")["notes"], "notes-1.1.0")
+        # 高于回退目标的版本仍保留在 history 中
+        self.assertIn("1.2.0", [h["version"] for h in stable["history"]])
+
+    def test_publish_after_rollback_keeps_history(self):
+        quiet(publish.do_rollback, self.data)  # → 1.1.0
+        r13 = self.new_release("r13", version="1.3.0",
+                               contents={("linux", "arm64", "system-qt"): b"pkg-1.3.0"})
+        edit_manifest(r13, lambda m: m.update(notes="notes-1.3.0"))
+        self.publish(r13)
+        stable = self.stable_manifest()
+        self.assertEqual(stable["version"], "1.3.0")
+        self.assertEqual([h["version"] for h in stable["history"]],
+                         ["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
 
 
 if __name__ == "__main__":
