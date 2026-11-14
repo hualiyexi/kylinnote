@@ -189,9 +189,11 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.release-version.outputs.releaseVersion }}
         run: |
+          notes_file="docs/release-notes/$RELEASE_VERSION.txt"
+          test -s "$notes_file" || { echo "Missing non-empty release notes: $notes_file" >&2; exit 1; }
           python3 -I packaging/generate-update-manifest.py \
             --dist dist --version "$RELEASE_VERSION" \
-            --git-sha "$GITHUB_SHA" --output release-stage
+            --git-sha "$GITHUB_SHA" --notes-file "$notes_file" --output release-stage
           (cd release-stage && zip -qr "$PWD/../kylinlist-update-bundle.zip" .)
 
       - name: Upload update bundle

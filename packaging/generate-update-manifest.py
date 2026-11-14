@@ -21,18 +21,29 @@ Output layout (inside --output):
 
 manifest.json "path" values are relative to <server-base>/updates/. The Qt
 client downloads <server-base>/updates/<path> and verifies sha256.
+
+When running inside GitHub Actions (GITHUB_ACTIONS == "true") the generator
+additionally records a "ci" provenance object in RELEASE-INFO.json, built
+from the standard GITHUB_* environment variables: repository, workflow,
+workflowPath, runId (string), runUrl, ref, eventName, headSha. Missing
+required variables, or a headSha that differs from --git-sha, abort the
+run. Outside CI (local builds) nothing changes and "ci" is absent. The ci
+fields are self-declared by the CI job that builds the bundle; they record
+where a release came from and are not a signature of any kind.
 """
 
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import unquote
 
 SCHEMA_VERSION = 1
 CHANNEL = "stable"
@@ -57,6 +68,33 @@ INSTALL_INFO_LOOKUP_PATHS = (
 
 PROJECT_VERSION_RE = re.compile(r"(?m)^\s*VERSION\s+(\S+)\s*$")
 GIT_SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+# CI provenance ("ci" object in RELEASE-INFO.json), built from the default
+# GitHub Actions environment when GITHUB_ACTIONS is exactly "true".
+CI_ENV_FLAG = "GITHUB_ACTIONS"
+CI_ENV_REQUIRED = (
+    "GITHUB_REPOSITORY",
+    "GITHUB_WORKFLOW",
+    "GITHUB_WORKFLOW_REF",
+    "GITHUB_RUN_ID",
+    "GITHUB_REF",
+    "GITHUB_EVENT_NAME",
+    "GITHUB_SHA",
+)
+CI_INFO_FIELDS = (
+    "repository",
+    "workflow",
+    "workflowPath",
+    "runId",
+    "runUrl",
+    "ref",
+    "eventName",
+    "headSha",
+)
+CI_WORKFLOW_BASE = ".github/workflows/"
+CI_WORKFLOW_SUFFIXES = (".yml", ".yaml")
+CI_REPOSITORY_RE = re.compile(r"[^/\s]+/[^/\s]+")
+CI_RUN_ID_RE = re.compile(r"[0-9]+")
 
 
 class UpdateError(Exception):
@@ -122,6 +160,99 @@ def file_sha256_and_size(path):
 
 def utc_timestamp(moment=None):
     return (moment or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def is_ci_environment(environ):
+    """True only inside GitHub Actions (GITHUB_ACTIONS is exactly 'true')."""
+    return environ.get(CI_ENV_FLAG) == "true"
+
+
+def parse_workflow_path(workflow_ref, repository):
+    """Extract the workflow file path from GITHUB_WORKFLOW_REF.
+
+    GITHUB_WORKFLOW_REF is '<owner>/<repo>/<percent-encoded path>@<ref>',
+    for example 'hualiyexi/kylinnote/.github/workflows/build.yml@refs/tags/v1.2.0'.
+    """
+    if "@" not in workflow_ref:
+        raise UpdateError(
+            "GITHUB_WORKFLOW_REF has no '@<ref>' suffix: {0!r}".format(workflow_ref))
+    location = workflow_ref.rpartition("@")[0]
+    prefix = repository + "/"
+    if not location.startswith(prefix):
+        raise UpdateError(
+            "GITHUB_WORKFLOW_REF {0!r} does not start with the repository "
+            "{1!r}".format(workflow_ref, repository))
+    path = unquote(location[len(prefix):])
+    if not path.startswith(CI_WORKFLOW_BASE):
+        raise UpdateError(
+            "workflow path {0!r} from GITHUB_WORKFLOW_REF is not under "
+            "{1}".format(path, CI_WORKFLOW_BASE))
+    if not path.endswith(CI_WORKFLOW_SUFFIXES):
+        raise UpdateError(
+            "workflow path {0!r} from GITHUB_WORKFLOW_REF is not a "
+            ".yml/.yaml file".format(path))
+    if "\\" in path or ".." in PurePosixPath(path).parts:
+        raise UpdateError(
+            "workflow path {0!r} from GITHUB_WORKFLOW_REF contains unsafe "
+            "segments".format(path))
+    return path
+
+
+def ci_run_url(repository, run_id):
+    return "https://github.com/{0}/actions/runs/{1}".format(repository, run_id)
+
+
+def build_ci_info(environ):
+    """Build the 'ci' provenance object from GitHub Actions variables.
+
+    Raises UpdateError when a required variable is missing or malformed;
+    this must abort CI manifest generation instead of producing a release
+    without a traceable origin.
+    """
+    missing = [name for name in CI_ENV_REQUIRED if not environ.get(name, "").strip()]
+    if missing:
+        raise UpdateError(
+            "running inside GitHub Actions, but required environment variables "
+            "are missing: {0}".format(", ".join(missing)))
+    repository = environ["GITHUB_REPOSITORY"].strip()
+    if not CI_REPOSITORY_RE.fullmatch(repository):
+        raise UpdateError(
+            "GITHUB_REPOSITORY is not '<owner>/<repo>': {0!r}".format(repository))
+    run_id = environ["GITHUB_RUN_ID"].strip()
+    if not CI_RUN_ID_RE.fullmatch(run_id):
+        raise UpdateError(
+            "GITHUB_RUN_ID is not a plain decimal run id: {0!r}".format(
+                environ["GITHUB_RUN_ID"]))
+    head_sha = environ["GITHUB_SHA"].strip()
+    if not GIT_SHA_RE.fullmatch(head_sha):
+        raise UpdateError(
+            "GITHUB_SHA is not a 40/64 character lowercase hex SHA: {0!r}".format(
+                environ["GITHUB_SHA"]))
+    workflow_path = parse_workflow_path(environ["GITHUB_WORKFLOW_REF"].strip(), repository)
+    return {
+        "repository": repository,
+        "workflow": environ["GITHUB_WORKFLOW"].strip(),
+        "workflowPath": workflow_path,
+        "runId": run_id,
+        "runUrl": ci_run_url(repository, run_id),
+        "ref": environ["GITHUB_REF"].strip(),
+        "eventName": environ["GITHUB_EVENT_NAME"].strip(),
+        "headSha": head_sha,
+    }
+
+
+def ensure_git_sha_matches_ci(git_sha, ci_info):
+    """In CI, --git-sha is mandatory and must equal the run's GITHUB_SHA."""
+    if ci_info is None:
+        return
+    if not git_sha:
+        raise UpdateError(
+            "--git-sha is required inside GitHub Actions so RELEASE-INFO.json "
+            "can be bound to the workflow run")
+    if git_sha != ci_info["headSha"]:
+        raise UpdateError(
+            "--git-sha {0} does not equal the GitHub Actions run SHA "
+            "GITHUB_SHA={1}".format(git_sha, ci_info["headSha"]))
 
 
 def build_manifest(version, notes, published_at, artifacts):
@@ -335,8 +466,13 @@ def prepare_output(raw):
     return output
 
 
-def write_release(dist_dir, output, version, git_sha, notes, artifacts, partial):
-    """Copy artifacts into the release layout and write manifest + RELEASE-INFO."""
+def write_release(dist_dir, output, version, git_sha, notes, artifacts, partial,
+                  ci_info=None):
+    """Copy artifacts into the release layout and write manifest + RELEASE-INFO.
+
+    ci_info is the GitHub Actions provenance object from build_ci_info(), or
+    None for local non-CI runs (no "ci" key is written then).
+    """
     published = utc_timestamp()
     manifest_artifacts = []
     info_artifacts = []
@@ -371,8 +507,10 @@ def write_release(dist_dir, output, version, git_sha, notes, artifacts, partial)
         "gitSha": git_sha,
         "generatedAt": published,
         "partial": partial,
-        "artifacts": info_artifacts,
     }
+    if ci_info is not None:
+        release_info["ci"] = {key: ci_info[key] for key in CI_INFO_FIELDS}
+    release_info["artifacts"] = info_artifacts
     (output / "RELEASE-INFO.json").write_text(
         json.dumps(release_info, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return manifest, manifest_path
@@ -404,6 +542,10 @@ def run(args):
     if git_sha and not GIT_SHA_RE.fullmatch(git_sha):
         raise UpdateError("--git-sha must be a 40/64 character lowercase hex SHA: {0!r}".format(
             args.git_sha))
+    ci_info = None
+    if is_ci_environment(os.environ):
+        ci_info = build_ci_info(os.environ)
+        ensure_git_sha_matches_ci(git_sha, ci_info)
     project_root = Path(__file__).resolve().parents[1]
     try:
         cmake_text = (project_root / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -427,10 +569,13 @@ def run(args):
         artifacts = collect_artifacts(dist_dir, args.version, Path(work), include_windows)
     output = prepare_output(args.output)
     manifest, manifest_path = write_release(
-        dist_dir, output, args.version, git_sha, notes, artifacts, partial)
+        dist_dir, output, args.version, git_sha, notes, artifacts, partial, ci_info)
     print("==> {0}".format(manifest_path))
     print("==> {0} ({1} artifacts, partial={2})".format(
         output / "RELEASE-INFO.json", len(artifacts), partial))
+    if ci_info is not None:
+        print("    ci: {0} run {1} ({2})".format(
+            ci_info["repository"], ci_info["runId"], ci_info["runUrl"]))
     for artifact in manifest["artifacts"]:
         print("    {0}/{1}/{2}: {3} ({4} bytes)".format(
             artifact["platform"], artifact["arch"], artifact["variant"],

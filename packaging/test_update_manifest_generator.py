@@ -195,6 +195,124 @@ class TimestampAndManifestTest(unittest.TestCase):
                 generator.load_notes(str(notes), "1.2.0")
 
 
+class CiEnvironmentTest(unittest.TestCase):
+    @staticmethod
+    def ci_env(**overrides):
+        env = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY": "hualiyexi/kylinnote",
+            "GITHUB_WORKFLOW": "Build and package",
+            "GITHUB_WORKFLOW_REF":
+                "hualiyexi/kylinnote/.github/workflows/build.yml@refs/tags/v1.2.0",
+            "GITHUB_RUN_ID": "43470023611",
+            "GITHUB_REF": "refs/tags/v1.2.0",
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+        }
+        env.update(overrides)
+        return env
+
+    def test_is_ci_environment_requires_exact_true(self):
+        self.assertTrue(generator.is_ci_environment({"GITHUB_ACTIONS": "true"}))
+        for value in ("True", "false", "1", "", None):
+            env = {} if value is None else {"GITHUB_ACTIONS": value}
+            self.assertFalse(generator.is_ci_environment(env), repr(value))
+        self.assertFalse(generator.is_ci_environment({}))
+
+    def test_build_ci_info_from_default_environment(self):
+        info = generator.build_ci_info(self.ci_env())
+        self.assertEqual(list(info), list(generator.CI_INFO_FIELDS))
+        self.assertEqual(info, {
+            "repository": "hualiyexi/kylinnote",
+            "workflow": "Build and package",
+            "workflowPath": ".github/workflows/build.yml",
+            "runId": "43470023611",
+            "runUrl": "https://github.com/hualiyexi/kylinnote/actions/runs/43470023611",
+            "ref": "refs/tags/v1.2.0",
+            "eventName": "push",
+            "headSha": "0123456789abcdef0123456789abcdef01234567",
+        })
+        # runId must stay a string, not a number.
+        self.assertIsInstance(info["runId"], str)
+
+    def test_build_ci_info_decodes_percent_encoded_workflow_path(self):
+        env = self.ci_env(
+            GITHUB_WORKFLOW_REF="hualiyexi/kylinnote/.github/workflows/"
+                                "build%20and%20package.yml@refs/heads/main",
+            GITHUB_WORKFLOW="build and package")
+        self.assertEqual(
+            generator.build_ci_info(env)["workflowPath"],
+            ".github/workflows/build and package.yml")
+
+    def test_build_ci_info_rejects_each_missing_variable(self):
+        for name in generator.CI_ENV_REQUIRED:
+            env = self.ci_env()
+            del env[name]
+            with self.assertRaises(generator.UpdateError) as caught:
+                generator.build_ci_info(env)
+            self.assertIn(name, str(caught.exception))
+
+    def test_build_ci_info_rejects_blank_variable(self):
+        env = self.ci_env(GITHUB_REPOSITORY="   ")
+        with self.assertRaises(generator.UpdateError):
+            generator.build_ci_info(env)
+
+    def test_build_ci_info_rejects_bad_repository_shape(self):
+        for value in ("hualiyexi", "hualiyexi/kylinnote/fork", "hualiyexi /kylinnote"):
+            with self.assertRaises(generator.UpdateError):
+                generator.build_ci_info(self.ci_env(GITHUB_REPOSITORY=value))
+
+    def test_build_ci_info_rejects_non_numeric_run_id(self):
+        for value in ("run-42", "43 470", "٤٣٤", "0x10", ""):
+            with self.assertRaises(generator.UpdateError):
+                generator.build_ci_info(self.ci_env(GITHUB_RUN_ID=value))
+
+    def test_build_ci_info_rejects_invalid_head_sha(self):
+        for value in ("0123456789abcdef", "HEAD", "0123456789ABCDEF0123456789ABCDEF01234567"):
+            with self.assertRaises(generator.UpdateError):
+                generator.build_ci_info(self.ci_env(GITHUB_SHA=value))
+
+    def test_build_ci_info_accepts_sha256_head_sha(self):
+        sha = "0123456789abcdef" * 4
+        info = generator.build_ci_info(self.ci_env(GITHUB_SHA=sha))
+        self.assertEqual(info["headSha"], sha)
+
+    def test_parse_workflow_path_rejects_foreign_repo(self):
+        with self.assertRaises(generator.UpdateError):
+            generator.parse_workflow_path(
+                "someone/else/.github/workflows/build.yml@refs/heads/main",
+                "hualiyexi/kylinnote")
+
+    def test_parse_workflow_path_rejects_unsafe_paths(self):
+        bad_refs = (
+            "hualiyexi/kylinnote/evil.yml@refs/heads/main",
+            "hualiyexi/kylinnote/.github/workflows/../../evil.yml@refs/heads/main",
+            "hualiyexi/kylinnote/.github/workflows/build.json@refs/heads/main",
+            "hualiyexi/kylinnote/.github/workflows/build.yml",
+        )
+        for workflow_ref in bad_refs:
+            with self.assertRaises(generator.UpdateError, msg=workflow_ref):
+                generator.parse_workflow_path(workflow_ref, "hualiyexi/kylinnote")
+
+    def test_ci_run_url_format(self):
+        self.assertEqual(
+            generator.ci_run_url("hualiyexi/kylinnote", "43470023611"),
+            "https://github.com/hualiyexi/kylinnote/actions/runs/43470023611")
+
+    def test_ensure_git_sha_matches_ci_rules(self):
+        ci_info = generator.build_ci_info(self.ci_env())
+        head = ci_info["headSha"]
+        # Non-CI runs are unaffected, with or without --git-sha.
+        generator.ensure_git_sha_matches_ci("", None)
+        generator.ensure_git_sha_matches_ci("f" * 40, None)
+        # CI runs must pass a --git-sha equal to GITHUB_SHA.
+        generator.ensure_git_sha_matches_ci(head, ci_info)
+        with self.assertRaises(generator.UpdateError):
+            generator.ensure_git_sha_matches_ci("", ci_info)
+        with self.assertRaises(generator.UpdateError):
+            generator.ensure_git_sha_matches_ci("f" * 40, ci_info)
+
+
 class DistFileCheckTest(unittest.TestCase):
     def test_require_dist_files_reports_all_missing(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -270,6 +388,45 @@ class WriteReleaseTest(unittest.TestCase):
                 "sha256": sha256,
                 "size": len(payload),
             }])
+
+    def test_release_info_includes_ci_object_only_when_given(self):
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            dist = base / "dist"
+            dist.mkdir()
+            (dist / "a.deb").write_bytes(b"deb")
+            entry = {
+                "platform": "linux", "arch": "arm64", "variant": "system-qt",
+                "packageVersion": "1.2.0", "filename": "a.deb",
+                "sha256": "0" * 64, "size": 3,
+            }
+            head = "0123456789abcdef0123456789abcdef01234567"
+            ci_info = {
+                "repository": "hualiyexi/kylinnote",
+                "workflow": "Build and package",
+                "workflowPath": ".github/workflows/build.yml",
+                "runId": "43470023611",
+                "runUrl": "https://github.com/hualiyexi/kylinnote/actions/runs/43470023611",
+                "ref": "refs/tags/v1.2.0",
+                "eventName": "push",
+                "headSha": head,
+            }
+            with_ci = base / "with-ci"
+            generator.write_release(dist, with_ci, "1.2.0", head, "n", [entry],
+                                    False, ci_info)
+            info = json.loads((with_ci / "RELEASE-INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["ci"], ci_info)
+            self.assertEqual(
+                list(info),
+                ["version", "gitSha", "generatedAt", "partial", "ci", "artifacts"])
+            # Local non-CI runs keep the previous shape: no "ci" key at all.
+            without_ci = base / "without-ci"
+            generator.write_release(dist, without_ci, "1.2.0", head, "n", [entry],
+                                    False, None)
+            info = json.loads((without_ci / "RELEASE-INFO.json").read_text(encoding="utf-8"))
+            self.assertNotIn("ci", info)
+            self.assertEqual(
+                list(info), ["version", "gitSha", "generatedAt", "partial", "artifacts"])
 
 
 class InstallInfoValidationTest(unittest.TestCase):
