@@ -5,6 +5,7 @@
 #include <QPainter>
 
 #include "design/ThemeManager.h"
+#include "AppIcons.h"
 
 namespace kl {
 
@@ -53,14 +54,13 @@ void NoteChecklist::paintEvent(QPaintEvent*) {
             painter.setBrush(hover);
             painter.drawRoundedRect(QRectF(0, y, width(), 26), 4, 4);
         }
-        const QRect box(3, y + 6, 13, 13);
-        painter.setPen(QPen(QColor(m_ink.red(), m_ink.green(), m_ink.blue(), 130), 1.2));
-        painter.setBrush(item.done ? m_ink : Qt::transparent);
-        painter.drawRoundedRect(box, 3, 3);
+        const QRectF box(3, y + 6, 13, 13);
         if (item.done) {
-            painter.setPen(QPen(palette().color(QPalette::Window), 1.5));
-            painter.drawLine(QPointF(6, y + 12), QPointF(8.5, y + 15));
-            painter.drawLine(QPointF(8.5, y + 15), QPointF(13.5, y + 8));
+            AppIcons::paint(&painter, QStringLiteral("md-item-checked"), box, m_ink);
+        } else {
+            QColor ink = m_ink;
+            ink.setAlpha(130);
+            AppIcons::paint(&painter, QStringLiteral("md-item-unchecked"), box, ink);
         }
         QColor text = m_ink;
         if (item.done)

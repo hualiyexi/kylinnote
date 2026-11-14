@@ -46,50 +46,12 @@ QString color(ds::ColorToken token)
 
 QIcon quickIcon(int index)
 {
-    // 带点日历复用集中图标；其余三个图形在 AppIcons 中无对应项，局部绘制以对齐截图。
-    if (index == 2) return AppIcons::icon(IconId::Today, ds::ColorToken::TextSecondary, 20);
-    QPixmap pixmap(40, 40);
-    pixmap.setDevicePixelRatio(2.0);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.scale(20.0 / 24.0, 20.0 / 24.0);
-    QPen pen(ThemeManager::instance().color(ds::ColorToken::TextSecondary), 1.5);
-    pen.setCapStyle(Qt::RoundCap);
-    pen.setJoinStyle(Qt::RoundJoin);
-    painter.setPen(pen);
-    painter.setBrush(Qt::NoBrush);
-    if (index == 0) {
-        painter.drawEllipse(QPointF(12, 12), 4, 4);
-        const QLineF rays[] = {
-            QLineF(12, 2, 12, 5), QLineF(12, 19, 12, 22),
-            QLineF(2, 12, 5, 12), QLineF(19, 12, 22, 12),
-            QLineF(4.9, 4.9, 6.9, 6.9), QLineF(17.1, 17.1, 19.1, 19.1),
-            QLineF(4.9, 19.1, 6.9, 17.1), QLineF(17.1, 6.9, 19.1, 4.9)
-        };
-        for (const auto& ray : rays) painter.drawLine(ray);
-    } else if (index == 1) {
-        QPainterPath arrow;
-        arrow.moveTo(12, 16);
-        arrow.lineTo(12, 4);
-        arrow.moveTo(8, 8);
-        arrow.lineTo(12, 4);
-        arrow.lineTo(16, 8);
-        arrow.moveTo(3, 14);
-        arrow.lineTo(3, 19);
-        arrow.lineTo(21, 19);
-        arrow.lineTo(21, 14);
-        painter.drawPath(arrow);
-    } else {
-        QPainterPath moon;
-        moon.moveTo(15.5, 3.5);
-        moon.cubicTo(9.5, 4.2, 5.5, 9, 5.5, 14);
-        moon.cubicTo(5.5, 18, 9, 20.5, 13, 20.5);
-        moon.cubicTo(16, 20.5, 19, 18.5, 20.5, 15.5);
-        moon.cubicTo(14, 17, 9, 10, 15.5, 3.5);
-        painter.drawPath(moon);
-    }
-    return QIcon(pixmap);
+    // 顺序与滴答日期面板一致：今天 / 明天 / 下周 / 下个月。
+    static const char* const kIds[] = {"quick-today", "tomorrow-list",
+                                       "quick-nextweek", "quick-nextmonth"};
+    if (index < 0 || index >= 4) return QIcon();
+    return AppIcons::icon(QString::fromLatin1(kIds[index]),
+                          ds::ColorToken::TextSecondary, 20);
 }
 
 int configuredFirstDay()

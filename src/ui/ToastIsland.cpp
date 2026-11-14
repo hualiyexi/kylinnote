@@ -14,20 +14,6 @@ namespace {
 // 截图指定的固定配色，不属于应用主题令牌，也不随浅色/深色切换。
 const QColor kBackground(QStringLiteral("#343434"));
 const QColor kText(QStringLiteral("#F5F5F5"));
-const QColor kAction(QStringLiteral("#D6B36A"));
-
-QPixmap undoPixmap() {
-    QPixmap pixmap(32, 32);
-    pixmap.setDevicePixelRatio(2.0);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    QPen pen(kAction, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    painter.setPen(pen);
-    painter.drawArc(QRectF(5, 5, 22, 22), 35 * 16, 265 * 16);
-    painter.drawPolyline(QPolygonF() << QPointF(5, 5) << QPointF(5, 12) << QPointF(12, 11));
-    return pixmap;
-}
 
 }  // namespace
 
@@ -51,7 +37,7 @@ ToastIsland::ToastIsland(QWidget* parent) : QFrame(parent) {
     m_action->setObjectName(QStringLiteral("ToastAction"));
     m_action->setFixedSize(30, 30);
     m_action->setIconSize(QSize(20, 20));
-    m_action->setIcon(QIcon(undoPixmap()));
+    m_action->setIcon(AppIcons::icon(QStringLiteral("undo"), 20));
     m_action->setAutoRaise(true);
     m_action->setCursor(Qt::PointingHandCursor);
     m_action->setToolTip(QStringLiteral("撤销"));

@@ -16,14 +16,6 @@ using AppStyle::Metric;
 QRectF checkBoxRect(const QRect& row) {
     return QRectF(row.left() + 16.0, row.center().y() - 8.0, 16.0, 16.0);
 }
-void drawCheckMark(QPainter* p, const QRectF& box, const QColor& color, qreal width) {
-    QPen pen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p->setPen(pen);
-    p->setBrush(Qt::NoBrush);
-    p->drawPolyline(QPolygonF() << QPointF(box.left() + box.width() * 0.24, box.center().y())
-                                << QPointF(box.left() + box.width() * 0.43, box.bottom() - box.height() * 0.26)
-                                << QPointF(box.right() - box.width() * 0.20, box.top() + box.height() * 0.24));
-}
 }  // namespace
 
 void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
@@ -72,7 +64,7 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         p->setPen(Qt::NoPen);
         p->setBrush(AppStyle::color(Color::Accent));
         p->drawEllipse(box);
-        drawCheckMark(p, box.adjusted(1.0, 1.0, -1.0, -1.0), AppStyle::color(Color::OnAccent), 1.7);
+        AppIcons::paint(p, QStringLiteral("selected"), box, AppStyle::color(Color::OnAccent));
     } else {
         p->setBrush(Qt::NoBrush);
         p->setPen(QPen(AppStyle::color(deleted ? Color::Separator : Color::Faint), 1.4));

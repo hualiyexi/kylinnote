@@ -1,7 +1,10 @@
 #pragma once
-// 集中式 SVG 图标工厂：单色 SVG 随主题着色，统一 accessibleName / toolTip / 高 DPI。
+// 集中式 SVG 图标工厂：图标几何来自内置图标集（src/ui/icons/IconData.gen.cpp），
+// 单色图标随主题着色，统一高 DPI 与可访问名称。
 //
-// 所有图标经 icon(IconId) 获取，按当前主题语义色渲染；深色主题下自动可见。
+// 两条取用路径：
+//   1) icon(IconId)       —— 语义枚举，界面代码用它，换图标只改映射表；
+//   2) icon("quick-today") —— 直接按图标名取用，949 个图标都可点名。
 #include <QIcon>
 #include <QPixmap>
 #include <QString>
@@ -36,6 +39,15 @@ QIcon icon(IconId id, int size = 16);
 QIcon icon(IconId id, ds::ColorToken colorToken, int size = 16);
 // 直接绘制到 painter（供 delegate 自绘使用）。
 void paint(QPainter* painter, IconId id, const QRectF& rect, const QColor& color);
+
+// 按图标名直取（如 "quick-today"）。名字不存在时返回空图标。
+QIcon icon(const QString& name, int size = 16);
+QIcon icon(const QString& name, ds::ColorToken colorToken, int size = 16);
+void paint(QPainter* painter, const QString& name, const QRectF& rect, const QColor& color);
+bool hasIcon(const QString& name);
+// 枚举对应的图标名；没有对应时返回空串。
+QString iconName(IconId id);
+
 // 图标的可访问中文名称。
 QString accessibleName(IconId id);
 }  // namespace AppIcons

@@ -58,6 +58,7 @@
 #include "domain/ViewSpec.h"
 #include "platform/SystemShadow.h"
 #include "ui/AppStyle.h"
+#include "ui/AppIcons.h"
 #include "ui/ActivityLogDialog.h"
 #include "ui/EntityHoverPreview.h"
 #include "ui/EntityPicker.h"
@@ -223,6 +224,58 @@ private slots:
         m_store.reset();
         Database::instance().close();
         m_dir.reset();
+    }
+    void iconSystemResolvesEverySemanticIcon() {
+        // 每个语义图标都必须能落到滴答图标集里，并且真的画出东西。
+        for (int i = static_cast<int>(IconId::None) + 1; i < static_cast<int>(IconId::Count); ++i) {
+            const auto id = static_cast<IconId>(i);
+            const QString name = AppIcons::iconName(id);
+            QVERIFY2(!name.isEmpty(), qPrintable(QStringLiteral("没有映射：%1").arg(i)));
+            QVERIFY2(AppIcons::hasIcon(name), qPrintable(name));
+            const QPixmap pixmap = AppIcons::icon(id, 16).pixmap(16, 16);
+            QVERIFY2(!pixmap.isNull(), qPrintable(name));
+            const QImage image = pixmap.toImage();
+            int ink = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (qAlpha(image.pixel(x, y)) > 40) ++ink;
+            QVERIFY2(ink > 8, qPrintable(name));
+        }
+        // 滴答自家品牌标识按约定不接入。
+        QVERIFY(!AppIcons::hasIcon(QStringLiteral("logo")));
+        QVERIFY(!AppIcons::hasIcon(QStringLiteral("connect-logo")));
+        // 字符串直通：不经过枚举也能点名取图标。
+        QVERIFY(AppIcons::hasIcon(QStringLiteral("quick-today")));
+        QVERIFY(AppIcons::icon(QStringLiteral("no-such-icon")).isNull());
+    }
+    void iconKeepsSourceAspectRatio() {
+        // 3dots 的 viewBox 是 12.542x2.552，不能按正方形拉伸。
+        const QImage image = AppIcons::icon(QStringLiteral("3dots"), 24).pixmap(24, 24).toImage();
+        QVERIFY(!image.isNull());
+        const auto rowHasInk = [&image](int y) {
+            for (int x = 0; x < image.width(); ++x)
+                if (qAlpha(image.pixel(x, y)) > 40) return true;
+            return false;
+        };
+        QVERIFY(!rowHasInk(0));
+        QVERIFY(!rowHasInk(image.height() - 1));
+        QVERIFY(rowHasInk(image.height() / 2));
+    }
+    void iconPaintHonorsRequestedColor() {
+        QImage image(32, 32, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        AppIcons::paint(&painter, IconId::Add, QRectF(0, 0, 32, 32), QColor(Qt::red));
+        painter.end();
+        // 细描边在 16px 下会被抗锯齿摊平，这里只看色相：明显偏红且不是灰阶。
+        bool red = false;
+        for (int y = 0; y < image.height() && !red; ++y)
+            for (int x = 0; x < image.width() && !red; ++x) {
+                const QRgb pixel = image.pixel(x, y);
+                red = qAlpha(pixel) > 100 && qRed(pixel) > qGreen(pixel) + 60 &&
+                      qRed(pixel) > qBlue(pixel) + 60;
+            }
+        QVERIFY(red);
     }
     void updateDialogShowsAccumulatedNotesAndPostpone() {
         updates::InstallIdentity identity;

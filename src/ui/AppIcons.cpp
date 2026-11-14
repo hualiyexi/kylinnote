@@ -1,160 +1,189 @@
 #include "AppIcons.h"
+
 #include <QByteArray>
+#include <QCache>
 #include <QPainter>
 #include <QSvgRenderer>
+#include <cstring>
 #include "design/ThemeManager.h"
+#include "ui/icons/IconData.gen.h"
 
 namespace kl {
 namespace AppIcons {
 namespace {
 
-// 单色线性 SVG 模板（24x24 视图框，stroke=currentColor 由着色替换）。
-// 采用简洁几何，风格对齐考据的线性图标语言。
-const char* svgSource(IconId id) {
+// 填充型图标画满 viewBox（描边型以前只占中间一段），统一内缩一档才视觉等重。
+constexpr qreal kGlyphInset = 0.06;
+
+// 目标矩形过小时不再内缩，避免图标被缩没。
+constexpr qreal kMinInsetPx = 0.5;
+
+// 语义枚举 -> 图标名。换图标只动这张表。
+const char* iconNameFor(IconId id) {
     switch (id) {
-        case IconId::Inbox:
-            return "<path d='M3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z'/><path d='M3 8l2-4h14l2 4'/><path d='M3 13h5l1 2h6l1-2h5'/>";
-        case IconId::Today:
-            return "<rect x='4' y='5' width='16' height='16' rx='2'/><path d='M4 10h16'/><path d='M8 3v4M16 3v4'/><circle cx='12' cy='15' r='2' fill='currentColor' stroke='none'/>";
-        case IconId::Upcoming:
-            return "<rect x='4' y='5' width='16' height='16' rx='2'/><path d='M4 10h16'/><path d='M8 3v4M16 3v4'/><path d='M8 15h8'/>";
-        case IconId::Overdue:
-            return "<circle cx='12' cy='12' r='8'/><path d='M12 7v5l3 2'/>";
-        case IconId::Done:
-            return "<circle cx='12' cy='12' r='8'/><path d='M8 12l3 3 5-6'/>";
-        case IconId::Abandoned:
-            return "<circle cx='12' cy='12' r='8'/><path d='M6 18L18 6'/>";
-        case IconId::Trash:
-            return "<path d='M4 6h16'/><path d='M9 6V4h6v2'/><path d='M6 6l1 14h10l1-14'/><path d='M10 10v7M14 10v7'/>";
-        case IconId::Folder:
-            return "<path d='M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z'/>";
-        case IconId::Note:
-            return "<rect x='5' y='3' width='14' height='18' rx='2'/><path d='M8 8h8M8 12h8M8 16h5'/>";
-        case IconId::TaskList:
-            return "<rect x='4' y='4' width='16' height='16' rx='2'/><path d='M7 9l1.5 1.5L11 8'/><path d='M13 9h4'/><path d='M7 15h10'/>";
-        case IconId::Pin:
-            return "<path d='M12 3l-3 3M12 3l3 3'/><rect x='7' y='6' width='10' height='4' rx='1'/><path d='M12 10v9'/><path d='M9 17h6'/>";
-        case IconId::Search:
-            return "<circle cx='11' cy='11' r='7'/><path d='M20 20l-4-4'/>";
-        case IconId::More:
-            return "<circle cx='5' cy='12' r='1.6' fill='currentColor' stroke='none'/><circle cx='12' cy='12' r='1.6' fill='currentColor' stroke='none'/><circle cx='19' cy='12' r='1.6' fill='currentColor' stroke='none'/>";
-        case IconId::Add:
-            return "<path d='M12 5v14M5 12h14'/>";
-        case IconId::Close:
-            return "<path d='M6 6l12 12M18 6L6 18'/>";
-        case IconId::Check:
-            return "<path d='M5 12l4 4L19 6'/>";
-        case IconId::Calendar:
-            return "<rect x='4' y='5' width='16' height='16' rx='2'/><path d='M4 10h16'/><path d='M8 3v4M16 3v4'/>";
-        case IconId::Clock:
-            return "<circle cx='12' cy='12' r='8'/><path d='M12 7v5l3 2'/>";
-        case IconId::Reminder:
-            return "<path d='M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6'/><path d='M10 20a2 2 0 0 0 4 0'/>";
-        case IconId::Repeat:
-            return "<path d='M17 2l4 4-4 4'/><path d='M3 11V9a4 4 0 0 1 4-4h14'/><path d='M7 22l-4-4 4-4'/><path d='M21 13v2a4 4 0 0 1-4 4H3'/>";
-        case IconId::FlagHigh:
-        case IconId::FlagMedium:
-        case IconId::FlagLow:
-            return "<path d='M5 21V4'/><path d='M5 4h12l-2 4 2 4H5' fill='currentColor'/>";
-        case IconId::FlagNone:
-            return "<path d='M5 21V4'/><path d='M5 4h12l-2 4 2 4H5'/>";
-        case IconId::Attachment:
-            return "<path d='M21 11l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8'/>";
-        case IconId::Tag:
-            return "<path d='M20 12l-8 8-9-9V3h8z'/><circle cx='7.5' cy='7.5' r='1.2' fill='currentColor' stroke='none'/>";
-        case IconId::ActivityLog:
-            return "<path d='M3 12a9 9 0 1 0 3-6.7'/><path d='M3 4v5h5'/><path d='M12 7v5l3 2'/>";
-        case IconId::Convert:
-            return "<path d='M17 2l4 4-4 4'/><path d='M3 11V9a4 4 0 0 1 4-4h14'/><path d='M7 22l-4-4 4-4'/><path d='M21 13v2a4 4 0 0 1-4 4H3'/>";
-        case IconId::Restore:
-            return "<path d='M3 12a9 9 0 1 0 3-6.7'/><path d='M3 4v5h5'/>";
-        case IconId::Delete:
-            return "<path d='M4 6h16'/><path d='M9 6V4h6v2'/><path d='M6 6l1 14h10l1-14'/>";
-        case IconId::DesktopNote:
-            return "<rect x='4' y='4' width='16' height='14' rx='2'/><path d='M9 21h6M12 18v3'/>";
-        case IconId::Settings:
-            return "<circle cx='12' cy='12' r='3'/><path d='M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1'/>";
-        case IconId::Backup:
-            return "<path d='M12 3v12'/><path d='M7 10l5 5 5-5'/><path d='M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3'/>";
-        case IconId::Theme:
-            return "<circle cx='12' cy='12' r='8'/><path d='M12 4a8 8 0 0 0 0 16z' fill='currentColor' stroke='none'/>";
-        case IconId::Bold:
-            return "<path d='M7 4h6a4 4 0 0 1 0 8H7zM7 12h7a4 4 0 0 1 0 8H7z'/>";
-        case IconId::Italic:
-            return "<path d='M10 4h8M6 20h8M14 4l-4 16'/>";
-        case IconId::Strike:
-            return "<path d='M4 12h16'/><path d='M17 6a4 4 0 0 0-8-1'/><path d='M7 18a4 4 0 0 0 8 1'/>";
-        case IconId::Heading:
-            return "<path d='M5 5v14M19 5v14M5 12h14'/>";
-        case IconId::List:
-            return "<path d='M9 6h12M9 12h12M9 18h12'/><circle cx='4' cy='6' r='1' fill='currentColor' stroke='none'/><circle cx='4' cy='12' r='1' fill='currentColor' stroke='none'/><circle cx='4' cy='18' r='1' fill='currentColor' stroke='none'/>";
-        case IconId::OrderedList:
-            return "<path d='M10 6h11M10 12h11M10 18h11'/><path d='M4 5h1v3M4 12h2l-2 3h2'/>";
-        case IconId::Quote:
-            return "<path d='M4 5v14'/><path d='M9 8h10M9 12h10M9 16h6'/>";
-        case IconId::Code:
-            return "<path d='M8 6l-6 6 6 6M16 6l6 6-6 6'/>";
-        case IconId::Checklist:
-            return "<rect x='3' y='4' width='6' height='6' rx='1'/><path d='M4 7l1.5 1.5L8 6'/><path d='M13 7h8'/><rect x='3' y='14' width='6' height='6' rx='1'/><path d='M13 17h8'/>";
-        case IconId::Link:
-            return "<path d='M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1'/><path d='M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1'/>";
-        case IconId::Underline:
-            return "<path d='M6 4v8a6 6 0 0 0 12 0V4M4 21h16'/>";
-        case IconId::Highlight:
-            return "<path d='M9 14l7-10 4 3-7 10-4-3zM9 14l-3 5 4-1 3-1M4 21h12'/>";
-        case IconId::Expand:
-            return "<path d='M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5'/>";
-        case IconId::Info:
-            return "<circle cx='12' cy='12' r='8'/><path d='M12 11v6'/><circle cx='12' cy='7.5' r='.7' fill='currentColor' stroke='none'/>";
-        case IconId::ChevronDown:
-            return "<path d='M7 10l5 5 5-5'/>";
-        case IconId::FormatClear:
-            return "<path d='M4 5h14M11 5l-4 14M15 14l6 6M21 14l-6 6'/>";
-        case IconId::Format:
-            return "<path d='M5 17L12 3l7 14M8 12h8M4 21h16'/>";
-        case IconId::Comment:
-            return "<path d='M6 4h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-7l-5 3v-3a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM7 9h10M7 13h7'/>";
-        case IconId::WindowMinimize:
-            return "<path d='M5 12h14'/>";
-        case IconId::WindowMaximize:
-            return "<rect x='6' y='6' width='12' height='12' rx='.5'/>";
-        case IconId::WindowClose:
-            return "<path d='M7 7l10 10M17 7L7 17'/>";
-        case IconId::Sort:
-            return "<path d='M7 5v14M4 8l3-3 3 3M17 19V5M14 16l3 3 3-3'/>";
-        case IconId::Help:
-            return "<circle cx='12' cy='12' r='8'/><path d='M9.5 9a2.5 2.5 0 0 1 5 .5c0 2-2.5 2-2.5 4'/><circle cx='12' cy='17' r='.7' fill='currentColor' stroke='none'/>";
-        case IconId::Sync:
-            return "<path d='M20 7a9 9 0 0 0-15-1L3 9M3 4v5h5M4 17a9 9 0 0 0 15 1l2-3M21 20v-5h-5'/>";
-        default:
-            return "";
+        case IconId::Inbox: return "inbox-list";
+        case IconId::Today: return "today-list";
+        case IconId::Upcoming: return "ndays-later";
+        case IconId::Overdue: return "overdue";
+        case IconId::Done: return "completed";
+        case IconId::Abandoned: return "wont-do";
+        case IconId::Trash: return "clear-trash";
+        case IconId::Folder: return "folder";
+        case IconId::Note: return "note";
+        case IconId::TaskList: return "normal-list";
+        case IconId::Pin: return "pin-task";
+
+        case IconId::Search: return "search";
+        case IconId::More: return "more";
+        case IconId::Add: return "add";
+        case IconId::Close: return "close";
+        case IconId::Check: return "selected";
+        case IconId::Calendar: return "calendar-schedule";
+        case IconId::Clock: return "timecard_time";
+        case IconId::Reminder: return "item-reminder";
+        case IconId::Repeat: return "item-repeat";
+        case IconId::FlagHigh: return "priority-3";
+        case IconId::FlagMedium: return "priority-2";
+        case IconId::FlagLow: return "priority-1";
+        case IconId::FlagNone: return "priority-0";
+        case IconId::Attachment: return "attachment";
+        case IconId::Tag: return "tag";
+        case IconId::ActivityLog: return "timeline";
+        case IconId::Convert: return "convert-task";
+        case IconId::Restore: return "restore";
+        case IconId::Delete: return "delete";
+        case IconId::DesktopNote: return "mobile-edit";
+        case IconId::Settings: return "setting";
+        case IconId::Backup: return "s-backup";
+        case IconId::Theme: return "light";
+
+        case IconId::Bold: return "md-tl-bold";
+        case IconId::Italic: return "md-tl-italic";
+        case IconId::Strike: return "md-tl-strikethrough";
+        case IconId::Heading: return "md-tl-heading";
+        case IconId::List: return "md-tl-list-1";
+        case IconId::OrderedList: return "md-tl-list-2";
+        case IconId::Quote: return "md-tl-quote";
+        case IconId::Code: return "md-tl-code-inline";
+        case IconId::Checklist: return "md-item-checked";
+        case IconId::Link: return "md-tl-link";
+        case IconId::Underline: return "md-tl-underline";
+        case IconId::Highlight: return "md-tl-mark";
+        case IconId::Expand: return "md-tl-fullscreen";
+        case IconId::Info: return "note-info";
+        case IconId::ChevronDown: return "thin-triangle-down";
+        case IconId::FormatClear: return "clear-input";
+        case IconId::Format: return "md-tl-text";
+        case IconId::Comment: return "comment";
+
+        case IconId::WindowMinimize: return "minimized";
+        case IconId::WindowMaximize: return "md-tl-fullscreen";
+        case IconId::WindowClose: return "bold_close";
+        case IconId::Sort: return "sort";
+        case IconId::Help: return "help";
+        case IconId::Sync: return "sidebar-sync";
+
+        case IconId::None:
+        case IconId::Count:
+            break;
     }
+    return nullptr;
 }
 
-QByteArray coloredSvg(IconId id, const QColor& color) {
-    const char* paths = svgSource(id);
+// 把一条图标记录拼成完整 SVG 文档。单色图标注入主题色，多色图标保留原始根属性。
+QByteArray buildSvg(const icons::IconEntry& entry, const QColor& color) {
     QByteArray svg;
-    svg.reserve(512);
-    svg.append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' "
-               "fill='none' stroke='");
-    svg.append(color.name().toLatin1());
-    svg.append("' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'>");
-    // currentColor 引用替换为实际颜色（fill 用）。
-    QByteArray p(paths);
-    p.replace("currentColor", color.name().toLatin1());
-    svg.append(p);
+    svg.reserve(static_cast<int>(std::strlen(entry.body)) + 160);
+    svg.append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='");
+    svg.append(entry.viewBox);
+    svg.append("'");
+    if (entry.mono) {
+        svg.append(" fill='");
+        svg.append(color.name().toLatin1());
+        svg.append("'");
+        if (color.alpha() < 255) {
+            // 半透明由 fill-opacity 承担，Qt 5.12 的 SVG 解析不认 rgba() 写法。
+            svg.append(" fill-opacity='");
+            svg.append(QByteArray::number(color.alphaF(), 'f', 3));
+            svg.append("'");
+        }
+    } else if (entry.rootAttrs && entry.rootAttrs[0] != '\0') {
+        svg.append(' ');
+        svg.append(entry.rootAttrs);
+    }
+    svg.append('>');
+    svg.append(entry.body);
     svg.append("</svg>");
     return svg;
 }
 
-QPixmap renderPixmap(IconId id, const QColor& color, int size, qreal dpr) {
+// 解析过的 SVG 缓存：delegate 每帧每行都取图标，重复解析 2.5 KB 路径会拖慢绘制。
+QSvgRenderer* renderer(const icons::IconEntry& entry, const QColor& color) {
+    static QCache<QString, QSvgRenderer> cache(256);
+    const QString key = QString::fromLatin1(entry.id) + QLatin1Char('|') +
+                        color.name(QColor::HexArgb);
+    if (QSvgRenderer* cached = cache.object(key)) return cached;
+    auto* svg = new QSvgRenderer(buildSvg(entry, color));
+    if (!svg->isValid()) {
+        delete svg;
+        return nullptr;
+    }
+    cache.insert(key, svg, 1);
+    return svg;
+}
+
+// 按 viewBox 宽高比居中放进目标矩形，再内缩；非方形图标不会被拉扁。
+QRectF fitRect(const QRectF& target, const QRectF& viewBox) {
+    const qreal inset = qMin(target.width(), target.height()) * kGlyphInset;
+    const qreal pad = inset < kMinInsetPx ? 0.0 : inset;
+    const QRectF box = target.adjusted(pad, pad, -pad, -pad);
+    if (viewBox.width() <= 0.0 || viewBox.height() <= 0.0) return box;
+    const qreal scale =
+        qMin(box.width() / viewBox.width(), box.height() / viewBox.height());
+    if (scale <= 0.0) return box;
+    const QSizeF size(viewBox.width() * scale, viewBox.height() * scale);
+    return QRectF(box.center() - QPointF(size.width() / 2.0, size.height() / 2.0), size);
+}
+
+QPixmap renderPixmap(const icons::IconEntry& entry, const QColor& color, int size,
+                     qreal dpr) {
     QPixmap pixmap(qRound(size * dpr), qRound(size * dpr));
     pixmap.setDevicePixelRatio(dpr);
     pixmap.fill(Qt::transparent);
-    QSvgRenderer renderer(coloredSvg(id, color));
+    QSvgRenderer* svg = renderer(entry, color);
+    if (!svg) return pixmap;
     QPainter painter(&pixmap);
-    renderer.render(&painter, QRectF(0, 0, size, size));
+    svg->render(&painter, fitRect(QRectF(0, 0, size, size), svg->viewBoxF()));
     return pixmap;
+}
+
+QIcon buildIcon(const icons::IconEntry* entry, const QColor& color, int size) {
+    if (!entry) return QIcon();
+    constexpr qreal dpr = 2.0;  // 高 DPI 超采样
+    QIcon result;
+    result.addPixmap(renderPixmap(*entry, color, size, dpr));
+    return result;
+}
+
+void paintEntry(QPainter* painter, const icons::IconEntry* entry, const QRectF& rect,
+                const QColor& color) {
+    if (!painter || !entry) return;
+    QSvgRenderer* svg = renderer(*entry, color);
+    if (!svg) return;
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    svg->render(painter, fitRect(rect, svg->viewBoxF()));
+    painter->restore();
+}
+
+const icons::IconEntry* lookup(IconId id) {
+    const char* name = iconNameFor(id);
+    return name ? icons::find(name) : nullptr;
+}
+
+const icons::IconEntry* lookup(const QString& name) {
+    if (name.isEmpty()) return nullptr;
+    return icons::find(name.toUtf8().constData());
 }
 
 }  // namespace
@@ -164,21 +193,32 @@ QIcon icon(IconId id, int size) {
 }
 
 QIcon icon(IconId id, ds::ColorToken colorToken, int size) {
-    if (id == IconId::None) return QIcon();
-    const QColor color = ThemeManager::instance().color(colorToken);
-    const qreal dpr = 2.0;  // 高 DPI 超采样
-    QIcon result;
-    result.addPixmap(renderPixmap(id, color, size, dpr));
-    return result;
+    return buildIcon(lookup(id), ThemeManager::instance().color(colorToken), size);
 }
 
 void paint(QPainter* painter, IconId id, const QRectF& rect, const QColor& color) {
-    if (id == IconId::None) return;
-    painter->save();
-    painter->setRenderHint(QPainter::Antialiasing, true);
-    QSvgRenderer renderer(coloredSvg(id, color));
-    renderer.render(painter, rect);
-    painter->restore();
+    paintEntry(painter, lookup(id), rect, color);
+}
+
+QIcon icon(const QString& name, int size) {
+    return icon(name, ds::ColorToken::TextSecondary, size);
+}
+
+QIcon icon(const QString& name, ds::ColorToken colorToken, int size) {
+    return buildIcon(lookup(name), ThemeManager::instance().color(colorToken), size);
+}
+
+void paint(QPainter* painter, const QString& name, const QRectF& rect, const QColor& color) {
+    paintEntry(painter, lookup(name), rect, color);
+}
+
+bool hasIcon(const QString& name) {
+    return lookup(name) != nullptr;
+}
+
+QString iconName(IconId id) {
+    const char* name = iconNameFor(id);
+    return name ? QString::fromLatin1(name) : QString();
 }
 
 QString accessibleName(IconId id) {
