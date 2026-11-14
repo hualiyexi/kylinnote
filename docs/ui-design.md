@@ -20,7 +20,7 @@ design/QssBuilder.cpp   元素层：QSS 由生成器产出（Qt 无 CSS 变量�
 
 支持 **浅色 / 深色 / 跟随系统** 三态，运行时切换、QSettings 持久化、无白闪。入口：备份与设置 → 主题。
 
-- 浅色值来源：考据静态资源（`ticktick-windows-6.3.3/02-layout-and-visual-style.md`）与 Web 现场（`ticktick-webapp/01:62-75`）。
+- 浅色值来源：考据静态资源与 Web 现场（考据资料只在本机，未入库）。
 - 深色值为 KylinList 自定（考据无深色色值证据）。
 - 所有 SVG 图标随主题着色（`AppIcons::icon()` / `AppIcons::paint()`）。
 
