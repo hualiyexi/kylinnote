@@ -3,6 +3,7 @@
 #include "../domain/AttachmentCodec.h"
 #include "../domain/BackupCodec.h"
 #include "../domain/EntityCodec.h"
+#include "../domain/ViewSpec.h"
 
 #include <QFile>
 #include <QCryptographicHash>
@@ -198,6 +199,11 @@ QVector<Section> TaskStore::sections() const { return m_snapshot.sections; }
 const StoredEntity *TaskStore::find(const QString &id) const
 {
     for (const StoredEntity &stored : m_snapshot.entities) if (stored.entity.id == id) return &stored;
+    return nullptr;
+}
+const TaskList *TaskStore::findList(const QString &id) const
+{
+    for (const TaskList &row : m_snapshot.lists) if (row.id == id) return &row;
     return nullptr;
 }
 const RecurrenceLink *TaskStore::linkFor(const QString &sourceId) const
@@ -798,10 +804,18 @@ bool TaskStore::deleteFolder(const QString &id)
     if (!ensureLoaded()) return false; if (!hasFolder(id) || id.isEmpty()) return fail(QStringLiteral("文件夹不存在"));
     EntityChanges changes; changes.folderRemovals.append(id); return commit(&changes, true);
 }
-QString TaskStore::createList(const QString &name, const QString &folderId, EntityKind kind)
+QString TaskStore::createList(const QString &name, const QString &folderId, EntityKind kind,
+                              const QString &icon, const QString &color)
 {
     if (!ensureLoaded()) return QString(); if (!hasFolder(folderId)) { fail(QStringLiteral("文件夹不存在")); return QString(); }
-    const QDateTime now = utcNow(); TaskList row; row.id = newUuid(); row.folderId = folderId; row.kind = kind; row.name = name; row.createdAt = now; row.updatedAt = now;
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || trimmed.size() > kListNameMaxLength)
+        { fail(QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength)); return QString(); }
+    if (!isValidListIcon(icon)) { fail(QStringLiteral("清单图标超出长度限制")); return QString(); }
+    if (!isValidListColor(color)) { fail(QStringLiteral("清单颜色必须为空或 #RRGGBB")); return QString(); }
+    const QDateTime now = utcNow(); TaskList row; row.id = newUuid(); row.folderId = folderId; row.kind = kind;
+    row.name = trimmed; row.icon = icon; row.color = color; row.createdAt = now; row.updatedAt = now;
+    // 名称+folder+kind+icon+color 在同一事务内创建，UI 无需 create 后二次 saveList。
     EntityChanges changes; changes.groupSaves.append(row); return commit(&changes) ? row.id : QString();
 }
 bool TaskStore::renameList(const QString &id, const QString &name)
@@ -829,6 +843,97 @@ bool TaskStore::deleteList(const QString &id)
     if (!ensureLoaded()) return false; if (id.isEmpty() || !hasGroup(id)) return fail(QStringLiteral("清单不存在"));
     for (const TaskList &list : m_snapshot.lists) if (list.id == id && list.inbox) return fail(QStringLiteral("系统 inbox 不可删除"));
     EntityChanges changes; changes.groupRemovals.append(id); return commit(&changes, true);
+}
+bool TaskStore::updateList(const QString &id, const QString &name, const QString &icon, const QString &color,
+                           const QString &folderId)
+{
+    if (!ensureLoaded()) return false;
+    const TaskList *existing = findList(id);
+    if (id.isEmpty() || !existing) return fail(QStringLiteral("清单不存在"));
+    if (existing->inbox) return fail(QStringLiteral("系统 inbox 不支持外观编辑"));
+    if (!hasFolder(folderId)) return fail(QStringLiteral("文件夹不存在"));
+    TaskList row = *existing;
+    row.name = name; row.icon = icon; row.color = color;
+    row.folderId = folderId;
+    return saveList(row);
+}
+bool TaskStore::saveList(const TaskList &list)
+{
+    if (!ensureLoaded()) return false;
+    const TaskList *existing = findList(list.id);
+    if (!existing) return fail(QStringLiteral("清单不存在"));
+    if (existing->inbox) return fail(QStringLiteral("系统 inbox 不支持外观编辑"));
+    if (!list.folderId.isEmpty() && !hasFolder(list.folderId)) return fail(QStringLiteral("文件夹不存在"));
+    TaskList row = *existing;                    // kind/inbox/归档状态以库内现值为准，调用方不可改
+    row.name = list.name.trimmed();
+    row.icon = list.icon; row.color = list.color;
+    row.folderId = list.folderId; row.sortOrder = list.sortOrder;
+    if (row.name.isEmpty() || row.name.size() > kListNameMaxLength)
+        return fail(QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+    if (!isValidListIcon(row.icon)) return fail(QStringLiteral("清单图标超出长度限制"));
+    if (!isValidListColor(row.color)) return fail(QStringLiteral("清单颜色必须为空或 #RRGGBB"));
+    if (row.name == existing->name && row.icon == existing->icon && row.color == existing->color
+        && row.folderId == existing->folderId && row.sortOrder == existing->sortOrder) {
+        m_lastError.clear(); return true;
+    }
+    row.updatedAt = utcNow();
+    EntityChanges changes; changes.groupSaves.append(row); return commit(&changes);
+}
+bool TaskStore::setListArchived(const QString &id, bool archived)
+{
+    if (!ensureLoaded()) return false;
+    const TaskList *existing = findList(id);
+    if (id.isEmpty() || !existing) return fail(QStringLiteral("清单不存在"));
+    if (existing->inbox) return fail(QStringLiteral("收集箱不可归档"));
+    const bool currentlyArchived = existing->archivedAtUtcMs > 0;
+    if (currentlyArchived == archived) { m_lastError.clear(); return true; }
+    TaskList row = *existing;
+    row.archivedAtUtcMs = archived ? utcMs(utcNow()) : 0;
+    row.updatedAt = utcNow();
+    // 只改清单行本身：groupsChanged/tasksReset 会让视图、提醒弹窗与桌面投影重验。
+    EntityChanges changes; changes.groupSaves.append(row); return commit(&changes);
+}
+bool TaskStore::isListArchived(const QString &id) const
+{
+    const TaskList *list = findList(id);
+    return list && list->archivedAtUtcMs > 0;
+}
+QSet<QString> TaskStore::archivedListIds() const
+{
+    QSet<QString> ids;
+    for (const TaskList &row : m_snapshot.lists) if (row.archivedAtUtcMs > 0) ids.insert(row.id);
+    return ids;
+}
+bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
+{
+    if (!ensureLoaded()) return false;
+    if (!today.isValid()) return fail(QStringLiteral("顺延日期非法"));
+    QSet<QString> archived = archivedListIds();
+    EntityChanges changes;
+    int postponed = 0;
+    for (const QString &id : ids) {
+        const StoredEntity *stored = find(id);
+        if (!stored) return fail(QStringLiteral("任务不存在"));
+        const Entity &task = stored->entity;
+        if (task.kind != EntityKind::Task || task.status != TaskStatus::Active || task.deleted) continue;
+        if (archived.contains(task.listId)) continue;
+        const QDate date = effectiveDate(task);
+        if (!date.isValid() || date >= today) continue;
+        Entity value = task;
+        const auto shiftToToday = [&today](const QDateTime &when) {
+            if (!when.isValid()) return QDateTime();
+            QDateTime local = toAppTime(when);
+            local.setDate(today);
+            return fromAppTime(local);
+        };
+        if (value.allDayDate.isValid()) value.allDayDate = today;      // 全天：只改日期
+        if (value.dueAt.isValid()) value.dueAt = shiftToToday(value.dueAt);
+        if (value.startAt.isValid()) value.startAt = shiftToToday(value.startAt);
+        if (!prepareSave(value, &changes)) return false;               // 事务内统一提交，失败无部分成功
+        ++postponed;
+    }
+    if (postponed == 0) { m_lastError.clear(); return true; }
+    return commit(&changes);
 }
 QString TaskStore::createSection(const QString &listId, const QString &name)
 {
@@ -902,7 +1007,9 @@ bool TaskStore::markReminderDelivered(const QString &reminderId, const QDateTime
     if (!reminder || !now.isValid() || reminder->triggerAt != expectedTrigger || expectedTrigger > now
         || isReminderDelivered(reminderId)) return false;
     const Entity current = entity(reminder->entityId);
-    if (current.kind != EntityKind::Task || current.status != TaskStatus::Active || current.deleted) return false;
+    // 归档清单的任务不提醒：即使 UI 门面漏检，Repository SQL 也是权威闸门。
+    if (current.kind != EntityKind::Task || current.status != TaskStatus::Active || current.deleted
+        || isListArchived(current.listId)) return false;
     ReminderDelivery delivery; delivery.reminderId = reminderId; delivery.installationId = installationId();
     delivery.scheduledAt = expectedTrigger; delivery.deliveredAt = now;
     EntityChanges changes; changes.deliverySaves.append(delivery); return commit(&changes);
@@ -911,7 +1018,8 @@ bool TaskStore::markReminderNotified(const QString &entityId, const QDateTime &e
 {
     if (!ensureLoaded()) return false;
     const Entity current = entity(entityId);
-    if (current.kind != EntityKind::Task || current.status != TaskStatus::Active || current.deleted) return false;
+    if (current.kind != EntityKind::Task || current.status != TaskStatus::Active || current.deleted
+        || isListArchived(current.listId)) return false;
     const int primary = primaryReminderIndex(current);
     if (primary < 0) return false;
     return markReminderDelivered(current.reminders.at(primary).id, expectedReminder, now);

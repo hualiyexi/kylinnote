@@ -44,8 +44,9 @@ void NoteManager::syncTask(QString id) {
     const Entity task = presentedTask(m_store, id);
     const DesktopNote desktop = m_store->desktopNote(id);
     NoteWidget* window = m_notes.value(id, nullptr);
+    // 归档清单的任务退出桌面活动投影；desktop_notes 行保留，取消归档后由 restoreAll 恢复。
     if (task.id.isEmpty() || task.kind != EntityKind::Task || desktop.id.isEmpty() || !desktop.open
-        || task.deleted || task.status != TaskStatus::Active) {
+        || task.deleted || task.status != TaskStatus::Active || m_store->isListArchived(task.listId)) {
         if (window) {
             if (!window->finishEditing()) return;
             m_notes.remove(id);

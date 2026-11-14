@@ -4,6 +4,7 @@
 #include "db/TaskRepository.h"
 #include "domain/AttachmentCodec.h"
 #include "domain/BackupCodec.h"
+#include "domain/ViewSpec.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -104,6 +105,146 @@ QByteArray pngBytes()
     QByteArray bytes; QBuffer buffer(&bytes);
     return buffer.open(QIODevice::WriteOnly) && image.save(&buffer, "PNG") ? bytes : QByteArray();
 }
+// 与 v5 发布版一致的完整 schema（不含 v6 的 lists.icon/color/archived_at_utc_ms）。
+QStringList v5SchemaStatements(const QString &inboxId, const QString &now)
+{
+    QStringList statements;
+    const char *const ddl[] = {
+        "CREATE TABLE folders("
+        "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+        "CREATE TABLE lists("
+        "id TEXT PRIMARY KEY,folder_id TEXT,kind TEXT NOT NULL DEFAULT 'task' CHECK(kind IN ('task','note')),"
+        "name TEXT NOT NULL CHECK(length(trim(name))>0),is_inbox INTEGER NOT NULL DEFAULT 0 CHECK(is_inbox IN (0,1)),"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE RESTRICT)",
+        "CREATE TABLE sections("
+        "id TEXT PRIMARY KEY,list_id TEXT NOT NULL,name TEXT NOT NULL CHECK(length(trim(name))>0),"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE CASCADE)",
+        "CREATE TABLE recurrence_series("
+        "id TEXT PRIMARY KEY,rrule TEXT NOT NULL CHECK(rrule LIKE 'FREQ=%'),anchor_day INTEGER NOT NULL DEFAULT 0 CHECK(anchor_day BETWEEN 0 AND 31),"
+        "timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',dtstart_utc_ms INTEGER,dtstart_date TEXT,"
+        "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
+        "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+        "CREATE TABLE entities("
+        "id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('task','note')),"
+        "title TEXT NOT NULL CHECK(length(trim(title))>0),body_markdown TEXT NOT NULL DEFAULT '',"
+        "folder_id TEXT,list_id TEXT NOT NULL,section_id TEXT,parent_id TEXT,"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+        "status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','abandoned')),"
+        "deleted_at_utc_ms INTEGER,start_at_utc_ms INTEGER,due_at_utc_ms INTEGER,all_day_date TEXT,"
+        "timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',recurrence_series_id TEXT,occurrence_key TEXT,"
+        "priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN 0 AND 3),pinned_at_utc_ms INTEGER,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,completed_at_utc_ms INTEGER,abandoned_at_utc_ms INTEGER,"
+        "UNIQUE(id,kind),CHECK(kind='task' OR parent_id IS NULL),CHECK(parent_id IS NULL OR parent_id<>id),"
+        "CHECK((status='completed')=(completed_at_utc_ms IS NOT NULL)),"
+        "CHECK((status='abandoned')=(abandoned_at_utc_ms IS NOT NULL)),"
+        "CHECK((recurrence_series_id IS NULL)=(occurrence_key IS NULL)),UNIQUE(recurrence_series_id,occurrence_key),"
+        "FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE RESTRICT,"
+        "FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE RESTRICT,"
+        "FOREIGN KEY(section_id) REFERENCES sections(id) ON DELETE RESTRICT,"
+        "FOREIGN KEY(parent_id,kind) REFERENCES entities(id,kind) ON DELETE CASCADE,"
+        "FOREIGN KEY(recurrence_series_id) REFERENCES recurrence_series(id) ON DELETE RESTRICT)",
+        "CREATE TABLE recurrence_links("
+        "id TEXT PRIMARY KEY,source_id TEXT NOT NULL UNIQUE REFERENCES entities(id) ON DELETE CASCADE,"
+        "next_id TEXT UNIQUE REFERENCES entities(id) ON DELETE SET NULL,next_revision INTEGER NOT NULL CHECK(next_revision>0),"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+        "CREATE TABLE checklist_items("
+        "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
+        "CREATE TABLE tags("
+        "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),normalized_name TEXT NOT NULL,color TEXT NOT NULL DEFAULT '',"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "UNIQUE(normalized_name))",
+        "CREATE TABLE entity_tags("
+        "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,tag_id TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
+        "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),UNIQUE(entity_id,tag_id),"
+        "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE,"
+        "FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE)",
+        "CREATE TABLE reminders("
+        "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,trigger_at_utc_ms INTEGER NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+        "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
+        "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
+        "CREATE TABLE reminder_deliveries("
+        "reminder_id TEXT NOT NULL REFERENCES reminders(id) ON DELETE CASCADE,installation_id TEXT NOT NULL,"
+        "scheduled_at_utc_ms INTEGER NOT NULL,delivered_at_utc_ms INTEGER NOT NULL,PRIMARY KEY(reminder_id,installation_id))",
+        "CREATE TABLE attachments("
+        "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,original_name TEXT NOT NULL,relative_path TEXT NOT NULL UNIQUE,mime TEXT NOT NULL,"
+        "size INTEGER NOT NULL CHECK(size>0 AND size<=2097152),sha256 TEXT NOT NULL CHECK(length(sha256)=64),"
+        "is_image INTEGER NOT NULL CHECK(is_image IN (0,1)),local_state TEXT NOT NULL DEFAULT 'available' CHECK(local_state IN ('available','missing','corrupt')),"
+        "created_at_utc_ms INTEGER NOT NULL,verified_at_utc_ms INTEGER,sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
+        "CREATE TABLE desktop_notes("
+        "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,device_id TEXT NOT NULL,"
+        "color INTEGER NOT NULL DEFAULT 0 CHECK(color BETWEEN 0 AND 5),geometry TEXT NOT NULL DEFAULT '',z_order INTEGER NOT NULL DEFAULT 0,"
+        "layer INTEGER NOT NULL DEFAULT 1 CHECK(layer BETWEEN 0 AND 2),open INTEGER NOT NULL DEFAULT 0 CHECK(open IN (0,1)),"
+        "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,UNIQUE(entity_id,device_id))",
+        "CREATE TABLE sync_bindings("
+        "id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,remote_id TEXT NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "UNIQUE(entity_type,entity_id),UNIQUE(entity_type,remote_id))",
+        "CREATE TABLE view_defs("
+        "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),spec_json TEXT NOT NULL,"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
+        "CREATE TABLE local_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+        "CREATE TABLE tombstones("
+        "id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,deleted_at_utc_ms INTEGER NOT NULL,"
+        "UNIQUE(entity_type,entity_id))",
+        "CREATE TABLE outbox("
+        "id TEXT PRIMARY KEY,batch_id TEXT NOT NULL,base_server_revision INTEGER NOT NULL DEFAULT 0 CHECK(base_server_revision>=0),"
+        "entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,operation TEXT NOT NULL CHECK(operation IN ('upsert','delete')),"
+        "payload_json TEXT NOT NULL DEFAULT '{}',created_at_utc_ms INTEGER NOT NULL)",
+        "CREATE TABLE entity_events("
+        "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,entity_kind TEXT NOT NULL CHECK(entity_kind IN ('task','note')),"
+        "entity_title TEXT NOT NULL,batch_id TEXT NOT NULL,"
+        "type TEXT NOT NULL CHECK(type IN ('created','changed','kind_changed','trashed','restored','deleted',"
+        "'attachment_added','attachment_removed','reminder_added','reminder_removed')),"
+        "field TEXT NOT NULL DEFAULT '',old_value TEXT,new_value TEXT,occurred_at_utc_ms INTEGER NOT NULL)",
+        "CREATE UNIQUE INDEX idx_one_inbox ON lists(is_inbox) WHERE is_inbox=1",
+        "CREATE TRIGGER prevent_inbox_delete BEFORE DELETE ON lists WHEN OLD.is_inbox=1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
+        "CREATE TRIGGER prevent_inbox_unset BEFORE UPDATE OF is_inbox ON lists WHEN OLD.is_inbox=1 AND NEW.is_inbox<>1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
+        "CREATE INDEX idx_lists_folder ON lists(folder_id,sort_order)",
+        "CREATE INDEX idx_sections_list ON sections(list_id,sort_order)",
+        "CREATE INDEX idx_entities_list ON entities(list_id,section_id)",
+        "CREATE INDEX idx_entities_parent ON entities(parent_id)",
+        "CREATE INDEX idx_entities_due ON entities(kind,status,due_at_utc_ms)",
+        "CREATE INDEX idx_entities_trash ON entities(deleted_at_utc_ms)",
+        "CREATE INDEX idx_entities_pinned ON entities(pinned_at_utc_ms) WHERE pinned_at_utc_ms IS NOT NULL",
+        "CREATE UNIQUE INDEX idx_entity_occurrence ON entities(recurrence_series_id,occurrence_key) WHERE recurrence_series_id IS NOT NULL",
+        "CREATE INDEX idx_checklist_entity ON checklist_items(entity_id,sort_order)",
+        "CREATE INDEX idx_reminders_due ON reminders(trigger_at_utc_ms,entity_id)",
+        "CREATE INDEX idx_deliveries_install ON reminder_deliveries(installation_id,scheduled_at_utc_ms)",
+        "CREATE INDEX idx_attachments_entity ON attachments(entity_id,sort_order)",
+        "CREATE INDEX idx_desktop_device ON desktop_notes(device_id,entity_id)",
+        "CREATE INDEX idx_view_defs_order ON view_defs(sort_order,id)",
+        "CREATE INDEX idx_tombstones_entity ON tombstones(entity_type,entity_id)",
+        "CREATE INDEX idx_outbox_batch ON outbox(batch_id,base_server_revision,id)",
+        "CREATE INDEX idx_events_entity ON entity_events(entity_id,occurred_at_utc_ms)"
+    };
+    for (const char *sql : ddl) statements.append(QString::fromUtf8(sql));
+    statements.append(QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,sort_order,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1',NULL,'task','收集箱',1,0,%2,%2)").arg(inboxId, now));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('installation_id','%1')").arg(newUuid()));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('device_id','%1')").arg(newUuid()));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('signed_in','0')"));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('default_timezone','Asia/Shanghai')"));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('inbox_list_id','%1')").arg(inboxId));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('schema_created_at_utc_ms','%1')").arg(now));
+    statements.append(QStringLiteral("INSERT INTO local_meta(key,value) VALUES('sync_base_server_revision','0')"));
+    statements.append(QStringLiteral("PRAGMA user_version=5"));
+    statements.append(QStringLiteral("PRAGMA application_id=%1").arg(Database::applicationId()));
+    return statements;
+}
 QString activeTask(const TaskStore &store, const QString &except = QString())
 {
     for (const Entity &task : store.entities()) if (task.id != except && task.status == TaskStatus::Active) return task.id;
@@ -142,6 +283,7 @@ private slots:
     void cleanup();
     void freshSchemaNeverMigratesLegacy();
     void rejectsWrongIdentityAndFutureVersion();
+    void migratesV5ToV6Atomically();
     void completeModelAndUuidCrud();
     void inboxAndOrganizationIntegrity();
     void entityKindAndParentConstraints();
@@ -163,7 +305,12 @@ private slots:
     void attachmentsShaStateAndTransactions();
     void desktopNotesAreDeviceIndependent();
     void allDayRecurrenceAndFlatBackup();
-    void entityCodecAndBackupV2RoundTrip();
+    void entityCodecAndBackupRoundTrip();
+    void listAppearanceArchiveAndAtomicUpdate();
+    void deleteListMovesContentToTrashAtomically();
+    void viewSpecScopesAndArchivedFiltering();
+    void archivedListsSuppressReminders();
+    void postponeOverdueTasksShiftsDates();
     void backupRoundTripAndLegacyRejection();
     void backupValidationAndSqlRollbackAreAtomic();
     void backupContainerLimitsAndStreaming();
@@ -212,8 +359,8 @@ void TaskTests::freshSchemaNeverMigratesLegacy()
     QString error;
     QVERIFY2(Database::instance().open(&error), qPrintable(error));
     QCOMPARE(Database::instance().path(), dbPath());
-    QCOMPARE(Database::schemaVersion(), 5);
-    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 5);
+    QCOMPARE(Database::schemaVersion(), 6);
+    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 6);
     QCOMPARE(scalar(QStringLiteral("PRAGMA application_id")).toInt(), Database::applicationId());
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM entities")).toInt(), 0);
     QCOMPARE(inspect(legacy, QStringLiteral("SELECT title FROM notes")).toString(), QStringLiteral("旧数据"));
@@ -231,7 +378,10 @@ void TaskTests::freshSchemaNeverMigratesLegacy()
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name IN ('kind','body_markdown','sort_order','pinned_at_utc_ms')")).toInt(), 4);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name='parent_id'")).toInt(), 0);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name='kind'")).toInt(), 1);
-    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name='folder_id' AND \"notnull\"=0")).toInt(), 1);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name IN ('icon','color','archived_at_utc_ms')")).toInt(), 3);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name IN ('icon','color','archived_at_utc_ms') AND \"notnull\"=1")).toInt(), 3);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='prevent_inbox_archive'")).toInt(), 1);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'prevent_inbox%'")).toInt(), 3);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('reminders') WHERE name='kind'")).toInt(), 0);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('entity_events') WHERE name IN ('revision','server_revision')")).toInt(), 0);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_foreign_key_list('entity_events')")).toInt(), 0);
@@ -247,6 +397,25 @@ void TaskTests::freshSchemaNeverMigratesLegacy()
     QCOMPARE(scalar(QStringLiteral("SELECT is_inbox FROM lists WHERE id='%1'").arg(inbox)).toInt(), 1);
     QCOMPARE(scalar(QStringLiteral("SELECT kind FROM lists WHERE id='%1'").arg(inbox)).toString(), QStringLiteral("task"));
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM lists WHERE is_inbox=1")).toInt(), 1);
+    QCOMPARE(scalar(QStringLiteral("SELECT icon FROM lists WHERE id='%1'").arg(inbox)).toString(), QString());
+    QCOMPARE(scalar(QStringLiteral("SELECT color FROM lists WHERE id='%1'").arg(inbox)).toString(), QString());
+    QCOMPARE(scalar(QStringLiteral("SELECT archived_at_utc_ms FROM lists WHERE id='%1'").arg(inbox)).toLongLong(), qint64(0));
+    QSqlQuery archiveInbox(Database::instance().connection());
+    archiveInbox.prepare(QStringLiteral("UPDATE lists SET archived_at_utc_ms=123 WHERE id=?"));
+    archiveInbox.addBindValue(inbox); QVERIFY(!archiveInbox.exec());   // 收集箱永不可归档
+    QCOMPARE(scalar(QStringLiteral("SELECT archived_at_utc_ms FROM lists WHERE id='%1'").arg(inbox)).toLongLong(), qint64(0));
+    QSqlQuery invalidColor(Database::instance().connection());
+    invalidColor.prepare(QStringLiteral("INSERT INTO lists(id,name,color,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'非法颜色','red',1,1)"));
+    invalidColor.addBindValue(newUuid()); QVERIFY(!invalidColor.exec());
+    invalidColor.prepare(QStringLiteral("INSERT INTO lists(id,name,color,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'非法颜色','#12345',1,1)"));
+    invalidColor.addBindValue(newUuid()); QVERIFY(!invalidColor.exec());
+    invalidColor.prepare(QStringLiteral("INSERT INTO lists(id,name,color,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'非法颜色','#12345G',1,1)"));
+    invalidColor.addBindValue(newUuid()); QVERIFY(!invalidColor.exec());
+    invalidColor.prepare(QStringLiteral("INSERT INTO lists(id,name,icon,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'超长图标','%1',1,1)")
+                            .arg(QString(17, QChar(0x4E2D))));
+    invalidColor.addBindValue(newUuid()); QVERIFY(!invalidColor.exec());
+    invalidColor.prepare(QStringLiteral("INSERT INTO lists(id,name,color,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'合法外观','#a1B2c3',1,1)"));
+    invalidColor.addBindValue(newUuid()); QVERIFY(invalidColor.exec());
     QSqlQuery secondInbox(Database::instance().connection());
     secondInbox.prepare(QStringLiteral("INSERT INTO lists(id,name,is_inbox,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'第二收集箱',1,1,1)"));
     secondInbox.addBindValue(newUuid()); QVERIFY(!secondInbox.exec());
@@ -289,12 +458,83 @@ void TaskTests::rejectsWrongIdentityAndFutureVersion()
     QCOMPARE(inspect(v4, QStringLiteral("PRAGMA user_version")).toInt(), 4);
     QCOMPARE(inspect(v4, QStringLiteral("SELECT id FROM tasks")).toString(), QStringLiteral("legacy"));
     const QString future = m_directory->filePath(QStringLiteral("future.db"));
-    QVERIFY(seed(future, {QStringLiteral("CREATE TABLE future_data(id TEXT)"), QStringLiteral("PRAGMA user_version=6"),
+    QVERIFY(seed(future, {QStringLiteral("CREATE TABLE future_data(id TEXT)"), QStringLiteral("PRAGMA user_version=7"),
                           QStringLiteral("PRAGMA application_id=%1").arg(Database::applicationId())}));
     QVERIFY(!Database::instance().openAt(future, &error));
-    QCOMPARE(inspect(future, QStringLiteral("PRAGMA user_version")).toInt(), 6);
+    QVERIFY(error.contains(QStringLiteral("v6")));
+    QCOMPARE(inspect(future, QStringLiteral("PRAGMA user_version")).toInt(), 7);
     QVERIFY(!Database::instance().openAt(QString(), &error));
     QVERIFY(open());
+}
+
+// 真实 v5 库升级 v6：字段默认、其他数据保留、失败回滚。
+void TaskTests::migratesV5ToV6Atomically()
+{
+    const QString inboxId = newUuid();
+    const QString folder = newUuid(), list = newUuid(), section = newUuid();
+    const QString active = newUuid(), done = newUuid(), trashed = newUuid(), note = newUuid(), reminderId = newUuid();
+    const qint64 now = 1770000000000LL, deletedAt = 1770000001000LL, completedAt = 1770000002000LL;
+    const QString v5 = m_directory->filePath(QStringLiteral("v5.db"));
+    QStringList statements = v5SchemaStatements(inboxId, QString::number(now));
+    statements.append(QStringLiteral("INSERT INTO folders(id,name,created_at_utc_ms,updated_at_utc_ms) VALUES('%1','v5 文件夹',%2,%2)").arg(folder).arg(now));
+    statements.append(QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,sort_order,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','%2','task','v5 清单',0,0,%3,%3)").arg(list, folder).arg(now));
+    statements.append(QStringLiteral("INSERT INTO sections(id,list_id,name,created_at_utc_ms,updated_at_utc_ms) VALUES('%1','%2','v5 分区',%3,%3)").arg(section, list).arg(now));
+    statements.append(QStringLiteral("INSERT INTO entities(id,kind,title,list_id,section_id,folder_id,status,due_at_utc_ms,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','task','v5 活动','%2','%3','%4','active',%5,%6,%6)").arg(active, list, section, folder).arg(now + 60000).arg(now));
+    statements.append(QStringLiteral("INSERT INTO entities(id,kind,title,list_id,status,completed_at_utc_ms,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','task','v5 完成','%2','completed',%3,%4,%4)").arg(done, list).arg(completedAt).arg(now));
+    statements.append(QStringLiteral("INSERT INTO entities(id,kind,title,list_id,status,deleted_at_utc_ms,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','task','v5 回收站','%2','active',%3,%4,%4)").arg(trashed, list).arg(deletedAt).arg(now));
+    statements.append(QStringLiteral("INSERT INTO entities(id,kind,title,list_id,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','note','v5 笔记','%2',%3,%3)").arg(note, list).arg(now));
+    statements.append(QStringLiteral("INSERT INTO reminders(id,entity_id,trigger_at_utc_ms,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','%2',%3,%4,%4)").arg(reminderId, active).arg(now + 30000).arg(now));
+    QVERIFY(seed(v5, statements));
+    QString error;
+    QVERIFY2(Database::instance().openAt(v5, &error), qPrintable(error));   // 打开即迁移
+    QCOMPARE(inspect(v5, QStringLiteral("PRAGMA user_version")).toInt(), 6);
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name IN ('icon','color','archived_at_utc_ms')")).toInt(), 3);
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT icon FROM lists")).toString(), QString());
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT color FROM lists")).toString(), QString());
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT archived_at_utc_ms FROM lists")).toLongLong(), qint64(0));
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='prevent_inbox_archive'")).toInt(), 1);
+    TaskStore store(Database::instance().connection()); QVERIFY2(store.load(), qPrintable(store.lastError()));
+    QCOMPARE(store.lists().size(), 2); QCOMPARE(store.entities().size(), 4);
+    QCOMPARE(store.entity(active).title, QStringLiteral("v5 活动"));
+    QCOMPARE(store.entity(active).reminders.size(), 1);
+    QCOMPARE(store.entity(done).status, TaskStatus::Completed);
+    QVERIFY(store.entity(trashed).deleted);
+    QCOMPARE(store.entity(note).kind, EntityKind::Note);
+    QCOMPARE(store.inboxListId(), inboxId);
+    QVERIFY(!store.setListArchived(inboxId, true));                        // 迁移后保护依旧有效
+    Database::instance().close();
+
+    // 迁移失败整体回滚：构造一个 lists 已带 color 列的畸形 v5，第一条 ALTER 成功、第二条失败。
+    const QString broken = m_directory->filePath(QStringLiteral("broken-v5.db"));
+    const QString brokenLists = QStringLiteral(
+        "CREATE TABLE lists("
+        "id TEXT PRIMARY KEY,folder_id TEXT,kind TEXT NOT NULL DEFAULT 'task' CHECK(kind IN ('task','note')),"
+        "name TEXT NOT NULL CHECK(length(trim(name))>0),is_inbox INTEGER NOT NULL DEFAULT 0 CHECK(is_inbox IN (0,1)),"
+        "color TEXT,"
+        "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
+        "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
+        "FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE RESTRICT)");
+    QStringList rebuilt;
+    rebuilt.append(QStringLiteral("CREATE TABLE folders(id TEXT PRIMARY KEY,name TEXT NOT NULL)"));
+    rebuilt.append(brokenLists);
+    rebuilt.append(QStringLiteral("CREATE TABLE local_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)"));
+    rebuilt.append(QStringLiteral("INSERT INTO lists(id,kind,name,is_inbox,created_at_utc_ms,updated_at_utc_ms) VALUES('%1','task','收集箱',1,1,1)").arg(inboxId));
+    rebuilt.append(QStringLiteral("INSERT INTO local_meta VALUES('inbox_list_id','%1')").arg(inboxId));
+    rebuilt.append(QStringLiteral("PRAGMA user_version=5"));
+    rebuilt.append(QStringLiteral("PRAGMA application_id=%1").arg(Database::applicationId()));
+    QVERIFY(seed(broken, rebuilt));
+    QVERIFY(!Database::instance().openAt(broken, &error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(inspect(broken, QStringLiteral("PRAGMA user_version")).toInt(), 5);
+    QCOMPARE(inspect(broken, QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name='icon'")).toInt(), 0);
+    QCOMPARE(inspect(broken, QStringLiteral("SELECT name FROM lists WHERE is_inbox=1")).toString(), QStringLiteral("收集箱"));
+    QVERIFY(!Database::instance().isOpen());
 }
 
 void TaskTests::completeModelAndUuidCrud()
@@ -338,8 +578,13 @@ void TaskTests::completeModelAndUuidCrud()
     QVERIFY(store.trashTask(parent)); QVERIFY(store.entity(parent).deleted); QCOMPARE(store.entity(parent).status, TaskStatus::Active);
     QVERIFY(store.restoreTask(parent));
     QVERIFY(store.deleteSection(section)); QVERIFY(store.entity(parent).sectionId.isEmpty());
+    // 删除清单 = 原子回收站：内容移入收集箱且进入回收站（不再是 active）。
     QVERIFY(store.deleteList(list)); QCOMPARE(store.entity(parent).listId, store.inboxListId()); QCOMPARE(store.entity(child).listId, store.inboxListId());
+    QVERIFY(store.entity(parent).deleted); QVERIFY(store.entity(child).deleted);
+    QVERIFY(store.entity(parent).deletedAt.isValid());
     QCOMPARE(store.entity(child).parentId, parent);
+    QVERIFY(store.restoreTask(parent)); QVERIFY(!store.entity(parent).deleted);
+    QCOMPARE(store.entity(parent).listId, store.inboxListId());
     QVERIFY(store.deleteFolder(folder)); QVERIFY(store.folders().isEmpty()); QVERIFY(store.entity(parent).folderId.isEmpty());
     QVERIFY(store.trashTask(parent)); QVERIFY(store.deletePermanently(parent));
     QVERIFY(store.entity(parent).id.isEmpty()); QVERIFY(store.entity(child).id.isEmpty()); // 真正子任务级联
@@ -377,6 +622,7 @@ void TaskTests::inboxAndOrganizationIntegrity()
     QCOMPARE(unfiled.name, QStringLiteral("用户清单")); QVERIFY(unfiled.folderId.isEmpty()); QCOMPARE(unfiled.kind, EntityKind::Note);
     QVERIFY(store.entity(userTask).folderId.isEmpty());
     QVERIFY(store.deleteList(userList)); QCOMPARE(store.entity(userTask).listId, inbox);
+    QVERIFY(store.entity(userTask).deleted);   // 删除清单的实体进入回收站而非保持 active
 
     QVERIFY(store.exportBackup(backupPath())); QVERIFY(store.importBackup(backupPath()));
     QCOMPARE(store.entity(localTask).id, localTask); QCOMPARE(store.entity(localTask).listId, inbox);
@@ -1286,7 +1532,7 @@ void TaskTests::allDayRecurrenceAndFlatBackup()
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM desktop_notes")).toInt(), 0); // 本机桌面投影不属于备份
 }
 
-void TaskTests::entityCodecAndBackupV2RoundTrip()
+void TaskTests::entityCodecAndBackupRoundTrip()
 {
     const QDateTime created = utc(2026, 6, 1, 8);
     Entity note;
@@ -1318,6 +1564,7 @@ void TaskTests::entityCodecAndBackupV2RoundTrip()
 
     EntitySnapshot snapshot;
     TaskList inbox; inbox.id = note.listId; inbox.name = QStringLiteral("收集箱"); inbox.inbox = true;
+    inbox.icon = QStringLiteral("👨‍👩‍👧‍👦"); inbox.color = QStringLiteral("#FF8800");
     inbox.createdAt = created; inbox.updatedAt = created; snapshot.lists.append(inbox);
     RecurrenceSeries series; series.id = note.recurrenceSeriesId; series.rrule = note.rrule; series.timeZone = note.timeZone;
     series.dtstartAt = note.dueAt; series.createdAt = created; series.updatedAt = created; snapshot.recurrenceSeries.append(series);
@@ -1332,14 +1579,23 @@ void TaskTests::entityCodecAndBackupV2RoundTrip()
     const QVector<EntityEvent> events{first, second};
     const QJsonObject root = backupcodec::toJson(snapshot, events);
     QCOMPARE(root.value(QStringLiteral("format")).toString(), QStringLiteral("KylinList.Entities"));
-    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 2);
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 3);
     QCOMPARE(root.value(QStringLiteral("defaultTimezone")).toString(), QStringLiteral("UTC"));
     QCOMPARE(root.value(QStringLiteral("entities")).toArray().size(), 1);
     QCOMPARE(root.value(QStringLiteral("events")).toArray().size(), 2);
     QVERIFY(!root.contains(QStringLiteral("tasks"))); QVERIFY(!root.contains(QStringLiteral("localMeta"))); QVERIFY(!root.contains(QStringLiteral("workspaces")));
+    {
+        const QJsonObject exportedList = root.value(QStringLiteral("lists")).toArray().first().toObject();
+        QCOMPARE(exportedList.value(QStringLiteral("icon")).toString(), QStringLiteral("👨‍👩‍👧‍👦"));
+        QCOMPARE(exportedList.value(QStringLiteral("color")).toString(), QStringLiteral("#FF8800"));
+        QCOMPARE(exportedList.value(QStringLiteral("archivedAtUtcMs")).toInt(), 0);
+    }
     EntitySnapshot restored; QVector<EntityEvent> restoredEvents; QString restoredTimezone;
     QVERIFY2(backupcodec::fromJson(root, &restored, &restoredEvents, &restoredTimezone, &error), qPrintable(error));
     QCOMPARE(restoredTimezone, QStringLiteral("UTC")); QCOMPARE(restored.entities.size(), 1); QCOMPARE(restored.localMeta.size(), 0);
+    QCOMPARE(restored.lists.first().icon, QStringLiteral("👨‍👩‍👧‍👦"));
+    QCOMPARE(restored.lists.first().color, QStringLiteral("#FF8800"));
+    QCOMPARE(restored.lists.first().archivedAtUtcMs, qint64(0));
     QCOMPARE(restored.entities.first().entity.kind, EntityKind::Note); QCOMPARE(restored.entities.first().entity.body, note.body);
     QCOMPARE(restoredEvents.size(), 2); QVERIFY(!restoredEvents.first().oldValue.isValid());
     QCOMPARE(restoredEvents.first().newValue.toString(), note.body);
@@ -1367,12 +1623,436 @@ void TaskTests::entityCodecAndBackupV2RoundTrip()
     old = root; invalidEntities = old.value(QStringLiteral("entities")).toArray(); invalidReference = invalidEntities.first().toObject();
     invalidReference.remove(QStringLiteral("serverRevision")); invalidEntities.replace(0, invalidReference); old.insert(QStringLiteral("entities"), invalidEntities);
     QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+
+    // v2 备份没有 icon/color/archivedAtUtcMs：读入补默认值（无图标、无颜色、未归档）。
+    QJsonObject v2Root = root;
+    {
+        QJsonArray v2Lists = v2Root.value(QStringLiteral("lists")).toArray();
+        QJsonObject v2List = v2Lists.first().toObject();
+        v2List.remove(QStringLiteral("icon")); v2List.remove(QStringLiteral("color")); v2List.remove(QStringLiteral("archivedAtUtcMs"));
+        v2Lists.replace(0, v2List); v2Root.insert(QStringLiteral("lists"), v2Lists);
+        v2Root.insert(QStringLiteral("version"), 2);
+    }
+    EntitySnapshot v2Restored;
+    QVERIFY2(backupcodec::fromJson(v2Root, &v2Restored, &restoredEvents, &restoredTimezone, &error), qPrintable(error));
+    QVERIFY(v2Restored.lists.first().icon.isEmpty()); QVERIFY(v2Restored.lists.first().color.isEmpty());
+    QCOMPARE(v2Restored.lists.first().archivedAtUtcMs, qint64(0));
+    // 未来版本与非法外观拒绝（旧程序同样拒绝 v3）。
+    old = root; old.insert(QStringLiteral("version"), 4);
+    QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+    old = root; QJsonArray badLists = old.value(QStringLiteral("lists")).toArray();
+    QJsonObject badList = badLists.first().toObject(); badList.insert(QStringLiteral("color"), QStringLiteral("#ZZZZZZ"));
+    badLists.replace(0, badList); old.insert(QStringLiteral("lists"), badLists);
+    QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+    old = root; badLists = old.value(QStringLiteral("lists")).toArray();
+    badList = badLists.first().toObject(); badList.insert(QStringLiteral("icon"), QString(17, QChar(0x4E2D)));
+    badLists.replace(0, badList); old.insert(QStringLiteral("lists"), badLists);
+    QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+    old = root; badLists = old.value(QStringLiteral("lists")).toArray();
+    badList = badLists.first().toObject(); badList.insert(QStringLiteral("archivedAtUtcMs"), -1);
+    badLists.replace(0, badList); old.insert(QStringLiteral("lists"), badLists);
+    QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+}
+
+void TaskTests::listAppearanceArchiveAndAtomicUpdate()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString folderA = store.createFolder(QStringLiteral("文件夹A"));
+    const QString folderB = store.createFolder(QStringLiteral("文件夹B"));
+    const QString list = store.createList(QStringLiteral("  装修  "), folderA);
+    QVERIFY(isUuid(list));
+    const QString family = QStringLiteral("👨‍👩‍👧‍👦");   // 4 emoji + 3 ZWJ = 11 个 UTF-16 码元
+    const qint64 revisionBefore = scalar(QStringLiteral("SELECT revision FROM lists WHERE id='%1'").arg(list)).toLongLong();
+    QVERIFY2(store.updateList(list, QStringLiteral("  装修 "), family, QStringLiteral("#fF8800"), folderB), qPrintable(store.lastError()));
+    TaskList updated;
+    for (const TaskList &candidate : store.lists()) if (candidate.id == list) updated = candidate;
+    QCOMPARE(updated.name, QStringLiteral("装修"));
+    QCOMPARE(updated.icon, family);
+    QCOMPARE(updated.color, QStringLiteral("#fF8800"));
+    QCOMPARE(updated.folderId, folderB);
+    QCOMPARE(updated.kind, EntityKind::Task); QVERIFY(!updated.inbox); QCOMPARE(updated.archivedAtUtcMs, qint64(0));
+    QCOMPARE(scalar(QStringLiteral("SELECT revision FROM lists WHERE id='%1'").arg(list)).toLongLong(), revisionBefore + 1); // 单事务单次更新
+    QVERIFY(!store.updateList(list, QStringLiteral("x"), QString(), QStringLiteral("red"), folderB));
+    QVERIFY(!store.updateList(list, QStringLiteral("x"), QString(), QStringLiteral("#12345"), folderB));
+    QVERIFY(!store.updateList(list, QStringLiteral("x"), QString(), QStringLiteral("#1234567"), folderB));
+    QVERIFY(!store.updateList(list, QStringLiteral("x"), QString(), QStringLiteral("#12345W"), folderB));
+    QVERIFY(!store.updateList(list, QStringLiteral("x"), QString(17, QChar(0x4E2D)), QString(), folderB));
+    QVERIFY(!store.updateList(list, QStringLiteral("  "), QString(), QString(), folderB));
+    QVERIFY(!store.updateList(list, QString(65, QChar(0x540D)), QString(), QString(), folderB));
+    QVERIFY(!store.updateList(list, QStringLiteral("x"), QString(), QString(), newUuid()));
+    QVERIFY(!store.updateList(newUuid(), QStringLiteral("x"), QString(), QString(), QString()));
+    QVERIFY(!store.updateList(store.inboxListId(), QStringLiteral("改名"), QString(), QString(), folderA)); // 收集箱不可移动/改归档外观之外的语义
+    QCOMPARE(scalar(QStringLiteral("SELECT revision FROM lists WHERE id='%1'").arg(list)).toLongLong(), revisionBefore + 1); // 失败不推进
+    QVERIFY2(store.updateList(list, QStringLiteral("装修"), QStringLiteral("🏡"), QStringLiteral("#A1b2C3"), QString()), qPrintable(store.lastError()));
+
+    // saveList 门面：kind/inbox/归档状态以库内现值为准，调用方给什么都改不掉。
+    TaskList facade;
+    for (const TaskList &candidate : store.lists()) if (candidate.id == list) facade = candidate;
+    facade.kind = EntityKind::Note; facade.inbox = true; facade.archivedAtUtcMs = 12345;
+    facade.name = QStringLiteral("装修 v2"); facade.icon = family; facade.color = QStringLiteral("#00AA55");
+    QVERIFY2(store.saveList(facade), qPrintable(store.lastError()));
+    TaskList saved;
+    for (const TaskList &candidate : store.lists()) if (candidate.id == list) saved = candidate;
+    QCOMPARE(saved.kind, EntityKind::Task); QVERIFY(!saved.inbox); QCOMPARE(saved.archivedAtUtcMs, qint64(0));
+    QCOMPARE(saved.name, QStringLiteral("装修 v2")); QCOMPARE(saved.icon, family); QCOMPARE(saved.color, QStringLiteral("#00AA55"));
+    QVERIFY(saved.folderId.isEmpty());
+
+    QVERIFY(!store.setListArchived(store.inboxListId(), true));   // 收集箱禁止归档
+    const QString task = store.createTask(QStringLiteral("归档清单任务"), list);
+    Entity before = store.entity(task);
+    before.dueAt = utc(2026, 12, 1, 9); before.reminderAt = utc(2026, 12, 1, 8);
+    QVERIFY(store.saveTask(before));
+    before = store.entity(task);
+    const int entitiesBefore = store.entities().size();
+    QVERIFY2(store.setListArchived(list, true), qPrintable(store.lastError()));
+    TaskList archived;
+    for (const TaskList &candidate : store.lists()) if (candidate.id == list) archived = candidate;
+    QVERIFY(archived.archivedAtUtcMs > 0);
+    QVERIFY(store.isListArchived(list));
+    QCOMPARE(store.archivedListIds(), QSet<QString>{list});
+    const Entity archivedTask = store.entity(task);                 // 归档只改清单，不动任务
+    QCOMPARE(archivedTask.status, TaskStatus::Active); QVERIFY(!archivedTask.deleted);
+    QCOMPARE(archivedTask.dueAt, before.dueAt);
+    QCOMPARE(archivedTask.reminders.size(), before.reminders.size());
+    QCOMPARE(archivedTask.reminderAt, before.reminderAt);
+    QCOMPARE(store.entities().size(), entitiesBefore);              // 不生成重复实例
+    QVERIFY(store.setListArchived(list, true));                     // 幂等
+    for (const TaskList &candidate : store.lists()) if (candidate.id == list)
+        QCOMPARE(candidate.archivedAtUtcMs, archived.archivedAtUtcMs);
+    QVERIFY(store.setListArchived(list, false));
+    for (const TaskList &candidate : store.lists()) if (candidate.id == list)
+        QCOMPARE(candidate.archivedAtUtcMs, qint64(0));
+    QVERIFY(!store.isListArchived(list)); QVERIFY(store.archivedListIds().isEmpty());
+    QVERIFY(store.setListArchived(newUuid(), true) == false);       // 不存在的清单
+    // 创建时外观随同一事务落库，无需 create 后二次保存。
+    const QString created = store.createList(QStringLiteral("  新家  "), folderA, EntityKind::Task,
+                                             QStringLiteral("🏡"), QStringLiteral("#00CCAA"));
+    QVERIFY2(isUuid(created), qPrintable(store.lastError()));
+    TaskList createdRow;
+    for (const TaskList &candidate : store.lists()) if (candidate.id == created) createdRow = candidate;
+    QCOMPARE(createdRow.name, QStringLiteral("新家"));
+    QCOMPARE(createdRow.icon, QStringLiteral("🏡"));
+    QCOMPARE(createdRow.color, QStringLiteral("#00CCAA"));
+    QCOMPARE(createdRow.folderId, folderA);
+    QCOMPARE(scalar(QStringLiteral("SELECT icon FROM lists WHERE id='%1'").arg(created)).toString(), QStringLiteral("🏡"));
+    QCOMPARE(scalar(QStringLiteral("SELECT color FROM lists WHERE id='%1'").arg(created)).toString(), QStringLiteral("#00CCAA"));
+    QCOMPARE(scalar(QStringLiteral("SELECT archived_at_utc_ms FROM lists WHERE id='%1'").arg(created)).toLongLong(), qint64(0));
+    QVERIFY(store.createList(QStringLiteral("坏颜色"), QString(), EntityKind::Task, QString(), QStringLiteral("red")).isEmpty());
+    QVERIFY(store.createList(QStringLiteral("坏图标"), QString(), EntityKind::Task, QString(17, QChar(0x56FE))).isEmpty());
+}
+
+void TaskTests::deleteListMovesContentToTrashAtomically()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString folder = store.createFolder(QStringLiteral("删除文件夹"));
+    const QString list = store.createList(QStringLiteral("待删清单"), folder);
+    const QString section = store.createSection(list, QStringLiteral("分区"));
+    const QString active = store.createTask(QStringLiteral("活动任务"), list, section);
+    {
+        Entity value = store.entity(active);
+        value.dueAt = utc(2026, 3, 1, 9); value.reminderAt = utc(2026, 3, 1, 8); value.folderId = folder;
+        value.tags = QStringList{QStringLiteral("随清单删除")};
+        QVERIFY(store.saveTask(value));
+    }
+    const QString done = store.createTask(QStringLiteral("完成任务"), list, section);
+    QVERIFY(store.setCompleted(done, true));
+    const QString abandoned = store.createTask(QStringLiteral("放弃任务"), list, section);
+    QVERIFY(store.abandonTask(abandoned));
+    const QString trashed = store.createTask(QStringLiteral("回收站任务"), list, section);
+    QVERIFY(store.trashTask(trashed));
+    const QString note = store.createNote(QStringLiteral("清单笔记"), list, section);
+    const qint64 originalDeletedAt = utcMs(store.entity(trashed).deletedAt);
+    const qint64 originalCompletedAt = utcMs(store.entity(done).completedAt);
+    const int count = store.entities().size();
+    const qint64 before = utcMs(utcNow());
+    QVERIFY2(store.deleteList(list), qPrintable(store.lastError()));
+    const qint64 after = utcMs(utcNow());
+    QCOMPARE(store.entities().size(), count);                       // 全部保留，只是进入回收站
+    bool sawList = false;
+    for (const TaskList &candidate : store.lists()) sawList = sawList || candidate.id == list;
+    QVERIFY(!sawList);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM sections WHERE list_id='%1'").arg(list)).toInt(), 0);
+    const QString inbox = store.inboxListId();
+    for (const QString &id : {active, done, abandoned, trashed, note}) {
+        const Entity entity = store.entity(id);
+        QVERIFY2(!entity.id.isEmpty(), "实体随清单删除而丢失");
+        QCOMPARE(entity.listId, inbox);
+        QVERIFY(entity.sectionId.isEmpty());
+        QVERIFY(entity.folderId.isEmpty());
+        QVERIFY(entity.deleted);
+        QVERIFY(entity.deletedAt.isValid());
+    }
+    QCOMPARE(store.entity(active).status, TaskStatus::Active);
+    QVERIFY(utcMs(store.entity(active).deletedAt) >= before);
+    QVERIFY(utcMs(store.entity(active).deletedAt) <= after);        // 未删除者记本次提交时间
+    QCOMPARE(store.entity(done).status, TaskStatus::Completed);
+    QCOMPARE(utcMs(store.entity(done).completedAt), originalCompletedAt);
+    QCOMPARE(store.entity(abandoned).status, TaskStatus::Abandoned);
+    QCOMPARE(utcMs(store.entity(trashed).deletedAt), originalDeletedAt);  // 已删除者保留原时间
+    QCOMPARE(store.entity(note).kind, EntityKind::Note);
+    QCOMPARE(store.entity(active).reminders.size(), 1);             // 提醒原样保留
+    QCOMPARE(store.entity(active).tags, QStringList{QStringLiteral("随清单删除")});
+    QVERIFY(store.restoreTask(active));                             // 沿用现有恢复机制
+    QVERIFY(!store.entity(active).deleted);
+    QCOMPARE(store.entity(active).listId, inbox);
+
+    // 原子性：清单内实体搬移被拒时整个删除回滚。
+    const QString otherList = store.createList(QStringLiteral("阻断清单"));
+    const QString otherTask = store.createTask(QStringLiteral("阻断任务"), otherList);
+    QVERIFY(execute(QStringLiteral("CREATE TRIGGER reject_list_recycle BEFORE UPDATE ON entities "
+        "WHEN NEW.list_id=(SELECT id FROM lists WHERE is_inbox=1) AND OLD.list_id<>NEW.list_id "
+        "BEGIN SELECT RAISE(ABORT,'recycle rejected'); END")));
+    QVERIFY(!store.deleteList(otherList));
+    bool otherListExists = false;
+    for (const TaskList &candidate : store.lists()) otherListExists = otherListExists || candidate.id == otherList;
+    QVERIFY(otherListExists);
+    QVERIFY(!store.entity(otherTask).deleted);
+    QCOMPARE(store.entity(otherTask).listId, otherList);
+    QVERIFY(execute(QStringLiteral("DROP TRIGGER reject_list_recycle")));
+    QVERIFY(store.deleteList(otherList));
+    QVERIFY(store.entity(otherTask).deleted);
+}
+
+void TaskTests::viewSpecScopesAndArchivedFiltering()
+{
+    const QDate today(2026, 11, 15);
+    const QString normalList = newUuid(), archivedList = newUuid();
+    const QSet<QString> noArchive;
+    const QSet<QString> archiveSet{archivedList};
+    const auto task = [](const QString &listId, const QDate &date) {
+        Entity value; value.id = newUuid(); value.kind = EntityKind::Task;
+        value.title = QStringLiteral("任务"); value.listId = listId; value.allDayDate = date;
+        return value;
+    };
+    const Entity overdueNormal = task(normalList, today.addDays(-3));
+    const Entity todayNormal = task(normalList, today);
+    const Entity tomorrowNormal = task(normalList, today.addDays(1));
+    const Entity day6Normal = task(normalList, today.addDays(6));
+    const Entity day7Normal = task(normalList, today.addDays(7));
+    const Entity overdueArchived = task(archivedList, today.addDays(-2));
+    const Entity tomorrowArchived = task(archivedList, today.addDays(1));
+    Entity archivedNote; archivedNote.id = newUuid(); archivedNote.kind = EntityKind::Note;
+    archivedNote.title = QStringLiteral("归档清单笔记"); archivedNote.listId = archivedList;
+    Entity archivedDone; archivedDone.id = newUuid(); archivedDone.kind = EntityKind::Task;
+    archivedDone.title = QStringLiteral("归档清单完成"); archivedDone.listId = archivedList;
+    archivedDone.status = TaskStatus::Completed; archivedDone.completedAt = utc(2026, 11, 1);
+    Entity archivedTrash; archivedTrash.id = newUuid(); archivedTrash.kind = EntityKind::Task;
+    archivedTrash.title = QStringLiteral("归档清单回收站"); archivedTrash.listId = archivedList;
+    archivedTrash.deleted = true; archivedTrash.deletedAt = utc(2026, 11, 2);
+    const QVector<Entity> all{overdueNormal, todayNormal, tomorrowNormal, day6Normal, day7Normal,
+                              overdueArchived, tomorrowArchived, archivedNote, archivedDone, archivedTrash};
+
+    ViewSpec spec;
+    spec.scope = ViewScope::Today;
+    QVERIFY(contains(overdueNormal, spec, today, noArchive));       // Today 保持包含逾期
+    QVERIFY(contains(todayNormal, spec, today, noArchive));
+    QVERIFY(!contains(tomorrowNormal, spec, today, noArchive));
+    QVERIFY(contains(overdueArchived, spec, today, noArchive));
+    QVERIFY(!contains(overdueArchived, spec, today, archiveSet));   // 归档清单排除
+
+    spec.scope = ViewScope::Tomorrow;
+    QVERIFY(!contains(overdueNormal, spec, today, noArchive));      // 只含明天，不含今天与逾期
+    QVERIFY(!contains(todayNormal, spec, today, noArchive));
+    QVERIFY(contains(tomorrowNormal, spec, today, noArchive));
+    QVERIFY(!contains(day6Normal, spec, today, noArchive));
+    QVERIFY(contains(tomorrowArchived, spec, today, noArchive));
+    QVERIFY(!contains(tomorrowArchived, spec, today, archiveSet));
+
+    spec.scope = ViewScope::Next7Days;
+    QVERIFY(!contains(overdueNormal, spec, today, noArchive));      // 七天内不再包含逾期
+    QVERIFY(contains(todayNormal, spec, today, noArchive));         // 含今天
+    QVERIFY(contains(tomorrowNormal, spec, today, noArchive));
+    QVERIFY(contains(day6Normal, spec, today, noArchive));          // 今天+6 为最后一天
+    QVERIFY(!contains(day7Normal, spec, today, noArchive));         // 今天+7 排除
+    QVERIFY(!contains(tomorrowArchived, spec, today, archiveSet));
+
+    spec.scope = ViewScope::Overdue;
+    QVERIFY(contains(overdueNormal, spec, today, noArchive));
+    QVERIFY(!contains(todayNormal, spec, today, noArchive));
+    QVERIFY(contains(overdueArchived, spec, today, noArchive));
+    QVERIFY(!contains(overdueArchived, spec, today, archiveSet));
+
+    spec.scope = ViewScope::AllLists;
+    QVERIFY(contains(archivedNote, spec, today, noArchive));
+    QVERIFY(!contains(archivedNote, spec, today, archiveSet));      // AllLists 排除归档清单活动实体
+    QVERIFY(!contains(archivedDone, spec, today, archiveSet));      // 完成任务本就不在活动视图
+
+    spec.scope = ViewScope::List; spec.listId = archivedList;
+    QVERIFY(contains(tomorrowArchived, spec, today, archiveSet));   // 显式 List 作用域可查看归档清单
+    QVERIFY(contains(archivedNote, spec, today, archiveSet));
+    QVERIFY(!contains(tomorrowNormal, spec, today, archiveSet));
+
+    spec.scope = ViewScope::Completed;
+    QVERIFY(contains(archivedDone, spec, today, archiveSet));       // 历史视图保留可见性
+    spec.scope = ViewScope::Trash;
+    QVERIFY(contains(archivedTrash, spec, today, archiveSet));
+
+    spec = ViewSpec(); spec.scope = ViewScope::AllLists;
+    Entity pinned = overdueNormal; pinned.pinnedAt = utc(2026, 11, 14);
+    const QVector<Entity> pinnedAll{pinned, todayNormal, archivedNote};
+    const QVector<ViewSection> sections = buildSections(pinnedAll, spec, today, archiveSet);
+    QVERIFY(!sections.isEmpty());
+    QCOMPARE(sections.first().key, QStringLiteral("pinned"));       // 稳定机器标识
+    QCOMPARE(sections.first().title, QStringLiteral("置顶"));
+    for (const ViewSection &section : sections)
+        for (const Entity &entity : section.items) QVERIFY(entity.id != archivedNote.id);
+    spec.scope = ViewScope::Completed;
+    const QVector<ViewSection> archiveSections = buildSections(QVector<Entity>{archivedDone}, spec, today, archiveSet);
+    QCOMPARE(archiveSections.size(), 1);
+    QCOMPARE(archiveSections.first().key, QStringLiteral("completed"));
+    spec.scope = ViewScope::Tomorrow; spec.renderer = ViewRenderer::Time;
+    const QVector<ViewSection> tomorrowSections = buildSections(QVector<Entity>{todayNormal, tomorrowNormal, day6Normal}, spec, today, noArchive);
+    QCOMPARE(tomorrowSections.size(), 1);
+    QCOMPARE(tomorrowSections.first().items.size(), 1);
+    QCOMPARE(tomorrowSections.first().items.first().id, tomorrowNormal.id);
+}
+
+void TaskTests::archivedListsSuppressReminders()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QString list = store.createList(QStringLiteral("归档提醒清单"));
+    const QString first = store.createTask(QStringLiteral("归档前到期"), list);
+    {
+        Entity value = store.entity(first);
+        value.dueAt = now.addSecs(3600); value.reminderAt = now.addSecs(-60);
+        QVERIFY(store.saveTask(value));
+    }
+    ReminderScheduler scheduler(&store);
+    QSignalSpy triggered(&scheduler, &ReminderScheduler::reminderTriggered);
+    scheduler.checkDue(now); QCOMPARE(triggered.count(), 1);        // 未归档：正常提醒
+    QVERIFY(store.setListArchived(list, true));
+    // 在已归档清单里补一个已到期任务：归档期间任何入口都不能提醒。
+    const QString second = store.createTask(QStringLiteral("归档后到期"), list);
+    {
+        Entity value = store.entity(second);
+        value.dueAt = now.addSecs(3600); value.reminderAt = now.addSecs(-30);
+        QVERIFY(store.saveTask(value));
+    }
+    const TaskReminder secondReminder = store.entity(second).reminders.first();
+    scheduler.checkDue(now); QCOMPARE(triggered.count(), 1);        // 归档清单：初查即排除
+    QVERIFY(!store.markReminderDelivered(secondReminder.id, secondReminder.triggerAt, now));
+    QVERIFY(!store.markReminderNotified(second, secondReminder.triggerAt, now));
+    QVERIFY(!scheduler.snooze(second));
+    QVERIFY(!scheduler.snoozeReminder(secondReminder.id));
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM reminder_deliveries")).toInt(), 1);
+    // Repository SQL 是权威闸门：绕过 Store 直接投递也必须失败。
+    {
+        TaskRepository repository(Database::instance().connection());
+        EntityChanges changes; EntitySnapshot after; QString error;
+        ReminderDelivery delivery;
+        delivery.reminderId = secondReminder.id; delivery.installationId = store.installationId();
+        delivery.scheduledAt = secondReminder.triggerAt; delivery.deliveredAt = now;
+        changes.deliverySaves.append(delivery);
+        QVERIFY(!repository.apply(&changes, &after, &error));
+        QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM reminder_deliveries")).toInt(), 1);
+    }
+    QCOMPARE(store.entity(second).reminders.size(), 1);             // 提醒不被删除
+    QCOMPARE(store.entity(second).status, TaskStatus::Active);      // 任务状态不变
+    QVERIFY(store.setListArchived(list, false));
+    scheduler.checkDue(now); QCOMPARE(triggered.count(), 2);        // 取消归档恢复提醒
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM reminder_deliveries")).toInt(), 2);
+}
+
+void TaskTests::postponeOverdueTasksShiftsDates()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today(2026, 11, 15);
+    const QString list = store.createList(QStringLiteral("顺延清单"));
+    const QString timed = store.createTask(QStringLiteral("定时逾期"), list);
+    {
+        Entity value = store.entity(timed);
+        value.startAt = fromAppTime(QDateTime(QDate(2026, 11, 10), QTime(9, 5)));
+        value.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 10), QTime(18, 30)));
+        value.reminderAt = fromAppTime(QDateTime(QDate(2026, 11, 10), QTime(18, 0)));
+        QVERIFY(store.saveTask(value));
+    }
+    const QString allDay = store.createTask(QStringLiteral("全天逾期"), list);
+    {
+        Entity value = store.entity(allDay); value.allDayDate = QDate(2026, 11, 12);
+        QVERIFY(store.saveTask(value));
+    }
+    const QString dueToday = store.createTask(QStringLiteral("今天到期"), list);
+    {
+        Entity value = store.entity(dueToday); value.allDayDate = today;
+        QVERIFY(store.saveTask(value));
+    }
+    const QString future = store.createTask(QStringLiteral("未来到期"), list);
+    {
+        Entity value = store.entity(future); value.allDayDate = today.addDays(3);
+        QVERIFY(store.saveTask(value));
+    }
+    const QString done = store.createTask(QStringLiteral("完成逾期"));
+    {
+        Entity value = store.entity(done); value.allDayDate = today.addDays(-1);
+        QVERIFY(store.saveTask(value));
+    }
+    QVERIFY(store.setCompleted(done, true));
+    const QString trashed = store.createTask(QStringLiteral("回收站逾期"));
+    {
+        Entity value = store.entity(trashed); value.allDayDate = today.addDays(-1);
+        QVERIFY(store.saveTask(value));
+    }
+    QVERIFY(store.trashTask(trashed));
+    const QString archivedList = store.createList(QStringLiteral("归档顺延清单"));
+    const QString archivedTask = store.createTask(QStringLiteral("归档清单逾期"), archivedList);
+    {
+        Entity value = store.entity(archivedTask); value.allDayDate = today.addDays(-2);
+        QVERIFY(store.saveTask(value));
+    }
+    QVERIFY(store.setListArchived(archivedList, true));
+
+    QVERIFY(!store.postponeOverdueTasks(QStringList{timed, newUuid()}, today));   // 未知 id 直接失败
+    QStringList ids{timed, allDay, dueToday, future, done, trashed, archivedTask};
+    QVERIFY2(store.postponeOverdueTasks(ids, today), qPrintable(store.lastError()));
+    const Entity timedAfter = store.entity(timed);
+    QCOMPARE(toAppTime(timedAfter.startAt).date(), today);                         // 保留时刻只改日期
+    QCOMPARE(toAppTime(timedAfter.startAt).time(), QTime(9, 5));
+    QCOMPARE(toAppTime(timedAfter.dueAt).date(), today);
+    QCOMPARE(toAppTime(timedAfter.dueAt).time(), QTime(18, 30));
+    QCOMPARE(store.entity(timed).status, TaskStatus::Active);
+    QCOMPARE(store.entity(timed).reminders.size(), 1);
+    QCOMPARE(store.entity(allDay).allDayDate, today);
+    QCOMPARE(store.entity(dueToday).allDayDate, today);            // 今天的不动
+    QCOMPARE(store.entity(future).allDayDate, today.addDays(3));   // 未来不动
+    QCOMPARE(store.entity(done).allDayDate, today.addDays(-1));    // 完成不动
+    QVERIFY(store.entity(done).completed);
+    QCOMPARE(store.entity(trashed).allDayDate, today.addDays(-1)); // 回收站不动
+    QVERIFY(store.entity(trashed).deleted);
+    QCOMPARE(store.entity(archivedTask).allDayDate, today.addDays(-2)); // 归档清单不动
+
+    // 原子失败：任一更新被拒则全部回滚。
+    QVERIFY(execute(QStringLiteral("CREATE TRIGGER reject_postpone BEFORE UPDATE ON entities "
+        "WHEN NEW.all_day_date='2026-11-15' AND OLD.all_day_date<'2026-11-15' "
+        "BEGIN SELECT RAISE(ABORT,'postpone rejected'); END")));
+    {
+        Entity value = store.entity(timed);                        // 两个任务都重置回逾期
+        value.startAt = fromAppTime(QDateTime(QDate(2026, 11, 10), QTime(9, 5)));
+        value.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 10), QTime(18, 30)));
+        QVERIFY(store.saveTask(value));
+    }
+    {
+        Entity value = store.entity(allDay); value.allDayDate = QDate(2026, 11, 12);
+        QVERIFY(store.saveTask(value));
+    }
+    QVERIFY(!store.postponeOverdueTasks(QStringList{timed, allDay}, today));
+    QCOMPARE(store.entity(allDay).allDayDate, QDate(2026, 11, 12)); // 无部分成功
+    QCOMPARE(toAppTime(store.entity(timed).dueAt).date(), QDate(2026, 11, 10));
+    QCOMPARE(toAppTime(store.entity(timed).dueAt).time(), QTime(18, 30));
+    QVERIFY(execute(QStringLiteral("DROP TRIGGER reject_postpone")));
+    QVERIFY(store.postponeOverdueTasks(QStringList{allDay, timed}, today));
+    QCOMPARE(store.entity(allDay).allDayDate, today);
+    QCOMPARE(toAppTime(store.entity(timed).dueAt).date(), today);
+    QCOMPARE(toAppTime(store.entity(timed).dueAt).time(), QTime(18, 30));
 }
 
 void TaskTests::backupRoundTripAndLegacyRejection()
 {
     QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
     const QString folder = store.createFolder(QStringLiteral("文件夹 Ω")); const QString list = store.createList(QStringLiteral("清单 🐱"), folder);
+    QVERIFY2(store.updateList(list, QStringLiteral(" 清单 🐱 "), QStringLiteral("🏠"), QStringLiteral("#AA33CC"), folder), qPrintable(store.lastError()));
+    const QString archivedList = store.createList(QStringLiteral("归档清单"));
+    QVERIFY(store.setListArchived(archivedList, true));
     const QString section = store.createSection(list, QStringLiteral("段落")); const QString id = store.createTask(QStringLiteral("完整备份"), list, section);
     const QString target = store.createTask(QStringLiteral("内链目标"));
     Entity task = store.entity(id); task.body = QStringLiteral("**Markdown** [目标](kl:%1)").arg(target); task.priority = 3;
@@ -1417,7 +2097,7 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     QCOMPARE(QString::fromLatin1(bytes.left(4)), QStringLiteral("KLB1"));
     QVector<attachmentcodec::BackupFrame> frames; const QJsonObject root = readMetadata(backupPath(), &frames);
     QCOMPARE(root.value(QStringLiteral("format")).toString(), QStringLiteral("KylinList.Entities"));
-    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 2); QCOMPARE(frames.size(), 1);
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 3); QCOMPARE(frames.size(), 1);
     QCOMPARE(root.value(QStringLiteral("defaultTimezone")).toString(), QStringLiteral("Asia/Shanghai"));
     QCOMPARE(root.value(QStringLiteral("events")).toArray().size(), expectedEvents.size());
     QCOMPARE(root.value(QStringLiteral("checklistItems")).toArray().size(), 1);
@@ -1430,6 +2110,17 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     for (const QJsonValue &value : root.value(QStringLiteral("lists")).toArray())
         if (value.toObject().value(QStringLiteral("isInbox")).toBool()) ++exportedInboxes;
     QCOMPARE(exportedInboxes, 1);
+    int exportedArchived = 0; QString exportedIcon, exportedColor;
+    for (const QJsonValue &value : root.value(QStringLiteral("lists")).toArray()) {
+        const QJsonObject object = value.toObject();
+        if (object.value(QStringLiteral("archivedAtUtcMs")).toDouble() > 0) ++exportedArchived;
+        if (object.value(QStringLiteral("id")).toString() == list) {
+            exportedIcon = object.value(QStringLiteral("icon")).toString();
+            exportedColor = object.value(QStringLiteral("color")).toString();
+        }
+    }
+    QCOMPARE(exportedArchived, 1);
+    QCOMPARE(exportedIcon, QStringLiteral("🏠")); QCOMPARE(exportedColor, QStringLiteral("#AA33CC"));
     QJsonObject exportedTask;
     for (const QJsonValue &value : root.value(QStringLiteral("entities")).toArray())
         if (value.toObject().value(QStringLiteral("id")).toString() == id) exportedTask = value.toObject();
@@ -1453,6 +2144,14 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     QVERIFY(store.markReminderDelivered(extra.id, extra.triggerAt, utcNow()));
     QVERIFY2(store.importBackup(backupPath()), qPrintable(store.lastError()));
     QCOMPARE(store.entities().size(), 2); QVERIFY(store.entity(sentinel).id.isEmpty());
+    bool restoredAppearance = false, restoredArchived = false;
+    for (const TaskList &candidate : store.lists()) {
+        if (candidate.id == list)
+            restoredAppearance = candidate.icon == QStringLiteral("🏠") && candidate.color == QStringLiteral("#AA33CC")
+                && candidate.name == QStringLiteral("清单 🐱") && candidate.archivedAtUtcMs == 0;
+        if (candidate.id == archivedList) restoredArchived = candidate.archivedAtUtcMs > 0;
+    }
+    QVERIFY(restoredAppearance); QVERIFY(restoredArchived);   // 覆盖恢复保留外观与归档状态
     QCOMPARE(store.entity(id).id, id); QCOMPARE(store.entity(id).body, task.body); QCOMPARE(store.entity(target).title, QStringLiteral("内链目标"));
     QCOMPARE(store.entity(id).listId, list); QCOMPARE(store.entity(id).sectionId, section); QCOMPARE(store.entity(id).folderId, task.folderId);
     QCOMPARE(store.entity(id).sortOrder, qint64(23)); QCOMPARE(store.entity(id).pinnedAt, task.pinnedAt);
@@ -1489,6 +2188,24 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     QJsonObject oldList = oldLists.first().toObject(); oldList.remove(QStringLiteral("kind"));
     oldLists.replace(0, oldList); oldMetadata.insert(QStringLiteral("lists"), oldLists);
     QVERIFY(writeContainer(legacy, oldMetadata, frames)); QVERIFY(!store.importBackup(legacy)); QCOMPARE(store.entities().size(), 2);
+    // v2 容器（无 icon/color/archivedAtUtcMs）：读入成功并补默认值。
+    QJsonObject v2Metadata = root;
+    {
+        QJsonArray v2Lists = v2Metadata.value(QStringLiteral("lists")).toArray();
+        for (int i = 0; i < v2Lists.size(); ++i) {
+            QJsonObject object = v2Lists.at(i).toObject();
+            object.remove(QStringLiteral("icon")); object.remove(QStringLiteral("color")); object.remove(QStringLiteral("archivedAtUtcMs"));
+            v2Lists.replace(i, object);
+        }
+        v2Metadata.insert(QStringLiteral("lists"), v2Lists); v2Metadata.insert(QStringLiteral("version"), 2);
+    }
+    QVERIFY(writeContainer(legacy, v2Metadata, frames));
+    QVERIFY2(store.importBackup(legacy), qPrintable(store.lastError()));
+    QCOMPARE(store.entities().size(), 2);
+    for (const TaskList &candidate : store.lists()) {
+        QVERIFY(candidate.icon.isEmpty()); QVERIFY(candidate.color.isEmpty());
+        QCOMPARE(candidate.archivedAtUtcMs, qint64(0));       // v2 无归档语义，一律未归档
+    }
     TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load()); QCOMPARE(reloaded.attachments(id).size(), 1);
 }
 

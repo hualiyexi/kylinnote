@@ -17,6 +17,9 @@ const char *const kSchema[] = {
     "CREATE TABLE lists("
     "id TEXT PRIMARY KEY,folder_id TEXT,kind TEXT NOT NULL DEFAULT 'task' CHECK(kind IN ('task','note')),"
     "name TEXT NOT NULL CHECK(length(trim(name))>0),is_inbox INTEGER NOT NULL DEFAULT 0 CHECK(is_inbox IN (0,1)),"
+    "icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16),"
+    "color TEXT NOT NULL DEFAULT '' CHECK(color='' OR color GLOB '#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]'),"
+    "archived_at_utc_ms INTEGER NOT NULL DEFAULT 0 CHECK(archived_at_utc_ms>=0),"
     "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
     "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
     "FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE RESTRICT)",
@@ -113,6 +116,7 @@ const char *const kSchema[] = {
     "CREATE UNIQUE INDEX idx_one_inbox ON lists(is_inbox) WHERE is_inbox=1",
     "CREATE TRIGGER prevent_inbox_delete BEFORE DELETE ON lists WHEN OLD.is_inbox=1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
     "CREATE TRIGGER prevent_inbox_unset BEFORE UPDATE OF is_inbox ON lists WHEN OLD.is_inbox=1 AND NEW.is_inbox<>1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
+    "CREATE TRIGGER prevent_inbox_archive BEFORE UPDATE OF archived_at_utc_ms ON lists WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
     "CREATE INDEX idx_lists_folder ON lists(folder_id,sort_order)",
     "CREATE INDEX idx_sections_list ON sections(list_id,sort_order)",
     "CREATE INDEX idx_entities_list ON entities(list_id,section_id)",
@@ -166,8 +170,12 @@ bool Database::openAt(const QString &path, QString *error)
                 versionQuery.finish(); applicationQuery.finish(); objectsQuery.finish();
                 if (version == 0 && application == 0 && objects == 0) {
                     if (!applyPragmas(&failure) || !initializeSchema(&failure)) {}
-                } else if (version != schemaVersion() || application != applicationId()) {
-                    failure = QStringLiteral("不是受支持的 KylinList v5 数据库；拒绝迁移或改写旧数据");
+                } else if (application != applicationId()) {
+                    failure = QStringLiteral("不是受支持的 KylinList 数据库；application_id 不匹配，拒绝迁移或改写旧数据");
+                } else if (version == 5) {
+                    if (!applyPragmas(&failure) || !migrateFromV5(&failure)) {}
+                } else if (version != schemaVersion()) {
+                    failure = QStringLiteral("不是受支持的 KylinList 数据库；仅接受 v6（v5 可自动升级），拒绝改写旧数据");
                 } else if (!applyPragmas(&failure)) {}
             }
         }
@@ -204,7 +212,7 @@ bool Database::initializeSchema(QString *error)
     if (!database.transaction()) return fail(QStringLiteral("开始初始化 schema 失败: ") + database.lastError().text(), error);
     QString failure;
     for (const char *sql : kSchema) {
-        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v5 schema 失败: ") + query.lastError().text(); break; }
+        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v6 schema 失败: ") + query.lastError().text(); break; }
     }
     const QString inboxId = newUuid(), now = QString::number(utcMs(utcNow()));
     if (failure.isEmpty()) {
@@ -225,13 +233,45 @@ bool Database::initializeSchema(QString *error)
         }
     }
     QSqlQuery versions(database);
-    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=5"))
+    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=6"))
                               || !versions.exec(QStringLiteral("PRAGMA application_id=%1").arg(applicationId()))))
         failure = QStringLiteral("写入数据库标识失败: ") + versions.lastError().text();
     QSqlQuery foreign(database);
     if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next())) failure = QStringLiteral("新 schema 外键检查失败");
     if (!failure.isEmpty() || !database.commit()) {
         if (failure.isEmpty()) failure = database.lastError().text(); database.rollback(); return fail(failure, error);
+    }
+    return true;
+}
+
+// v5 -> v6：单事务内给 lists 补 icon/color/archived_at_utc_ms 三列与收集箱归档保护触发器。
+// 旧数据默认无图标、无颜色、未归档；其余表、行与凭证原样保留，失败整体回滚并拒绝打开。
+bool Database::migrateFromV5(QString *error)
+{
+    QSqlDatabase database = connection();
+    if (!database.transaction()) return fail(QStringLiteral("开始 v5→v6 升级事务失败: ") + database.lastError().text(), error);
+    const char *const steps[] = {
+        "ALTER TABLE lists ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)",
+        "ALTER TABLE lists ADD COLUMN color TEXT NOT NULL DEFAULT '' CHECK(color='' OR color GLOB "
+            "'#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]')",
+        "ALTER TABLE lists ADD COLUMN archived_at_utc_ms INTEGER NOT NULL DEFAULT 0 CHECK(archived_at_utc_ms>=0)",
+        "CREATE TRIGGER prevent_inbox_archive BEFORE UPDATE OF archived_at_utc_ms ON lists "
+            "WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"
+    };
+    QString failure;
+    for (const char *sql : steps) {
+        QSqlQuery query(database);
+        if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("v5→v6 升级失败: ") + query.lastError().text(); break; }
+    }
+    QSqlQuery foreign(database);
+    if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next()))
+        failure = QStringLiteral("v5→v6 升级外键检查失败");
+    QSqlQuery versions(database);
+    if (failure.isEmpty() && !versions.exec(QStringLiteral("PRAGMA user_version=6")))
+        failure = QStringLiteral("v5→v6 升级写入版本失败: ") + versions.lastError().text();
+    if (!failure.isEmpty() || !database.commit()) {
+        if (failure.isEmpty()) failure = database.lastError().text();
+        database.rollback(); return fail(failure, error);
     }
     return true;
 }

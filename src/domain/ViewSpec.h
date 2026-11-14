@@ -3,10 +3,13 @@
 
 #include "Entity.h"
 
+#include <QSet>
+
 namespace kl {
 
 enum class ViewRenderer { List = 0, Time = 1 };
-enum class ViewScope { AllLists = 0, List, Today, Next7Days, Overdue, Completed, Abandoned, Trash };
+// Tomorrow 追加在枚举尾部，保持既有取值稳定。
+enum class ViewScope { AllLists = 0, List, Today, Next7Days, Overdue, Completed, Abandoned, Trash, Tomorrow };
 
 struct ViewSpec {
     ViewScope scope = ViewScope::AllLists;
@@ -16,13 +19,21 @@ struct ViewSpec {
 };
 
 QDate effectiveDate(const Entity &entity);
-bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today);
+// archivedListIds：当前已归档清单的 id 集合。AllLists/Today/Tomorrow/Next7Days/Overdue
+// 借此排除归档清单的活动实体；显式 ViewScope::List 与 Completed/Abandoned/Trash 不受影响。
+// 缺省空集合维持旧行为，现有调用无需修改。
+bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today,
+              const QSet<QString> &archivedListIds = QSet<QString>());
 
+// 稳定的机器标识，供模型层区分分区，不依赖中文标题：
+// pinned / overdue / upcoming / undated / notes / completed / abandoned / trash。
 struct ViewSection {
+    QString key;
     QString title;
     QVector<Entity> items;
 };
-QVector<ViewSection> buildSections(const QVector<Entity> &entities, const ViewSpec &spec, const QDate &today);
+QVector<ViewSection> buildSections(const QVector<Entity> &entities, const ViewSpec &spec, const QDate &today,
+                                   const QSet<QString> &archivedListIds = QSet<QString>());
 
 // 与视图同属纯展示语义，供模型、便签和提醒弹窗共享。
 QString scheduleLabel(const Entity &entity);

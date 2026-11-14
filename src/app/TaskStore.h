@@ -6,8 +6,11 @@
 #include "Journal.h"
 #include "UsageStatistics.h"
 
+#include <QDate>
 #include <QObject>
+#include <QSet>
 #include <QSqlDatabase>
+#include <QStringList>
 #include <memory>
 
 namespace kl {
@@ -43,13 +46,28 @@ public:
     QString createFolder(const QString &name);
     bool renameFolder(const QString &id, const QString &name);
     bool deleteFolder(const QString &id);
-    QString createList(const QString &name, const QString &folderId = QString(), EntityKind kind = EntityKind::Task);
+    QString createList(const QString &name, const QString &folderId = QString(), EntityKind kind = EntityKind::Task,
+                       const QString &icon = QString(), const QString &color = QString());
     bool renameList(const QString &id, const QString &name);
     bool setListFolder(const QString &id, const QString &folderId);
+    // 完整清单一事务更新：名称 trim 后 1..64、icon（空或 ≤16 个 UTF-16 码元的 emoji 文本）、
+    // color（空或 #RRGGBB）、folderId（空 = 无文件夹）。不能改变 inbox/kind/归档状态。
+    bool updateList(const QString &id, const QString &name, const QString &icon, const QString &color,
+                    const QString &folderId);
+    bool saveList(const TaskList &list);          // 门面版本：kind/inbox/archivedAtUtcMs 以库内现值为准
+    // 归档只改清单本身（archivedAtUtcMs），绝不批量改任务状态、日期或生成重复实例；
+    // 收集箱禁止归档。归档清单的任务不再提醒、不进活动视图。
+    bool setListArchived(const QString &id, bool archived);
+    bool isListArchived(const QString &id) const;
+    QSet<QString> archivedListIds() const;        // 供 ViewSpec 归档过滤上下文使用
     bool deleteList(const QString &id);
     QString createGroup(const QString &name) { return createList(name); }
     bool renameGroup(const QString &id, const QString &name) { return renameList(id, name); }
     bool deleteGroup(const QString &id) { return deleteList(id); }
+    // 顺延至今天：只处理 active、未删除、未归档清单且 effectiveDate<today 的任务。
+    // 全天任务 allDayDate=today；带时刻的 due/start 在应用时区下保留时刻改日期；其余字段不动。
+    // 单事务提交，失败不产生部分成功；返回 false 时可用 lastError() 查原因。
+    bool postponeOverdueTasks(const QStringList &ids, const QDate &today);
     QString createSection(const QString &listId, const QString &name);
     bool renameSection(const QString &id, const QString &name);
     bool deleteSection(const QString &id);
@@ -94,7 +112,7 @@ public:
     bool setLocalMeta(const QString &key, const QString &value);
     QVector<OutboxItem> outbox() const { return m_snapshot.outbox; }
 
-    // 仅接受 KylinList.Entities v2 + KLB1 magic 的新 .klb 容器；不兼容旧备份。
+    // 仅接受 KylinList.Entities v2/v3 + KLB1 magic 的新 .klb 容器；不兼容旧备份。
     bool exportBackup(const QString &path);
     bool importBackup(const QString &path);
     QString lastError() const { return m_lastError; }
@@ -109,6 +127,7 @@ signals:
 
 private:
     const StoredEntity *find(const QString &id) const;
+    const TaskList *findList(const QString &id) const;
     const RecurrenceLink *linkFor(const QString &sourceId) const;
     const Attachment *findAttachment(const QString &id) const;
     const TaskReminder *findReminder(const QString &id) const;

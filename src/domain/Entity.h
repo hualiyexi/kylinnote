@@ -55,12 +55,44 @@ struct Folder {
     qint64 serverRevision = 0;
 };
 
+// 清单外观与归档的写入口径：
+// - name：trim 后 1..64 字符；
+// - icon：空字符串表示默认 normal-list 图标，否则是 emoji 文本（≤16 个 UTF-16 码元，足够容纳家庭组合 emoji）；
+// - color：空字符串表示无颜色，否则必须为 #RRGGBB；
+// - archivedAtUtcMs：0 未归档，>0 归档时刻（收集箱永不可归档）。
+enum { kListNameMaxLength = 64, kListIconMaxUtf16Units = 16 };
+inline bool isValidListColor(const QString &color)
+{
+    if (color.isEmpty()) return true;
+    if (color.size() != 7 || color.at(0) != QLatin1Char('#')) return false;
+    for (int i = 1; i < 7; ++i) {
+        const QChar digit = color.at(i);
+        const bool hex = (digit >= QLatin1Char('0') && digit <= QLatin1Char('9'))
+            || (digit >= QLatin1Char('a') && digit <= QLatin1Char('f'))
+            || (digit >= QLatin1Char('A') && digit <= QLatin1Char('F'));
+        if (!hex) return false;
+    }
+    return true;
+}
+inline bool isValidListIcon(const QString &icon)
+{
+    if (icon.isEmpty()) return true;
+    if (icon.size() > kListIconMaxUtf16Units) return false;
+    // 只拒绝控制字符；ZWJ（Cf）是家庭组合 emoji 的组成部分，必须放行。
+    for (const QChar unit : icon)
+        if (unit.category() == QChar::Other_Control) return false;
+    return true;
+}
+
 struct TaskList {
     QString id;
     QString folderId;
     EntityKind kind = EntityKind::Task;
     QString name;
     bool inbox = false;
+    QString icon;
+    QString color;
+    qint64 archivedAtUtcMs = 0;
     int sortOrder = 0;
     QDateTime createdAt;
     QDateTime updatedAt;

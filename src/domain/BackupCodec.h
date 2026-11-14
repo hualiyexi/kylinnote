@@ -14,9 +14,32 @@
 namespace kl {
 namespace backupcodec {
 
-const int kVersion = 2;
+// v3：lists 增加 icon/color/archivedAtUtcMs。读入兼容 v2（缺省补默认值：无图标、无颜色、未归档）；
+// 更旧版本与 v4+ 一律拒绝，旧程序（只认 v2）也会拒绝 v3。
+const int kVersion = 3;
+const int kMinimumVersion = 2;
 const qint64 kMaximumRevision = 9007199254740991LL;
 inline QString formatName() { return QStringLiteral("KylinList.Entities"); }
+inline bool readListAppearance(const QJsonObject &object, QString *icon, QString *color,
+                               qint64 *archivedAtUtcMs, QString *error)
+{
+    icon->clear(); color->clear(); *archivedAtUtcMs = 0;
+    if (object.contains(QStringLiteral("icon"))) {
+        if (!object.value(QStringLiteral("icon")).isString()) return entitycodec::fail(error, QStringLiteral("清单 icon 必须为字符串"));
+        *icon = object.value(QStringLiteral("icon")).toString();
+    }
+    if (object.contains(QStringLiteral("color"))) {
+        if (!object.value(QStringLiteral("color")).isString()) return entitycodec::fail(error, QStringLiteral("清单 color 必须为字符串"));
+        *color = object.value(QStringLiteral("color")).toString();
+    }
+    if (object.contains(QStringLiteral("archivedAtUtcMs"))) {
+        if (!entitycodec::readInteger(object.value(QStringLiteral("archivedAtUtcMs")), 0, kMaximumRevision, archivedAtUtcMs))
+            return entitycodec::fail(error, QStringLiteral("清单归档时间非法"));
+    }
+    if (!isValidListIcon(*icon) || !isValidListColor(*color))
+        return entitycodec::fail(error, QStringLiteral("清单 icon 或 color 非法"));
+    return true;
+}
 inline int entityPosition(const EntitySnapshot &snapshot, const QString &id)
 {
     for (int i = 0; i < snapshot.entities.size(); ++i) if (snapshot.entities.at(i).entity.id == id) return i;
@@ -169,6 +192,8 @@ inline QJsonObject toJson(const EntitySnapshot &snapshot, const QVector<EntityEv
         QJsonObject object = namedJson(row.id, row.name, row.folderId, row.sortOrder, row.createdAt, row.updatedAt,
                                       QStringLiteral("folderId"), row.revision, row.serverRevision);
         object.insert(QStringLiteral("kind"), entityKindName(row.kind)); object.insert(QStringLiteral("isInbox"), row.inbox);
+        object.insert(QStringLiteral("icon"), row.icon); object.insert(QStringLiteral("color"), row.color);
+        object.insert(QStringLiteral("archivedAtUtcMs"), static_cast<double>(row.archivedAtUtcMs));
         lists.append(object);
     }
     for (const Section &row : snapshot.sections)
@@ -233,9 +258,9 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
     qint64 version = 0;
     const QString defaultTimezone = root.value(QStringLiteral("defaultTimezone")).toString();
     if (root.value(QStringLiteral("format")).toString() != formatName()
-        || !entitycodec::readInteger(root.value(QStringLiteral("version")), kVersion, kVersion, &version)
+        || !entitycodec::readInteger(root.value(QStringLiteral("version")), kMinimumVersion, kVersion, &version)
         || !entitycodec::validTimeZone(defaultTimezone))
-        return entitycodec::fail(error, QStringLiteral("不是受支持的 KylinList.Entities v2 备份；旧格式不迁移"));
+        return entitycodec::fail(error, QStringLiteral("不是受支持的 KylinList.Entities v2/v3 备份；旧格式不迁移"));
     const char *const arrays[] = {"folders","lists","sections","recurrenceSeries","entities","recurrenceLinks",
         "attachments","events","checklistItems","tags","entityTags","reminders","viewDefs"};
     for (const char *key : arrays) if (!root.value(QLatin1String(key)).isArray())
@@ -256,12 +281,14 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
         const QJsonObject object = value.toObject(); TaskList row;
         if (!readNamed(object, QStringLiteral("folderId"), &row.id, &row.name, &row.folderId,
                        &row.sortOrder, &row.createdAt, &row.updatedAt, &row.revision, &row.serverRevision, error)) return false;
+        if (!readListAppearance(object, &row.icon, &row.color, &row.archivedAtUtcMs, error)) return false;
         if (listIds.contains(row.id) || (!row.folderId.isEmpty() && !folderIds.contains(row.folderId))
             || !object.value(QStringLiteral("isInbox")).isBool())
             return entitycodec::fail(error, QStringLiteral("清单 id、文件夹或 inbox 字段非法"));
         const QString kind = object.value(QStringLiteral("kind")).toString();
         row.kind = entityKindFromName(kind); row.inbox = object.value(QStringLiteral("isInbox")).toBool();
-        if (entityKindName(row.kind) != kind || (row.inbox && row.kind != EntityKind::Task))
+        if (entityKindName(row.kind) != kind || (row.inbox && row.kind != EntityKind::Task)
+            || (row.inbox && row.archivedAtUtcMs != 0))
             return entitycodec::fail(error, QStringLiteral("清单 kind 非法"));
         if (row.inbox) ++inboxCount;
         listIds.insert(row.id); snapshot.lists.append(row);

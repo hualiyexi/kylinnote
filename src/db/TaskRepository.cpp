@@ -156,7 +156,7 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
     }
 
     QSqlQuery lists(m_database);
-    if (!lists.exec(QStringLiteral("SELECT id,folder_id,kind,name,is_inbox,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM lists ORDER BY sort_order,id")))
+    if (!lists.exec(QStringLiteral("SELECT id,folder_id,kind,name,is_inbox,icon,color,archived_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM lists ORDER BY sort_order,id")))
         return sqlFailure(lists, error);
     QSet<QString> listIds;
     QHash<QString, bool> listInbox;
@@ -165,12 +165,15 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
         TaskList row;
         row.id = lists.value(0).toString(); row.folderId = lists.value(1).toString();
         row.kind = entityKindFromName(lists.value(2).toString());
-        row.name = lists.value(3).toString(); row.inbox = lists.value(4).toInt() != 0; row.sortOrder = lists.value(5).toInt();
-        row.revision = lists.value(8).toLongLong(); row.serverRevision = lists.value(9).toLongLong();
-        if (!dbDate(lists.value(6), &row.createdAt, error) || !dbDate(lists.value(7), &row.updatedAt, error)
+        row.name = lists.value(3).toString(); row.inbox = lists.value(4).toInt() != 0;
+        row.icon = lists.value(5).toString(); row.color = lists.value(6).toString();
+        row.archivedAtUtcMs = lists.value(7).toLongLong(); row.sortOrder = lists.value(8).toInt();
+        row.revision = lists.value(11).toLongLong(); row.serverRevision = lists.value(12).toLongLong();
+        if (!dbDate(lists.value(9), &row.createdAt, error) || !dbDate(lists.value(10), &row.updatedAt, error)
             || row.revision <= 0 || row.serverRevision < 0 || !validNamedEntity(row.id, row.name, row.createdAt, row.updatedAt, row.sortOrder, error)
             || entityKindName(row.kind) != lists.value(2).toString()
-            || (!row.folderId.isEmpty() && !folderIds.contains(row.folderId)))
+            || (!row.folderId.isEmpty() && !folderIds.contains(row.folderId))
+            || !isValidListIcon(row.icon) || !isValidListColor(row.color) || row.archivedAtUtcMs < 0)
             return entitycodec::fail(error, QStringLiteral("清单或文件夹引用损坏"));
         if (row.inbox) ++inboxCount;
         listIds.insert(row.id); listInbox.insert(row.id, row.inbox); snapshot.lists.append(row);
@@ -487,9 +490,13 @@ bool TaskRepository::saveFolder(Folder *folder, QString *error)
 
 bool TaskRepository::saveGroup(TaskList *group, QString *error)
 {
-    if (!isUuid(group->id) || entityKindName(group->kind).isEmpty() || group->name.trimmed().isEmpty() || group->sortOrder < 0
+    if (!isUuid(group->id) || entityKindName(group->kind).isEmpty() || group->name.trimmed().isEmpty()
+        || group->name.trimmed().size() > kListNameMaxLength || group->sortOrder < 0
         || !group->createdAt.isValid() || !group->updatedAt.isValid() || (group->inbox && group->kind != EntityKind::Task)
-        || (!group->folderId.isEmpty() && !isUuid(group->folderId))) return entitycodec::fail(error, QStringLiteral("清单字段非法"));
+        || (!group->folderId.isEmpty() && !isUuid(group->folderId))
+        || !isValidListIcon(group->icon) || !isValidListColor(group->color) || group->archivedAtUtcMs < 0
+        || (group->inbox && group->archivedAtUtcMs != 0))
+        return entitycodec::fail(error, QStringLiteral("清单字段非法"));
     group->name = group->name.trimmed();
     QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT is_inbox FROM lists WHERE id=?")); exists.addBindValue(group->id);
     if (!exists.exec()) return sqlFailure(exists, error);
@@ -497,16 +504,19 @@ bool TaskRepository::saveGroup(TaskList *group, QString *error)
     if (update && (exists.value(0).toInt() != 0) != group->inbox)
         return entitycodec::fail(error, QStringLiteral("清单不可改变 inbox 属性"));
     QSqlQuery query(m_database);
-    if (!query.prepare(update ? QStringLiteral("UPDATE lists SET folder_id=?,kind=?,name=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
-                              : QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?,?)")))
+    if (!query.prepare(update ? QStringLiteral("UPDATE lists SET folder_id=?,kind=?,name=?,icon=?,color=?,archived_at_utc_ms=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
+                              : QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,icon,color,archived_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?)")))
         return sqlFailure(query, error);
     if (update) {
         query.addBindValue(nullableText(group->folderId)); query.addBindValue(entityKindName(group->kind));
-        query.addBindValue(group->name); query.addBindValue(group->sortOrder);
+        query.addBindValue(group->name); query.addBindValue(safeText(group->icon)); query.addBindValue(safeText(group->color));
+        query.addBindValue(group->archivedAtUtcMs); query.addBindValue(group->sortOrder);
         query.addBindValue(utcMs(group->updatedAt)); query.addBindValue(group->id);
     } else {
         query.addBindValue(group->id); query.addBindValue(nullableText(group->folderId)); query.addBindValue(entityKindName(group->kind));
-        query.addBindValue(group->name); query.addBindValue(group->inbox ? 1 : 0); query.addBindValue(group->sortOrder);
+        query.addBindValue(group->name); query.addBindValue(group->inbox ? 1 : 0);
+        query.addBindValue(safeText(group->icon)); query.addBindValue(safeText(group->color)); query.addBindValue(group->archivedAtUtcMs);
+        query.addBindValue(group->sortOrder);
         query.addBindValue(utcMs(group->createdAt)); query.addBindValue(utcMs(group->updatedAt));
     }
     return query.exec() ? true : sqlFailure(query, error);
@@ -692,7 +702,9 @@ bool TaskRepository::saveDelivery(const ReminderDelivery &delivery, QString *err
     QSqlQuery query(m_database);
     query.prepare(QStringLiteral("INSERT INTO reminder_deliveries(reminder_id,installation_id,scheduled_at_utc_ms,delivered_at_utc_ms) "
         "SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM reminders r JOIN entities t ON t.id=r.entity_id "
-        "WHERE r.id=? AND r.trigger_at_utc_ms=? AND t.kind='task' AND t.status='active' AND t.deleted_at_utc_ms IS NULL) "
+        "JOIN lists l ON l.id=t.list_id "
+        "WHERE r.id=? AND r.trigger_at_utc_ms=? AND t.kind='task' AND t.status='active' AND t.deleted_at_utc_ms IS NULL "
+        "AND l.archived_at_utc_ms=0) "
         "AND NOT EXISTS(SELECT 1 FROM reminder_deliveries WHERE reminder_id=? AND installation_id=?)"));
     query.addBindValue(delivery.reminderId); query.addBindValue(delivery.installationId); query.addBindValue(utcMs(delivery.scheduledAt)); query.addBindValue(utcMs(delivery.deliveredAt));
     query.addBindValue(delivery.reminderId); query.addBindValue(utcMs(delivery.scheduledAt)); query.addBindValue(delivery.reminderId); query.addBindValue(delivery.installationId);
@@ -926,10 +938,23 @@ bool TaskRepository::apply(EntityChanges *changes, EntitySnapshot *after, QStrin
             if (!ownerQuery.exec()) return sqlFailure(ownerQuery, error);
             if (!ownerQuery.next()) return entitycodec::fail(error, QStringLiteral("要删除的实体不存在"));
             if (type == QStringLiteral("list")) {
+                // 删除清单 = 原子回收站语义：同一事务内把该清单全部实体移入系统收集箱，
+                // 清空 section/folder，保留 status；原本未删除的记 deleted_at=本次提交时刻，
+                // 已删除的保留原 deleted_at。不逐条 save，避免 CAS/FK 冲突，也不生成重复实例。
+                QSqlQuery inboxQuery(m_database);
+                inboxQuery.prepare(QStringLiteral("SELECT id FROM lists WHERE is_inbox=1"));
+                if (!inboxQuery.exec()) return sqlFailure(inboxQuery, error);
+                if (!inboxQuery.next()) return entitycodec::fail(error, QStringLiteral("系统收集箱缺失，无法删除清单"));
+                if (inboxQuery.value(0).toString() == id)
+                    return entitycodec::fail(error, QStringLiteral("系统 inbox 不可删除"));
+                inboxQuery.finish();
                 QSqlQuery move(m_database);
                 move.prepare(QStringLiteral("UPDATE entities SET list_id=(SELECT id FROM lists WHERE is_inbox=1),"
-                    "section_id=NULL,updated_at_utc_ms=?,revision=revision+1 WHERE list_id=?"));
-                move.addBindValue(utcMs(utcNow())); move.addBindValue(id);
+                    "section_id=NULL,folder_id=NULL,"
+                    "deleted_at_utc_ms=CASE WHEN deleted_at_utc_ms IS NULL THEN ? ELSE deleted_at_utc_ms END,"
+                    "updated_at_utc_ms=?,revision=revision+1 WHERE list_id=?"));
+                const qint64 now = utcMs(utcNow());
+                move.addBindValue(now); move.addBindValue(now); move.addBindValue(id);
                 if (!move.exec()) return sqlFailure(move, error);
             } else if (type == QStringLiteral("section")) {
                 QSqlQuery move(m_database);
@@ -1080,7 +1105,8 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
     // 覆盖恢复不是业务合并：禁止生成新的同步历史，设备身份则原样保留。
     if (!exec(QStringLiteral("UPDATE local_meta SET value='0' WHERE key='signed_in'"))
         || !exec(QStringLiteral("DROP TRIGGER prevent_inbox_delete"))
-        || !exec(QStringLiteral("DROP TRIGGER prevent_inbox_unset"))) return abort();
+        || !exec(QStringLiteral("DROP TRIGGER prevent_inbox_unset"))
+        || !exec(QStringLiteral("DROP TRIGGER prevent_inbox_archive"))) return abort();
     const char *const clearOrder[] = {
         "entity_events", "reminder_deliveries", "desktop_notes", "attachments", "checklist_items",
         "reminders", "entity_tags", "tags", "recurrence_links", "entities", "recurrence_series",
@@ -1098,9 +1124,11 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
     }
     for (const TaskList &row : incoming.lists) {
         QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?,?,?)"));
+        query.prepare(QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,icon,color,archived_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"));
         query.addBindValue(row.id); query.addBindValue(nullableText(row.folderId)); query.addBindValue(entityKindName(row.kind));
-        query.addBindValue(row.name); query.addBindValue(row.inbox ? 1 : 0); query.addBindValue(row.sortOrder);
+        query.addBindValue(row.name); query.addBindValue(row.inbox ? 1 : 0);
+        query.addBindValue(safeText(row.icon)); query.addBindValue(safeText(row.color)); query.addBindValue(row.archivedAtUtcMs);
+        query.addBindValue(row.sortOrder);
         query.addBindValue(utcMs(row.createdAt)); query.addBindValue(utcMs(row.updatedAt)); query.addBindValue(row.revision); query.addBindValue(row.serverRevision);
         if (!query.exec()) { sqlFailure(query, error); return abort(); }
     }
@@ -1230,7 +1258,8 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
         if (!meta.exec()) { sqlFailure(meta, error); return abort(); }
     }
     if (!exec(QStringLiteral("CREATE TRIGGER prevent_inbox_delete BEFORE DELETE ON lists WHEN OLD.is_inbox=1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"))
-        || !exec(QStringLiteral("CREATE TRIGGER prevent_inbox_unset BEFORE UPDATE OF is_inbox ON lists WHEN OLD.is_inbox=1 AND NEW.is_inbox<>1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"))) return abort();
+        || !exec(QStringLiteral("CREATE TRIGGER prevent_inbox_unset BEFORE UPDATE OF is_inbox ON lists WHEN OLD.is_inbox=1 AND NEW.is_inbox<>1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"))
+        || !exec(QStringLiteral("CREATE TRIGGER prevent_inbox_archive BEFORE UPDATE OF archived_at_utc_ms ON lists WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"))) return abort();
     QSqlQuery foreign(m_database);
     if (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check"))) { sqlFailure(foreign, error); return abort(); }
     if (foreign.next()) { entitycodec::fail(error, QStringLiteral("覆盖恢复外键检查失败")); return abort(); }

@@ -6,12 +6,13 @@
 
 namespace kl {
 
-// 主线程专用 QSQLITE 连接。只接受空库或 KylinList application_id + user_version=5。
+// 主线程专用 QSQLITE 连接。只接受空库或 KylinList application_id + user_version∈{5,6}；
+// v5 在打开时于单事务内升级到 v6（lists 增加 icon/color/archived_at_utc_ms）。
 class Database
 {
 public:
     static Database &instance();
-    static int schemaVersion() { return 5; }
+    static int schemaVersion() { return 6; }
     static int applicationId() { return 0x4B4C5354; } // "KLST"
 
     bool open(QString *error = nullptr);
@@ -28,6 +29,7 @@ private:
     Database &operator=(const Database &) = delete;
     bool applyPragmas(QString *error);
     bool initializeSchema(QString *error);
+    bool migrateFromV5(QString *error);
     bool fail(const QString &message, QString *error);
 
     static const char *kConnectionName;

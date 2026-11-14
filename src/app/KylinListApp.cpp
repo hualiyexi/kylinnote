@@ -30,6 +30,20 @@ QString reminderPopupKey(const QString &entityId, const QString &reminderId)
 {
     return entityId + QLatin1Char('/') + reminderId;
 }
+// 弹窗存活的完整条件：任务仍存在、active、未删除、清单未归档，且提醒仍指向已到期的当前计划。
+bool reminderPopupValid(TaskStore *store, class ReminderPopup *popup)
+{
+    const Entity task = store->entity(popup->entityId());
+    if (task.id.isEmpty() || task.kind != EntityKind::Task || task.deleted || task.status != TaskStatus::Active
+        || store->isListArchived(task.listId))
+        return false;
+    for (const TaskReminder &reminder : task.reminders) {
+        if (reminder.id != popup->reminderId())
+            continue;
+        return reminder.triggerAt.isValid() && reminder.triggerAt <= appNow();
+    }
+    return false;
+}
 }
 KylinListApp::KylinListApp(QObject* parent) : QObject(parent) {
 }
@@ -72,26 +86,24 @@ bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun) {
     m_reminders = new ReminderScheduler(m_store, this);
     connect(m_reminders, &ReminderScheduler::reminderTriggered, this, &KylinListApp::showReminder);
     connect(m_store, &TaskStore::taskChanged, this, [this](QString id) {
-        const Entity task = m_store->entity(id);
         const auto popups = m_popups;
         for (const auto& popup : popups) {
             if (!popup || popup->entityId() != id)
                 continue;
-            bool close = task.id.isEmpty() || task.kind != EntityKind::Task || task.deleted || task.status != TaskStatus::Active;
-            bool found = false;
-            if (!close) {
-                for (const TaskReminder& reminder : task.reminders) {
-                    if (reminder.id != popup->reminderId())
-                        continue;
-                    found = true;
-                    close = !reminder.triggerAt.isValid() || reminder.triggerAt > appNow();
-                    break;
-                }
-            }
-            if (close || !found)
+            if (!reminderPopupValid(m_store, popup))
                 popup->close();
         }
     });
+    // 归档/取消归档、清单删除等只改清单行的操作不触发 taskChanged，
+    // 必须挂在 groupsChanged/tasksReset 上重验全部弹窗，归档清单的弹窗才会可靠关闭。
+    const auto revalidateAllPopups = [this]() {
+        const auto popups = m_popups;
+        for (const auto& popup : popups)
+            if (popup && !reminderPopupValid(m_store, popup))
+                popup->close();
+    };
+    connect(m_store, &TaskStore::groupsChanged, this, revalidateAllPopups);
+    connect(m_store, &TaskStore::tasksReset, this, revalidateAllPopups);
     QTimer::singleShot(500, m_reminders, &ReminderScheduler::start);
     setupUpdates();
     setupStats();
@@ -104,7 +116,8 @@ bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun) {
 }
 void KylinListApp::showReminder(QString entityId, QString reminderId) {
     const Entity task = m_store->entity(entityId);
-    if (task.id.isEmpty() || task.kind != EntityKind::Task || task.deleted || task.status != TaskStatus::Active || reminderId.isEmpty())
+    if (task.id.isEmpty() || task.kind != EntityKind::Task || task.deleted || task.status != TaskStatus::Active
+        || m_store->isListArchived(task.listId) || reminderId.isEmpty())
         return;
     bool found = false;
     for (const TaskReminder& reminder : task.reminders)
