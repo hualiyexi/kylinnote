@@ -8,6 +8,7 @@ dist/
 *.deb
 *.deb.sha256
 *.zip
+*.tar
 *.exe
 *.dll
 *.pdb
@@ -39,6 +40,11 @@ Thumbs.db
 # 工具生成的会话文件
 .zcode/
 
-# 内网更新服务的运行数据不入库，仅保留目录说明
+# 内网更新服务的本机配置、运行数据与部署产物不入库
+server/.env
 server/data/*
 !server/data/README.md
+deploy/.env.prod
+deploy/SHA256SUMS
+deploy/data/*
+!deploy/data/README.md

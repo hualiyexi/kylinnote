@@ -1,0 +1,35 @@
+# KylinList 生产环境自包含部署编排。开发机构建镜像并导出到 images/，见 README.txt。
+# 容器入口只绑定回环地址，外部统一经宿主 nginx :11924 访问，以保留真实客户端 IP。
+services:
+  http:
+    image: kylinlist-http:${KYLINLIST_IMAGE_VERSION:?set KYLINLIST_IMAGE_VERSION in .env.prod}
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-18080}:80"
+    volumes:
+      - ./data/public/updates:/usr/share/nginx/html/updates:ro
+      - ./data/branding/site:/usr/share/nginx/html/local:ro
+      - ./data/logs:/var/log/nginx
+    depends_on:
+      - stats
+    restart: unless-stopped
+    logging: &container-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  stats:
+    image: kylinlist-stats:${KYLINLIST_IMAGE_VERSION:?set KYLINLIST_IMAGE_VERSION in .env.prod}
+    volumes:
+      - ./data/stats:/data
+      - ./data/logs:/logs:ro
+    environment:
+      TZ: Asia/Shanghai
+    restart: unless-stopped
+    logging: *container-logging
+
+  publisher:
+    image: kylinlist-publisher:${KYLINLIST_IMAGE_VERSION:?set KYLINLIST_IMAGE_VERSION in .env.prod}
+    profiles: ["tools"]
+    volumes:
+      - ./data:/data
