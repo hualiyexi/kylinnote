@@ -275,6 +275,7 @@ body.modal-open { overflow: hidden; }
   box-shadow: 0 28px 90px rgba(28, 44, 82, 0.22);
   animation: panel-in 0.25s ease both;
 }
+.history-panel:focus { outline: none; }
 .history-header {
   padding: 30px 34px 16px;
   display: flex;
