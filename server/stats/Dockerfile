@@ -14,8 +14,8 @@ RUN mkdir -p /data /logs
 
 # 个人内网单容器：保持镜像默认用户（root），宿主 bind mount 的 /data、/logs
 # 无需额外 chown 即可用；如需收紧请自行以匹配 uid 运行。
+# 数据全部走宿主 bind mount（见 compose），不声明 VOLUME，避免匿名卷残留。
 EXPOSE 8000
-VOLUME ["/data", "/logs"]
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/stats/healthz', timeout=3)"]

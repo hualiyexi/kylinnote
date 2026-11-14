@@ -1,5 +1,6 @@
 # KylinList 可信局域网 HTTP 更新、统计与产品页服务。
-# 发布 / 校验 / 回退 / 查看状态通过 tools profile 按需运行 publisher。
+# publisher 常驻监视 data/incoming，自动消费带 READY 的发布目录；
+# 手工 status / rollback / publish 用 `docker compose run --rm publisher <命令>` 按需运行。
 # 镜像与运行数据由根目录 deploy/ 打包后拷贝到生产机；生产入口由宿主 nginx 提供。
 services:
   http:
@@ -40,6 +41,9 @@ services:
     build:
       context: ..
       dockerfile: server/Dockerfile.publisher
-    profiles: ["tools"]
+    # 常驻 watch：`docker compose run --rm publisher status` 等仍可覆盖 command。
+    command: ["watch", "/data/incoming"]
     volumes:
       - ./data:/data
+    restart: unless-stopped
+    logging: *container-logging

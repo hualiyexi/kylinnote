@@ -1,5 +1,8 @@
 FROM python:3.12-alpine
 
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 COPY server/tools/ /tools/
 
 ENTRYPOINT ["python", "-I", "/tools/publish.py"]

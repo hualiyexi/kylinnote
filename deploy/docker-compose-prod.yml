@@ -1,4 +1,4 @@
-# KylinList 生产环境自包含部署编排。开发机构建镜像并导出到 images/，见 README.txt。
+# KylinList 生产环境自包含部署编排。开发机用 deploy/package-images.sh 构建并导出镜像，见 README.txt。
 # 容器入口只绑定回环地址，外部统一经宿主 nginx :11924 访问，以保留真实客户端 IP。
 services:
   http:
@@ -30,6 +30,9 @@ services:
 
   publisher:
     image: kylinlist-publisher:${KYLINLIST_IMAGE_VERSION:?set KYLINLIST_IMAGE_VERSION in .env.prod}
-    profiles: ["tools"]
+    # 常驻 watch：`docker compose run --rm publisher status` 等仍可覆盖 command。
+    command: ["watch", "/data/incoming"]
     volumes:
       - ./data:/data
+    restart: unless-stopped
+    logging: *container-logging
