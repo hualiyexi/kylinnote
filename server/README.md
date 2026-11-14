@@ -50,7 +50,7 @@ python -I deploy/fetch_ci_release.py <RUN_ID> dist/ci-release
 bash deploy/package.sh dist/ci-release
 ```
 
-`fetch_ci_release.py` 使用已有 `gh` 下载并交叉核验指定成功运行；`package.sh` 要求完整 CI 六目标、非 partial、匹配的 headSha/run 信息，调用现有校验器核对所有文件，然后生成：
+`fetch_ci_release.py` 使用已有 `gh` 下载并交叉核验指定成功运行；只接受本仓库的 push / workflow_dispatch，不接受 PR 或 fork 运行。`package.sh` 要求完整 CI 六目标、非 partial、匹配的 headSha/run 信息，调用现有校验器核对所有文件，然后生成：
 
 ```
 deploy/data/incoming/kylinlist-<版本>/

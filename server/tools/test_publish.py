@@ -197,7 +197,7 @@ def make_watch_candidate(incoming, version, *, contents=None, ready=True,
         "ci": {
             "headSha": CI_SHA, "repository": CI_REPOSITORY,
             "workflowPath": ".github/workflows/build.yml", "runId": CI_RUN_ID,
-            "runUrl": CI_RUN_URL,
+            "runUrl": CI_RUN_URL, "eventName": "push",
         },
     }
     if info_fn is not None:
@@ -1098,6 +1098,11 @@ class WatchGateTests(WatchTestBase):
             mutate_info(lambda info: info["ci"].update(
                 workflowPath=".github/workflows/other.yml")),
             needle="ci.workflowPath")
+
+    def test_pull_request_event_rejected(self):
+        self.assert_gate_rejected(
+            mutate_info(lambda info: info["ci"].update(eventName="pull_request")),
+            needle="PR 不可发布")
 
     def test_run_id_not_numeric_rejected(self):
         for bad in ("abc", 0, -3, True):

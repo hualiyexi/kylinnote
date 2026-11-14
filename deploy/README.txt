@@ -18,6 +18,7 @@ KylinList 可信内网生产部署
 ----------------------------------------
 
 1) 在 GitHub Actions 确认目标 build.yml 运行的全部 job 成功，复制 RUN_ID。
+   只选本仓库的 push / workflow_dispatch 运行，不使用 Pull Request 或 fork 运行。
    在开发机仓库根目录执行（需要本机已有 gh 和 Python）：
 
    python -I deploy/fetch_ci_release.py RUN_ID dist/ci-release
@@ -44,7 +45,8 @@ KylinList 可信内网生产部署
    整个目录复制完成并确认无写入后，在生产机执行一次原子改名：
 
    cd /opt/kylinlist/data/incoming
-   mv .kylinlist-<版本>.uploading kylinlist-<版本>
+   test ! -e kylinlist-<版本>   # 已存在时先移走旧失败目录，不要嵌套覆盖
+   mv -T .kylinlist-<版本>.uploading kylinlist-<版本>
 
    必须先隐藏暂存、后改名。publisher 只消费带 READY/SHA256SUMS 的正式目录，
    不读取 .uploading。不要直接向正式目录边复制边发布。

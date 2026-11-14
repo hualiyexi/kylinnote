@@ -173,6 +173,10 @@ def validate_ci_release(release_dir):
         raise ValueError(
             "RELEASE-INFO.json ci.workflowPath is {0!r}, expected {1!r}".format(
                 ci["workflowPath"], EXPECTED_WORKFLOW_PATH))
+    if ci["eventName"] not in ("push", "workflow_dispatch"):
+        raise ValueError(
+            "RELEASE-INFO.json ci.eventName is {0!r}; pull requests are not "
+            "publishable".format(ci["eventName"]))
     if not RUN_ID_RE.fullmatch(ci["runId"]):
         raise ValueError(
             "RELEASE-INFO.json ci.runId is not a plain decimal run id: "

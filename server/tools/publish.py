@@ -732,8 +732,9 @@ def setup_watch_logging(stream=None):
     if logger.handlers:
         return logger
     handler = logging.StreamHandler(stream if stream is not None else sys.stdout)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%dT%H:%M:%SZ"))
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%dT%H:%M:%SZ")
+    formatter.converter = time.gmtime
+    handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
@@ -874,6 +875,9 @@ def validate_ci_release(info, dir_version, manifest_version, artifacts):
     if ci.get("workflowPath") != CI_WORKFLOW_PATH:
         err("ci.workflowPath 必须为 %s（实际 %r）"
             % (CI_WORKFLOW_PATH, ci.get("workflowPath")))
+    if ci.get("eventName") not in ("push", "workflow_dispatch"):
+        err("ci.eventName 必须为 push/workflow_dispatch，PR 不可发布（实际 %r）"
+            % (ci.get("eventName"),))
     run_id = ci.get("runId")
     if isinstance(run_id, bool) or not (
             (isinstance(run_id, int) and run_id > 0)

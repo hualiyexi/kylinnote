@@ -238,6 +238,11 @@ class ValidateCiReleaseTest(unittest.TestCase):
             ci_release.validate_ci_release(
                 self.make(ci_extra={"workflowPath": ".github/workflows/other.yml"}))
 
+    def test_pull_request_release_metadata_rejected(self):
+        with self.assertRaises(ValueError):
+            ci_release.validate_ci_release(
+                self.make(ci_extra={"eventName": "pull_request"}))
+
     def test_invalid_run_id_rejected(self):
         for bad in ("not-numeric", "0", "0123"):
             with self.subTest(run_id=bad):
@@ -304,6 +309,8 @@ class FetchCiReleaseTest(unittest.TestCase):
             "path": ".github/workflows/build.yml",
             "status": "completed",
             "conclusion": "success",
+            "event": "push",
+            "head_repository": {"full_name": "hualiyexi/kylinnote"},
             "head_sha": HEAD_SHA,
         }
         run.update(run_overrides)
@@ -367,6 +374,16 @@ class FetchCiReleaseTest(unittest.TestCase):
             self.success_state(zip_path, path=".github/workflows/nightly.yml"))
         self.assertEqual(code, 1)
         self.assertFalse(output.exists())
+
+    def test_pull_request_or_fork_run_rejected(self):
+        cases = ({"event": "pull_request"},
+                 {"head_repository": {"full_name": "someone/kylinnote"}})
+        for override in cases:
+            with self.subTest(override=override):
+                zip_path = self.make_bundle()
+                code, output = self.run_fetch(self.success_state(zip_path, **override))
+                self.assertEqual(code, 1)
+                self.assertFalse(output.exists())
 
     def test_incomplete_run_rejected(self):
         zip_path = self.make_bundle()

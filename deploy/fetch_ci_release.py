@@ -115,6 +115,15 @@ def verify_run_metadata(data, run_id):
         raise FetchError(
             "run {0} conclusion is {1!r}, expected 'success'".format(
                 run_id, data.get("conclusion")))
+    if data.get("event") not in ("push", "workflow_dispatch"):
+        raise FetchError(
+            "run {0} event is {1!r}; only push/workflow_dispatch runs are allowed"
+            .format(run_id, data.get("event")))
+    head_repository = data.get("head_repository")
+    if not isinstance(head_repository, dict) or \
+            head_repository.get("full_name") != REPOSITORY:
+        raise FetchError(
+            "run {0} does not originate from {1}".format(run_id, REPOSITORY))
     head_sha = data.get("head_sha")
     if not isinstance(head_sha, str) or not ci_release.GIT_SHA_RE.fullmatch(head_sha):
         raise FetchError(

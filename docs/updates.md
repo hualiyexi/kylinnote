@@ -13,7 +13,7 @@
 
 ```mermaid
 flowchart LR
-    CI[三目标 GitHub CI] --> G[generate-update-manifest.py] --> R[完整 CI release]
+    CI[三构建任务 / 六产物 GitHub CI] --> G[generate-update-manifest.py] --> R[完整 CI release]
     R --> P[投递到隐藏暂存目录] --> M[原子改名] --> S[data/incoming]
     S --> PUB[publisher watch 自动校验发布] --> F[data/public]
     F --> NG[nginx http 容器]
@@ -101,7 +101,7 @@ flowchart LR
 - Windows Qt 5.12.8 的 `tasks` / `ui` / `updates` / `stats` / `branding` 五套 CTest 全部通过；`branding` 含 35 项名称、图标、运行时配置与系统菜单覆盖测试。测试后确认没有 `test_ui.exe` 的真实自启残留。
 - 在 Ubuntu 20.04 / Qt 5.12.8 中构建 amd64、arm64 的 system-qt 与 bundled-qt 四个 deb；每个构建均再次通过五套 CTest，包内版本、ELF 架构和 install-info 均匹配。amd64 为本机原生构建，arm64 使用 QEMU，不等于真机验收。
 - 四个 deb 均在一次性容器中完成无 DISPLAY 的合成品牌安装/卸载测试：安装后 `/usr/local` 的高优先级菜单项使用测试名称与 SVG，包内 `/usr/share` 原文件不变；卸载后只清理 managed 覆盖。amd64 bundle 还在无系统 Qt 的运行环境中验证。
-- 发布工具 98 项、统计服务 69 项测试在本机与 Python 3.12 Alpine 容器中通过；更新清单生成器 55 项通过（Windows 上 6 项按平台跳过）。CI 下载工具 43 项与 release 打包器 8 项测试通过，GitHub 交互使用本地 fake gh，不访问网络。
+- 发布工具 99 项、统计服务 69 项测试在本机与 Python 3.12 Alpine 容器中通过；更新清单生成器 55 项通过（Windows 上 6 项按平台跳过）。CI 下载工具 45 项与 release 打包器 8 项测试通过，GitHub 交互使用本地 fake gh，不访问网络。
 - 本机从 1.2.0 发布到 1.3.0 后，stable 清单含两条升序 history 和四个真实安装包；Chrome 78 实测默认品牌、ARM64 分段下载、浅色近全屏多版本更新日志、/s 相对跳转与空统计，鼠标焦点框已清除。
 - 早期本地部署流程已验证镜像 tar、四包 incoming、SHA256SUMS、离线导入与生产 Compose 启动。随后已拆分为 `package.sh`（仅 CI release）与 `package-images.sh`（仅服务端镜像）；目录驱动改造没有重新编译客户端。
 - 新自动发布链路已用六目标合成 CI release 实测：隐藏暂存目录不发布，原子改名后 watch 自动切换 stable、合并 1.2.0/1.3.0/1.4.0 历史并写 succeeded；显式回滚 1.3.0 后等待多个轮询周期不会自动升回。两套 Compose 均无 named volume，更新后的三个镜像 tar 已重新校验并离线导入。
