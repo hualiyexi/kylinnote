@@ -3,8 +3,18 @@ set -e
 
 case "$1" in
     configure)
+        # CI 包也可白标：安装阶段读取 /etc/kylinlist/branding，生成 /usr/local
+        # 下的高优先级菜单项。品牌配置错误不得阻止应用本身安装。
+        if [ -x /usr/bin/kylinlist ]; then
+            if ! /usr/bin/kylinlist --refresh-system-branding; then
+                echo "KylinList: 系统菜单品牌覆盖未应用，保留默认安装。" >&2
+            fi
+        fi
         if command -v update-desktop-database >/dev/null 2>&1; then
             update-desktop-database /usr/share/applications || true
+            if [ -d /usr/local/share/applications ]; then
+                update-desktop-database /usr/local/share/applications || true
+            fi
         fi
         if command -v gtk-update-icon-cache >/dev/null 2>&1; then
             gtk-update-icon-cache -f -t /usr/share/icons/hicolor || true

@@ -51,6 +51,7 @@ set(KYLINLIST_CORE_SOURCES
     src/app/updates/UpdateManifest.cpp
     src/app/updates/UpdateService.cpp
     src/platform/Autostart.cpp
+    src/platform/DesktopBranding.cpp
     src/platform/InstanceChannel.cpp
     src/platform/UpdateInstaller.cpp
 )

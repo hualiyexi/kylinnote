@@ -12,12 +12,32 @@
 #include "app/TrayController.h"
 #include "platform/InstanceChannel.h"
 #include "platform/SystemShadow.h"
+#ifdef Q_OS_LINUX
+#include "platform/DesktopBranding.h"
+#endif
 #include "ui/AppStyle.h"
 
 int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationName(QStringLiteral("kylinlist"));
     QCoreApplication::setApplicationVersion(QStringLiteral(KYLINLIST_VERSION));
     QCoreApplication::setOrganizationName(QStringLiteral("kylinlist"));
+#ifdef Q_OS_LINUX
+    // deb 安装/卸载钩子没有 DISPLAY，只需 QCoreApplication 来写系统菜单覆盖。
+    const bool refreshSystemBranding = argc == 2
+        && qstrcmp(argv[1], "--refresh-system-branding") == 0;
+    const bool clearSystemBranding = argc == 2
+        && qstrcmp(argv[1], "--clear-system-branding") == 0;
+    if (refreshSystemBranding || clearSystemBranding) {
+        QCoreApplication coreApp(argc, argv);
+        QString error;
+        const bool ok = refreshSystemBranding
+            ? kl::DesktopBranding::refreshSystem(&error)
+            : kl::DesktopBranding::clearSystem(&error);
+        if (!ok)
+            std::fprintf(stderr, "Desktop branding: %s\n", qPrintable(error));
+        return ok ? 0 : 1;
+    }
+#endif
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication app(argc, argv);

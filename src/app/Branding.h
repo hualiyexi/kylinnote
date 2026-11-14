@@ -32,5 +32,11 @@ QIcon appIcon();
 // 没有命中任何目录时返回空串。
 QString configDirectory();
 
+// 最近一次 load() 解析出的 logo 绝对路径（相对路径已按配置目录展开）；
+// 未配置 logo、未命中配置或配置无效时返回空串。只读接口，不触发图标
+// 构建，可在 QCoreApplication 环境下使用（安装阶段的 DesktopBranding
+// 通过它定位自定义图标）。
+QString logoPath();
+
 } // namespace Branding
 } // namespace kl

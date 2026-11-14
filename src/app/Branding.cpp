@@ -175,5 +175,10 @@ QString configDirectory()
     return state().configDir;
 }
 
+QString logoPath()
+{
+    return state().logoPath;
+}
+
 } // namespace Branding
 } // namespace kl

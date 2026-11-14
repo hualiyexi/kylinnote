@@ -2,7 +2,19 @@
 set -e
 
 case "$1" in
-    remove|upgrade|deconfigure)
+    remove)
+        # 只清理本模块带 managed 标记的 /usr/local 覆盖，升级时保留。
+        if [ -x /usr/bin/kylinlist ]; then
+            if ! /usr/bin/kylinlist --clear-system-branding; then
+                echo "KylinList: 未能清理系统菜单品牌覆盖。" >&2
+            fi
+        fi
+        if command -v update-desktop-database >/dev/null 2>&1 \
+            && [ -d /usr/local/share/applications ]; then
+            update-desktop-database /usr/local/share/applications || true
+        fi
+        ;;
+    upgrade|deconfigure)
         ;;
     failed-upgrade)
         ;;
