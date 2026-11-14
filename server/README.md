@@ -1,19 +1,21 @@
 # KylinList 内网更新发布服务
 
-给局域网内的麒麟清单客户端（银河麒麟 ARM64 / amd64 为主）提供版本清单与安装包下载的纯 HTTP 服务。由两个 Compose 服务组成：常驻的 `http`（nginx，只读分发 `data/public`），以及按需运行的 `publisher`（Python 发布工具，宿主机无需安装 Python）。
+给局域网内的麒麟清单客户端（银河麒麟 ARM64 / amd64 为主）提供版本清单与安装包下载的纯 HTTP 服务，同时承载同源产品首页与聚合统计。由三个 Compose 服务组成：常驻的 `http`（nginx，只读分发 `data/public`、静态站点并把统计请求转发给 `stats`）、常驻的 `stats`（聚合统计后端，仅 Python 标准库），以及按需运行的 `publisher`（Python 发布工具，宿主机无需安装 Python）。
 
-> 安全边界：**纯内网 HTTP，无 TLS、无鉴权**。本服务只做文件完整性（SHA-256）校验，不含任何证书或签名机制。**只允许部署在可信局域网内，严禁暴露到公网。**
+> 安全边界：**纯内网 HTTP，无 TLS、无鉴权**。本服务只做文件完整性（SHA-256）校验，不含任何证书或签名机制。统计接口与 `/s/` 管理页同样无鉴权，只返回聚合值、不返回 IP 明细。**只允许部署在可信局域网内，严禁暴露到公网。**统计口径与隐私边界见 [docs/stats.md](../docs/stats.md)。
 
 ## 目录职责
 
 | 文件 / 目录 | 职责 |
 |---|---|
-| `compose.yaml` | 两个服务的定义；`http` 常驻，`publisher` 挂 `tools` profile 按需运行 |
-| `nginx.conf` | nginx conf.d 片段：清单 no-cache、安装包 immutable、无目录列表 |
-| `.env.example` | 环境变量样例（复制为 `.env`，当前只有 `HTTP_PORT`） |
+| `compose.yaml` | 三个服务的定义；`http`/`stats` 常驻，`publisher` 挂 `tools` profile 按需运行 |
+| `nginx.conf` | nginx conf.d 片段：清单 no-cache、安装包 immutable、下载 JSON 日志、统计转发、目录跳转用相对 Location |
+| `.env.example` | 环境变量样例（复制为 `.env`，当前只有 `HTTP_PORT` 与镜像版本） |
+| `site/` | 同源产品首页与 `/s/` 统计管理页（纯静态，无外部资源）；内置 `local/config.json` 全空默认 |
+| `stats/` | 聚合统计后端（标准库 HTTP + SQLite），实现与 API 见 `stats/README.md` |
 | `tools/publish.py` | 发布工具（仅标准库，容器内以 `python -I` 运行） |
 | `tools/test_publish.py` | 发布工具的单元测试（unittest） |
-| `data/` | 运行数据，不入库；结构见 `data/README.md` |
+| `data/` | 运行数据，不入库；含发布数据、统计 SQLite、nginx 日志与品牌覆盖 |
 
 ## 首次部署
 
@@ -27,7 +29,14 @@ docker compose up -d http
 curl http://127.0.0.1:8080/healthz   # 应输出 ok（端口以 .env 为准）
 ```
 
-客户端更新基础地址即 `http://<宿主机IP>:<HTTP_PORT>`。不要把真实内网 IP 写进任何文件。
+客户端更新基础地址即 `http://<宿主机IP>:<HTTP_PORT>`。除已确认的客户端默认生产入口外，不要在文档或示例中新增其他真实内网 IP。
+
+## 产品首页、/s 统计页与品牌覆盖
+
+- `/` 是同源产品首页：直接读取 stable 清单提供下载与完整更新日志，无外部资源。**首页没有指向统计页的入口。**
+- `/s/` 是聚合统计管理页，读取 `GET /api/v1/stats/summary` 展示不同 IP 用户数、创建/完成合计、最久使用天数与各版本下载次数。它**无鉴权**，只返回聚合数据（无 IP 明细），仅限可信内网管理员自行访问。访问 `/s` 时 nginx 以相对 `Location: /s/` 跳转（`absolute_redirect off`）。
+- 客户端“使用统计”窗口只显示本机数据，全局聚合只在此页，见 [docs/stats.md](../docs/stats.md)。
+- 网站品牌覆盖放在运行数据 `data/branding/site/`（挂载为容器内 `/usr/share/nginx/html/local`，只读）：`config.json` 的 `displayName/title/description/logo`，值为空即不覆盖；Logo 须是 `local/` 内的相对文件名。修改后刷新即生效，**无需重建镜像或重启容器**；目录不存在时页面自动使用默认品牌。客户端侧的名称/Logo 覆盖与不变项见 [docs/branding.md](../docs/branding.md)。
 
 ## 发布目录从哪来
 
@@ -60,6 +69,7 @@ docker compose run --rm publisher rollback --to 1.1.0                    # 回�
 
 说明：
 
+- publisher 工具已内置于版本化镜像；修改 `server/tools/` 后必须先执行 `docker compose build publisher`，再继续 validate/publish，避免误用旧代码。
 - 发布成功后原 stable 清单自动归档到 `data/public/updates/v1/archive/manifest-<版本>-<UTC时间戳>.json`；`RELEASE-INFO.json` 存在时也原样透传归档一份（`release-info-<版本>-<时间戳>.json`），发布工具从不解析它。
 - 同一版本重复发布：文件哈希完全一致时幂等成功；内容不同则拒绝（同版本禁止原地替换），请升版本号。
 - 回退要求目标清单指向的安装包仍存在于 `data/public/updates/files/`，不要手工删除历史版本目录。
@@ -72,6 +82,15 @@ docker compose run --rm --entrypoint python publisher -I /tools/test_publish.py
 ```
 
 （`--entrypoint python` 覆盖 compose 入口，在容器内直接跑 `python -I /tools/test_publish.py`；宿主机不用装 Python。）
+
+统计服务的测试同样在容器内运行（把 `stats/` 目录只读挂进镜像，宿主机不用装 Python）：
+
+```bash
+docker run --rm -v "$(pwd)/stats":/stats:ro --entrypoint python \
+  kylinlist-stats:${KYLINLIST_IMAGE_VERSION:-1.3.0} -I /stats/test_stats.py
+```
+
+测试只用临时目录与合成数据，不访问任何真实服务器。
 
 ## 离线导入镜像（宿主机可能无外网）
 

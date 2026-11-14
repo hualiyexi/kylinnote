@@ -1,6 +1,6 @@
 # 构建、测试与离线打包
 
-KylinList 1.1.0 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
+KylinList 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
 
 ## 日常优先使用 CI 产物
 
@@ -138,7 +138,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.
     -InnoSetupCompiler "$PWD/.tools/InnoSetup/ISCC.exe"
 ```
 
-CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe`。安装器面向 Windows 10/11 x64，默认安装至当前用户的 `%LOCALAPPDATA%\Programs\KylinList`，无需管理员权限，支持中文/空格路径；Qt 与插件都随包携带，目标机不必安装 Qt。安装器与便携版均不默认开启登录自启。卸载只移除应用文件和指向本安装的登录启动项，保留应用数据目录中的 SQLite 与设置。便携 ZIP 也使用当前用户数据目录，可用 `--data-dir` 指定独立目录。
+CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe`。安装器面向 Windows 10/11 x64，默认安装至当前用户的 `%LOCALAPPDATA%\Programs\KylinList`，无需管理员权限，支持中文/空格路径；Qt 与插件都随包携带，目标机不必安装 Qt。正式安装版首次运行默认开启登录自启，用户关闭后不会被再次自动打开；便携版、开发构建与隔离测试运行不自动登记真实自启动。卸载只移除应用文件和指向本安装的登录启动项，保留应用数据目录中的 SQLite 与设置。便携 ZIP 也使用当前用户数据目录，可用 `--data-dir` 指定独立目录。
 
 `-BuildDir`、`-OutputDir`、`-CTest`、`-Parallel` 可显式覆盖；所有工具参数都接受完整路径。`-SkipArchive` 适合重复开发构建，`-SkipTests` 仅用于本地诊断；CI 不跳过测试。MSVC 可直接用 CMake 配置并编译，已启用 `/utf-8`；现有部署脚本固定使用 MinGW，不混用 MSVC 与 MinGW Qt。
 
