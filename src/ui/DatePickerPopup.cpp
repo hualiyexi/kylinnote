@@ -683,7 +683,7 @@ QCheckBox#DatePickerCheck { color: %TEXT%; background: transparent; spacing: 6px
         edit->setPalette(palette);
     }
     if (auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(m_card->graphicsEffect())) {
-        QColor shadow = ThemeManager::instance().color(ds::ColorToken::Text);
+        QColor shadow = ThemeManager::instance().color(ds::ColorToken::Shadow);
         shadow.setAlpha(40);
         effect->setColor(shadow);
     }
@@ -959,6 +959,11 @@ bool DatePickerPopup::cleared() const
 void DatePickerPopup::popupBelow(QWidget* anchor)
 {
     if (!anchor) return;
+    popupAt(QRect(anchor->mapToGlobal(QPoint()), anchor->size()));
+}
+
+void DatePickerPopup::popupAt(const QRect& globalAnchor)
+{
     m_cleared = false;
     setRangeMode(false);
     showMainPage();
@@ -969,10 +974,9 @@ void DatePickerPopup::popupBelow(QWidget* anchor)
         buildCalendarGrid();
     }
 
-    const QPoint anchorBottom = anchor->mapToGlobal(QPoint(0, anchor->height()));
-    QPoint position(anchorBottom.x() - kShadowMargin, anchorBottom.y() + 6 - kShadowMargin);
-    const QPoint anchorCenter = anchor->mapToGlobal(anchor->rect().center());
-    QScreen* screen = QGuiApplication::screenAt(anchorCenter);
+    QPoint position(globalAnchor.left() - kShadowMargin,
+                    globalAnchor.bottom() + 6 - kShadowMargin);
+    QScreen* screen = QGuiApplication::screenAt(globalAnchor.center());
     if (!screen) screen = QGuiApplication::primaryScreen();
     if (screen) {
         const QRect area = screen->availableGeometry();

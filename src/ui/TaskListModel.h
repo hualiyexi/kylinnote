@@ -18,7 +18,16 @@ public:
         DeletedRole,
         OverdueRole,
         PinnedRole,
-        HeaderRole // 仅模型/委托内部使用的段头行
+        HeaderRole, // 仅模型/委托内部使用的段头行
+        ListIdRole,
+        ListNameRole,
+        ListIconRole,
+        ListColorRole,
+        ScheduleRole,
+        ScheduleTooltipRole,
+        SectionKeyRole,
+        HeaderActionRole,
+        HeaderEntityIdsRole
     };
     explicit TaskListModel(TaskStore* store, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -37,6 +46,8 @@ private:
     struct Row {
         Entity entity;
         QString header;
+        QString sectionKey;
+        QStringList sectionEntityIds;
         bool isHeader = false;
     };
     TaskStore* m_store;

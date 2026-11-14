@@ -1,4 +1,5 @@
 #include "DetailPopups.h"
+#include "ListAppearance.h"
 
 #include <QGraphicsDropShadowEffect>
 #include <QGuiApplication>
@@ -78,7 +79,7 @@ void DetailPopup::applyTheme() {
         .arg(theme.color(ds::ColorToken::MenuHover).name())
         .arg(theme.color(ds::ColorToken::Selection).name())
         .arg(theme.color(ds::ColorToken::Text).name()));
-    QColor tint = theme.color(ds::ColorToken::Text);
+    QColor tint = theme.color(ds::ColorToken::Shadow);
     tint.setAlpha(36);
     static_cast<QGraphicsDropShadowEffect*>(m_card->graphicsEffect())->setColor(tint);
 }
@@ -213,8 +214,8 @@ void ListSelectPopup::setLists(const QVector<TaskList>& lists, const QVector<Fol
         auto* item = parents.contains(list.folderId)
             ? new QTreeWidgetItem(parents.value(list.folderId), {list.name})
             : new QTreeWidgetItem(m_tree, {list.name});
-        const IconId icon = list.inbox ? IconId::Inbox : (list.kind == EntityKind::Note ? IconId::Note : IconId::TaskList);
-        item->setIcon(0, AppIcons::icon(icon));
+        item->setIcon(0, ListAppearance::icon(
+            list, 16, ThemeManager::instance().color(ds::ColorToken::TextSecondary)));
         item->setData(0, Qt::UserRole, list.id);
         item->setToolTip(0, list.name);
         if (list.id == selectedId) {

@@ -30,7 +30,11 @@
 #include "DatePickerPopup.h"
 #include "DetailPopups.h"
 #include "FormatToolbar.h"
+#include "ListAppearance.h"
 #include "MarkdownEditor.h"
+#include "ModalDialog.h"
+#include "PopupMenu.h"
+#include "TaskDateController.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
 
@@ -308,7 +312,7 @@ void TaskDetailWidget::buildUi() {
     connect(m_checklist, &QListWidget::customContextMenuRequested, this, [this](const QPoint& point) {
         auto* item = m_checklist->itemAt(point);
         if (!item || !m_checklist->isEnabled()) return;
-        QMenu menu(this);
+        PopupMenu menu(this);
         auto* edit = menu.addAction(QStringLiteral("编辑检查项"));
         connect(edit, &QAction::triggered, this, [this, item]() { m_checklist->editItem(item); });
         auto* add = menu.addAction(QStringLiteral("添加检查项"));
@@ -552,7 +556,7 @@ void TaskDetailWidget::buildUi() {
 }
 void TaskDetailWidget::showMoreMenu() {
     if (m_id.isEmpty()) return;
-    QMenu menu(this);
+    PopupMenu menu(this);
     menu.setObjectName(QStringLiteral("DetailMoreMenu"));
     const Entity entity = m_store->entity(m_id);
 
@@ -646,22 +650,32 @@ void TaskDetailWidget::showMoreMenu() {
         setSettingsExpanded(m_settingsHost->isHidden());
     });
     menu.addSeparator();
-    auto* trash = menu.addAction(AppIcons::icon(IconId::Trash, 16),
+    if (entity.deleted) {
+        auto* restore = menu.addAction(AppIcons::icon(IconId::Restore, 16), QStringLiteral("恢复"));
+        restore->setObjectName(QStringLiteral("CmdRestore"));
+        connect(restore, &QAction::triggered, this, [this]() { m_store->restoreTask(m_id); });
+        menu.addSeparator();
+    }
+    auto* trash = menu.addAction(AppIcons::icon(entity.deleted ? IconId::Delete : IconId::Trash, 16),
         entity.deleted ? QStringLiteral("永久删除") : QStringLiteral("移到回收站"));
+    trash->setObjectName(entity.deleted ? QStringLiteral("CmdDeletePermanently")
+                                       : QStringLiteral("CmdTrash"));
     connect(trash, &QAction::triggered, this, [this, entity]() {
         if (!flush()) return;
         if (entity.deleted) {
-            if (QMessageBox::question(this, QStringLiteral("永久删除"),
+            if (ConfirmDialog::prompt(QStringLiteral("永久删除"),
                     QStringLiteral("永久删除“%1”？此操作无法撤销。").arg(entity.title),
-                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
-                if (m_store->deletePermanently(m_id)) { const auto id = m_id; setTask(QString()); emit taskRemoved(id); }
+                    QStringLiteral("永久删除"), true, this)) {
+                if (m_store->deletePermanently(m_id)) {
+                    const auto id = m_id;
+                    setTask(QString());
+                    emit taskRemoved(id);
+                }
             }
-        } else m_store->trashTask(m_id);
+        } else {
+            m_store->trashTask(m_id);
+        }
     });
-    if (entity.deleted) {
-        auto* restore = menu.addAction(AppIcons::icon(IconId::Restore, 16), QStringLiteral("恢复"));
-        connect(restore, &QAction::triggered, this, [this]() { m_store->restoreTask(m_id); });
-    }
 
     menu.exec(m_moreButton ? m_moreButton->mapToGlobal(QPoint(0, 0)) : QCursor::pos());
 }
@@ -784,55 +798,16 @@ void TaskDetailWidget::setSettingsExpanded(bool expanded) {
 }
 
 void TaskDetailWidget::openDatePicker() {
-    if (m_id.isEmpty()) return;
-    if (!flush()) return;
-    const Entity entity = m_store->entity(m_id);
-    DatePickerPopup* picker = new DatePickerPopup(this);
-    const QDateTime initialDate = entity.dueAt.isValid() ? entity.dueAt
-        : entity.allDayDate.isValid() ? fromAppTime(QDateTime(entity.allDayDate, QTime(0, 0)))
-                                     : entity.startAt;
-    picker->setDateTime(initialDate);
-    picker->setHasDate(initialDate.isValid());
-    picker->setReminder(entity.reminderAt);
-    picker->setRecurrence(entity.recurrence);
-
-    // 浮层是临时操作层（01:11）：确定 / 清除 / 取消都在弹层内完成，
-    // 关闭后按结果一次性写回，详情区不常驻任何日期编辑控件。
-    const auto apply = [this, picker]() {
-        Entity updated = m_store->entity(m_id);
-        const DatePickerPopup& state = *picker;
-        const bool clear = state.cleared();  // const 引用才解析到 getter（与信号同名）
-        if (!clear && picker->hasDate()) {
-            if (updated.allDayDate.isValid() && !updated.dueAt.isValid()
-                && toAppTime(picker->dateTime()).time() == QTime(0, 0)) {
-                updated.allDayDate = toAppTime(picker->dateTime()).date();
-            } else {
-                updated.dueAt = picker->dateTime();
-                updated.allDayDate = QDate();
-            }
-            updated.startAt = QDateTime();
-            updated.reminderAt = picker->reminder();
-            updated.recurrence = picker->recurrence();
-        } else {
-            updated.dueAt = QDateTime();
-            updated.startAt = QDateTime();
-            updated.allDayDate = QDate();
-            updated.reminderAt = QDateTime();
-            updated.recurrence = QStringLiteral("none");
-        }
-        if (!m_store->saveTask(updated)) {
-            setStatus(QStringLiteral("日期保存失败，编辑内容已保留。"), true);
-            return;
-        }
-        loadFields();
-    };
-    connect(picker, &QDialog::finished, this, [this, picker, apply](int result) {
-        // 确定(Accepted) 或 清除(Rejected 且 cleared()) 都写回；单纯取消不写。
-        const DatePickerPopup& state = *picker;
-        if (result == QDialog::Accepted || state.cleared()) apply();
-    });
-    connect(picker, &QDialog::finished, picker, &QObject::deleteLater);
-    picker->popupBelow(m_dateChip);
+    if (m_id.isEmpty() || !flush()) return;
+    if (!m_dateController) {
+        m_dateController = new TaskDateController(m_store, this);
+        connect(m_dateController, &TaskDateController::saved, this, [this](const QString& id) {
+            if (m_id == id) loadFields();
+        });
+        connect(m_dateController, &TaskDateController::saveFailed, this,
+                [this](const QString& message) { setStatus(message, true); });
+    }
+    m_dateController->open(m_id, QRect(m_dateChip->mapToGlobal(QPoint()), m_dateChip->size()));
 }
 
 void TaskDetailWidget::refreshGroups() {
@@ -840,20 +815,24 @@ void TaskDetailWidget::refreshGroups() {
     const QString selected = m_dirty.contains(QStringLiteral("group")) ? m_group->currentData().toString()
                                                                       : m_store->entity(m_id).listId;
     m_group->clear();
-    for (const TaskList& list : m_store->lists()) m_group->addItem(list.name, list.id);
+    for (const TaskList& list : m_store->lists()) {
+        m_group->addItem(ListAppearance::icon(
+            list, 16, ThemeManager::instance().color(ds::ColorToken::TextSecondary)),
+            list.name, list.id);
+    }
     const int index = m_group->findData(selected);
     m_group->setCurrentIndex(index < 0 ? 0 : index);
-    // 底栏左侧清单 chip 显示当前归属
+    // 底栏左侧清单 chip 与侧栏、任务行使用同一套外观规则。
     if (m_groupChip) {
-        QString name;
-        IconId icon = IconId::Inbox;
+        TaskList selectedList;
         for (const TaskList& list : m_store->lists()) {
-            if (list.id != selected) continue;
-            name = list.name;
-            icon = list.inbox ? IconId::Inbox : (list.kind == EntityKind::Note ? IconId::Note : IconId::TaskList);
+            if (list.id == selected) selectedList = list;
         }
-        m_groupChip->setText(name.isEmpty() ? QStringLiteral("收集箱") : name);
-        m_groupChip->setIcon(AppIcons::icon(icon, 16));
+        m_groupChip->setText(selectedList.name.isEmpty() ? QStringLiteral("收集箱")
+                                                        : selectedList.name);
+        if (selectedList.name.isEmpty()) selectedList.inbox = true;
+        m_groupChip->setIcon(ListAppearance::icon(
+            selectedList, 16, ThemeManager::instance().color(ds::ColorToken::TextSecondary)));
         m_groupChip->setToolTip(QStringLiteral("所属清单：%1").arg(m_groupChip->text()));
     }
 }

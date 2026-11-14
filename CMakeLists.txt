@@ -89,13 +89,17 @@ set(KYLINLIST_UI_SOURCES
     src/ui/MarkdownEditor.cpp
     src/ui/TaskListModel.cpp
     src/ui/TaskDelegate.cpp
+    src/ui/TaskDateController.cpp
     src/ui/ListAppearance.cpp
+    src/ui/SidebarSectionHeader.cpp
+    src/ui/SmartListSettingsWidget.cpp
     src/ui/ModalDialog.cpp
     src/ui/PopupMenu.cpp
     src/ui/MenuComboBox.cpp
     src/ui/ListEditorDialog.cpp
     src/ui/ColorPickerPopup.cpp
     src/ui/EmojiPickerPopup.cpp
+    src/ui/SettingsDialog.cpp
     src/ui/TaskDetailWidget.cpp
     src/ui/TaskPanel.cpp
     src/ui/ReminderPopup.cpp

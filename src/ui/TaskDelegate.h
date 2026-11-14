@@ -1,5 +1,6 @@
 #pragma once
 #include <QStyledItemDelegate>
+#include <QStringList>
 #include "AppIcons.h"
 namespace kl {
 
@@ -19,10 +20,16 @@ public:
                const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+    bool helpEvent(QHelpEvent* event, QAbstractItemView* view,
+                   const QStyleOptionViewItem& option, const QModelIndex& index) override;
     bool editorEvent(QEvent* event,
                      QAbstractItemModel* model,
                      const QStyleOptionViewItem& option,
                      const QModelIndex& index) override;
+signals:
+    void dateActivated(QString entityId, QRect anchor);
+    void listActivated(QString listId);
+    void postponeActivated(QStringList entityIds);
 };
 
 // 侧栏导航行：分区标题、SVG 图标、独立右对齐数量。
@@ -30,7 +37,16 @@ class NavigationDelegate : public QStyledItemDelegate {
     Q_OBJECT
 public:
     // 与 TaskPanel 现有 UserRole(view)/+1(group)/+2(label) 并存。
-    enum Role { CountRole = Qt::UserRole + 3, SectionRole = Qt::UserRole + 4, IconRole = Qt::UserRole + 5 };
+    enum Role {
+        CountRole = Qt::UserRole + 3,
+        SectionRole = Qt::UserRole + 4,
+        IconRole = Qt::UserRole + 5,
+        FolderIdRole = Qt::UserRole + 6,
+        IconNameRole = Qt::UserRole + 7,
+        ListColorRole = Qt::UserRole + 8,
+        IndentRole = Qt::UserRole + 9,
+        ListKindRole = Qt::UserRole + 10
+    };
     explicit NavigationDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {
     }
     void paint(QPainter* painter,

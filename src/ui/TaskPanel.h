@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QHash>
 #include <QList>
+#include <QSet>
 #include "../domain/ViewSpec.h"
 class QListWidget;
 class QListView;
@@ -65,6 +66,9 @@ private:
     void showTaskMenu(const QPoint& position);
     void organizationMenu(const QPoint& position);
     void groupMenu();
+    void createListDialog(const QString& folderId, EntityKind kind);
+    void editListDialog(const TaskList& list);
+    void showSmartListSettings();
     void backupMenu();
     void workspaceMenu();
     void showError(const QString& message);
@@ -76,6 +80,7 @@ private:
     void reconcileWorkspaceLayout();
     void updateDetailOverlayGeometry();
     void refreshWorkspaceIcons();
+    void updateHeadingAppearance();
     void updateWindowControlsPosition();
     void syncWindowDecoration();
     void syncColumnResizeAreas();
@@ -108,6 +113,7 @@ private:
     QToolButton* m_quickDate = nullptr;
     ToastIsland* m_toast = nullptr;
     ViewSpec m_filter;
+    QSet<QString> m_archivedListIds;
     QString m_selectedId = QString();
     QHash<QString, TaskStatus> m_taskStates;
     int m_sidebarWidth = 232;
@@ -118,6 +124,8 @@ private:
     bool m_sidebarAutoHidden = false;
     bool m_detailOverlay = false;
     bool m_focusMode = false;
+    bool m_archivedExpanded = false;
+    bool m_keepHiddenView = false;
     bool m_layoutUpdating = false;
     bool m_restoringLayout = false;
     bool m_resetting = false, m_rebuilding = false, m_restoreFrozen = false;

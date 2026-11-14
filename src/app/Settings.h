@@ -11,6 +11,12 @@ public:
         QString version, sha256, platform, arch, variant, fileName;
     };
     static Settings& instance();
+
+    // 内置导航入口的可见性；键使用稳定字符串，不持久化 ViewScope 数字。
+    enum class SmartListVisibility { Show, Hide, WhenNonEmpty };
+    SmartListVisibility smartListVisibility(const QString& key) const;
+    void setSmartListVisibility(const QString& key, SmartListVisibility visibility);
+
     NoteLayer defaultLayer() const;
     void setDefaultLayer(NoteLayer layer);
 

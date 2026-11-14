@@ -1044,7 +1044,7 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             return;
         }
         if (QMessageBox::question(dialogParent(), QStringLiteral("删除清单"),
-                                  QStringLiteral("删除后，其中实体将移回系统收集箱，内容不会删除。是否继续？"),
+                                  QStringLiteral("删除清单后，其中所有任务和笔记会移入垃圾桶，可在垃圾桶中恢复。是否继续？"),
                                   QMessageBox::Yes | QMessageBox::No,
                                   QMessageBox::No) != QMessageBox::Yes) {
             return;

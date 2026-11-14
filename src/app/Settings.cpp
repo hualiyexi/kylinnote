@@ -1,5 +1,16 @@
 #include "Settings.h"
 namespace kl {
+namespace {
+
+bool isSmartListKey(const QString& key) {
+    static const QStringList allowed = {
+        QStringLiteral("all"), QStringLiteral("today"), QStringLiteral("tomorrow"),
+        QStringLiteral("next7days"), QStringLiteral("overdue"), QStringLiteral("inbox"),
+        QStringLiteral("completed"), QStringLiteral("abandoned"), QStringLiteral("trash")};
+    return allowed.contains(key);
+}
+
+}  // namespace
 Settings::Settings()
     : m_store(QSettings::IniFormat,
               QSettings::UserScope,
@@ -10,6 +21,24 @@ Settings& Settings::instance() {
     static Settings settings;
     return settings;
 }
+
+Settings::SmartListVisibility Settings::smartListVisibility(const QString& key) const {
+    if (!isSmartListKey(key)) return SmartListVisibility::Show;
+    const QString value = m_store.value(QStringLiteral("navigation/smartLists/") + key,
+                                        QStringLiteral("show")).toString();
+    if (value == QLatin1String("hide")) return SmartListVisibility::Hide;
+    if (value == QLatin1String("nonempty")) return SmartListVisibility::WhenNonEmpty;
+    return SmartListVisibility::Show;
+}
+
+void Settings::setSmartListVisibility(const QString& key, SmartListVisibility visibility) {
+    if (!isSmartListKey(key)) return;
+    QString value = QStringLiteral("show");
+    if (visibility == SmartListVisibility::Hide) value = QStringLiteral("hide");
+    else if (visibility == SmartListVisibility::WhenNonEmpty) value = QStringLiteral("nonempty");
+    m_store.setValue(QStringLiteral("navigation/smartLists/") + key, value);
+}
+
 NoteLayer Settings::defaultLayer() const {
 #ifdef Q_OS_WIN
     const NoteLayer fallback = NoteLayer::Normal;

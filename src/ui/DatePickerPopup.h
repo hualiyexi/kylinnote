@@ -38,6 +38,7 @@ public:
     bool cleared() const;
 
     void popupBelow(QWidget* anchor);
+    void popupAt(const QRect& globalAnchor);
 
 signals:
     void cleared();

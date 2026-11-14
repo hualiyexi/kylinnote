@@ -34,12 +34,21 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <functional>
 #include "../app/Branding.h"
+#include "../app/Settings.h"
 #include "../app/TaskStore.h"
 #include "../platform/Autostart.h"
 #include "AppIcons.h"
 #include "AppStyle.h"
+#include "ListAppearance.h"
+#include "ListEditorDialog.h"
+#include "ModalDialog.h"
+#include "PopupMenu.h"
+#include "SettingsDialog.h"
+#include "SidebarSectionHeader.h"
 #include "TaskDelegate.h"
+#include "TaskDateController.h"
 #include "TaskDetailWidget.h"
 #include "TaskListModel.h"
 #include "ToastIsland.h"
@@ -55,7 +64,6 @@
 
 namespace kl {
 namespace {
-const int FolderIdRole = Qt::UserRole + 6;
 
 QPixmap brandMark(int size) {
     return AppIcons::icon(IconId::TaskList, ds::ColorToken::Primary, size)
@@ -63,18 +71,20 @@ QPixmap brandMark(int size) {
 }
 
 bool supportsTime(ViewScope scope) {
-    return scope == ViewScope::Today || scope == ViewScope::Next7Days || scope == ViewScope::Overdue;
+    return scope == ViewScope::Today || scope == ViewScope::Tomorrow
+        || scope == ViewScope::Next7Days || scope == ViewScope::Overdue;
 }
 
 QString scopeLabel(ViewScope scope) {
     switch (scope) {
-        case ViewScope::AllLists: return QStringLiteral("全部待办");
+        case ViewScope::AllLists: return QStringLiteral("所有");
         case ViewScope::Today: return QStringLiteral("今天");
-        case ViewScope::Next7Days: return QStringLiteral("七天内");
-        case ViewScope::Overdue: return QStringLiteral("已逾期");
+        case ViewScope::Tomorrow: return QStringLiteral("明天");
+        case ViewScope::Next7Days: return QStringLiteral("最近7天");
+        case ViewScope::Overdue: return QStringLiteral("已过期");
         case ViewScope::Completed: return QStringLiteral("已完成");
         case ViewScope::Abandoned: return QStringLiteral("已放弃");
-        case ViewScope::Trash: return QStringLiteral("回收站");
+        case ViewScope::Trash: return QStringLiteral("垃圾桶");
         case ViewScope::List: break;
     }
     return QStringLiteral("清单");
@@ -83,8 +93,9 @@ QString scopeLabel(ViewScope scope) {
 // R3: 导航分区标签
 IconId scopeIcon(ViewScope scope) {
     switch (scope) {
-        case ViewScope::AllLists: return IconId::Inbox;
+        case ViewScope::AllLists: return IconId::All;
         case ViewScope::Today: return IconId::Today;
+        case ViewScope::Tomorrow: return IconId::Tomorrow;
         case ViewScope::Next7Days: return IconId::Upcoming;
         case ViewScope::Overdue: return IconId::Overdue;
         case ViewScope::Completed: return IconId::Done;
@@ -94,6 +105,7 @@ IconId scopeIcon(ViewScope scope) {
     }
     return IconId::TaskList;
 }
+
 }  // namespace
 
 TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m_store(store) {
@@ -154,10 +166,19 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
     });
     connect(store, &TaskStore::errorOccurred, this, &TaskPanel::showError);
     auto* clock = new QTimer(this); clock->setInterval(60000);
-    connect(clock, &QTimer::timeout, m_model, &TaskListModel::refresh); clock->start();
+    connect(clock, &QTimer::timeout, this, [this, lastDate = QDate()]() mutable {
+        const QDate today = toAppTime(appNow()).date();
+        if (!lastDate.isValid() || lastDate != today) {
+            lastDate = today;
+            rebuildNavigation();
+        }
+        m_model->refresh();
+    });
+    clock->start();
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
         refreshWorkspaceIcons();
         rebuildNavigation();
+        applyFilter();
     });
 }
 
@@ -258,8 +279,8 @@ void TaskPanel::buildUi() {
         showNotice(QStringLiteral("任务、笔记与附件仅保存在本机，无需联网。"));
     });
     rail->addWidget(sync, 0, Qt::AlignHCenter);
-    railButton(m_railSettings, QStringLiteral("RailSettings"), IconId::Settings, QStringLiteral("备份与设置"));
-    connect(m_railSettings, &QToolButton::clicked, this, &TaskPanel::backupMenu);
+    railButton(m_railSettings, QStringLiteral("RailSettings"), IconId::Settings, QStringLiteral("设置"));
+    connect(m_railSettings, &QToolButton::clicked, this, &TaskPanel::showSmartListSettings);
     body->addWidget(m_activityRail);
 
     // 第二列：筛选与组织。顶部没有独立标题条。
@@ -268,20 +289,8 @@ void TaskPanel::buildUi() {
     m_sidebar->setMinimumWidth(180);
     m_sidebar->setMaximumWidth(360);
     auto* side = new QVBoxLayout(m_sidebar);
-    side->setContentsMargins(8, 36, 8, 8);
+    side->setContentsMargins(4, 12, 4, 8);
     side->setSpacing(2);
-    auto* sideTop = new QHBoxLayout;
-    sideTop->setContentsMargins(0, 0, 0, 0);
-    sideTop->addStretch(1);
-    auto* addList = new QToolButton(m_sidebar);
-    addList->setObjectName(QStringLiteral("GroupMenuButton"));
-    addList->setFixedSize(32, 32);
-    addList->setToolTip(QStringLiteral("新建文件夹或清单"));
-    addList->setAccessibleName(QStringLiteral("文件夹与清单管理"));
-    addList->setAutoRaise(true);
-    connect(addList, &QToolButton::clicked, this, &TaskPanel::groupMenu);
-    sideTop->addWidget(addList, 0, Qt::AlignVCenter);
-    side->addLayout(sideTop);
 
     m_navigation = new QListWidget(m_sidebar);
     m_navigation->setObjectName(QStringLiteral("Navigation"));
@@ -409,10 +418,34 @@ void TaskPanel::buildUi() {
     m_list = new QListView(m_middle);
     m_list->setObjectName(QStringLiteral("TaskList"));
     m_list->setModel(m_model);
-    m_list->setItemDelegate(new TaskDelegate(m_list));
+    auto* taskDelegate = new TaskDelegate(m_list);
+    m_list->setItemDelegate(taskDelegate);
+    auto* dateController = new TaskDateController(m_store, this);
+    connect(dateController, &TaskDateController::saveFailed, this, &TaskPanel::showError);
+    connect(taskDelegate, &TaskDelegate::dateActivated, this,
+            [this, dateController](const QString& id, const QRect& anchor) {
+        if (!flush()) return;
+        dateController->open(id, QRect(m_list->viewport()->mapToGlobal(anchor.topLeft()),
+                                       anchor.size()));
+    });
+    connect(taskDelegate, &TaskDelegate::listActivated, this, [this](const QString& listId) {
+        for (const TaskList& list : m_store->lists()) {
+            if (list.id == listId && list.archivedAtUtcMs > 0) m_archivedExpanded = true;
+        }
+        rebuildNavigation();
+        selectNavigation(ViewScope::List, listId);
+    });
+    connect(taskDelegate, &TaskDelegate::postponeActivated, this, [this](const QStringList& ids) {
+        if (ids.isEmpty()) return;
+        if (!ConfirmDialog::prompt(QStringLiteral("顺延至今天"),
+                QStringLiteral("当前清单中所有已过期任务将被顺延至今天。"),
+                QStringLiteral("顺延"), false, this)) return;
+        if (m_store->postponeOverdueTasks(ids, toAppTime(appNow()).date()))
+            showNotice(QStringLiteral("已顺延"));
+    });
     m_list->setMouseTracking(true);
     m_list->viewport()->setAttribute(Qt::WA_Hover, true);
-    m_list->setUniformItemSizes(true);
+    m_list->setUniformItemSizes(false);
     m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->setAccessibleName(QStringLiteral("任务与笔记列表"));
@@ -574,12 +607,13 @@ void TaskPanel::buildUi() {
         if (!m_detail->flush()) { rebuildNavigation(); return; }
         auto* item = m_navigation->item(row);
         if (!item || item->data(NavigationDelegate::SectionRole).toBool()) return;
+        m_keepHiddenView = false;
         m_filter.scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
         m_filter.listId = item->data(Qt::UserRole + 1).toString();
-        if (!supportsTime(m_filter.scope)) {
-            m_filter.renderer = ViewRenderer::List;
+        m_filter.renderer = supportsTime(m_filter.scope) ? ViewRenderer::Time : ViewRenderer::List;
+        {
             const QSignalBlocker blocker(m_renderer);
-            m_renderer->setCurrentIndex(0);
+            m_renderer->setCurrentIndex(static_cast<int>(m_filter.renderer));
         }
         m_heading->setText(item->data(Qt::UserRole + 2).toString().trimmed());
         applyFilter();
@@ -614,63 +648,166 @@ void TaskPanel::buildUi() {
 // ========== R3: 导航重建 ==========
 void TaskPanel::rebuildNavigation() {
     if (m_restoreFrozen) return;
-    m_rebuilding = true; const QSignalBlocker blocker(m_navigation); m_navigation->clear();
-    int selected = 0;
+    m_rebuilding = true;
+    const QSignalBlocker blocker(m_navigation);
+    m_navigation->clear();
+    int selected = -1;
+
+    QSet<QString> archivedIds;
+    for (const TaskList& list : m_store->lists())
+        if (list.archivedAtUtcMs > 0) archivedIds.insert(list.id);
+    if (m_filter.scope == ViewScope::List && archivedIds.contains(m_filter.listId))
+        m_archivedExpanded = true;
+    const bool archivePolicyChanged = archivedIds != m_archivedListIds;
+    m_archivedListIds = archivedIds;
 
     auto section = [this](const QString& title) {
         auto* item = new QListWidgetItem(title, m_navigation);
         item->setFlags(Qt::NoItemFlags);
         item->setData(NavigationDelegate::SectionRole, true);
+        return item;
     };
-    auto add = [this, &selected](const QString& label, ViewScope scope, const QString& listId = QString()) {
-        ViewSpec probe; probe.scope = scope; probe.listId = listId;
+    auto interactiveSection = [this](const QString& title, const QString& objectName,
+                                     IconId actionIcon, const QString& actionName,
+                                     const QString& toolTip, bool collapseAction,
+                                     std::function<void()> action) {
+        auto* item = new QListWidgetItem(m_navigation);
+        item->setFlags(Qt::NoItemFlags);
+        item->setData(NavigationDelegate::SectionRole, true);
+        item->setData(Qt::UserRole + 2, title);
+        item->setSizeHint(QSize(160, 36));
+        auto* header = new SidebarSectionHeader(title, objectName, m_navigation);
+        header->setAction(actionIcon, toolTip, actionName, collapseAction);
+        header->setExpanded(m_archivedExpanded);
+        m_navigation->setItemWidget(item, header);
+        connect(header, &SidebarSectionHeader::actionTriggered, this, action);
+        return header;
+    };
+    auto add = [this, &selected, &archivedIds](const QString& label, ViewScope scope,
+                                               const QString& listId = QString(),
+                                               const TaskList* appearance = nullptr,
+                                               const QString& smartKey = QString(),
+                                               int indent = 0) -> QListWidgetItem* {
+        ViewSpec probe;
+        probe.scope = scope;
+        probe.listId = listId;
         int count = 0;
         for (const Entity& entity : m_store->entities())
-            if (contains(entity, probe, toAppTime(appNow()).date())) ++count;
+            if (contains(entity, probe, toAppTime(appNow()).date(), archivedIds)) ++count;
+        if (!smartKey.isEmpty()) {
+            const auto visibility = Settings::instance().smartListVisibility(smartKey);
+            if (visibility == Settings::SmartListVisibility::Hide
+                || (visibility == Settings::SmartListVisibility::WhenNonEmpty && count == 0))
+                return nullptr;
+        }
         auto* item = new QListWidgetItem(label, m_navigation);
         item->setData(Qt::UserRole, static_cast<int>(scope));
         item->setData(Qt::UserRole + 1, listId);
         item->setData(Qt::UserRole + 2, label);
-        item->setData(NavigationDelegate::CountRole, count);
+        item->setData(NavigationDelegate::CountRole,
+                      count > 0 ? QString::number(count) : QString());
         item->setData(NavigationDelegate::IconRole, static_cast<int>(scopeIcon(scope)));
+        item->setData(NavigationDelegate::IndentRole, indent);
+        if (appearance) {
+            item->setData(NavigationDelegate::IconNameRole, ListAppearance::iconName(*appearance));
+            item->setData(NavigationDelegate::ListColorRole, appearance->color);
+            item->setData(NavigationDelegate::ListKindRole, static_cast<int>(appearance->kind));
+        }
         item->setToolTip(label);
         if (scope == m_filter.scope && (scope != ViewScope::List || listId == m_filter.listId))
             selected = m_navigation->count() - 1;
+        return item;
     };
     auto folder = [this](const Folder& row) {
         auto* item = new QListWidgetItem(row.name, m_navigation);
         item->setFlags(Qt::ItemIsEnabled);
         item->setData(NavigationDelegate::SectionRole, true);
-        item->setData(FolderIdRole, row.id);
+        item->setData(NavigationDelegate::FolderIdRole, row.id);
         item->setData(NavigationDelegate::IconRole, static_cast<int>(IconId::Folder));
         item->setToolTip(QStringLiteral("文件夹：%1（右键管理）").arg(row.name));
     };
 
-    // R3: 智能列表直接置顶，不额外占用分区标题行。
-    add(QStringLiteral("全部待办"), ViewScope::AllLists);
-    add(QStringLiteral("今天"), ViewScope::Today);
-    add(QStringLiteral("七天内"), ViewScope::Next7Days);
+    interactiveSection(QStringLiteral("智能清单"), QStringLiteral("SmartListHeader"),
+                       IconId::SmartSettings, QStringLiteral("SmartListSettingsButton"),
+                       QStringLiteral("智能清单设置"), false,
+                       [this]() { showSmartListSettings(); });
+    add(QStringLiteral("所有"), ViewScope::AllLists, QString(), nullptr, QStringLiteral("all"));
+    add(QStringLiteral("今天"), ViewScope::Today, QString(), nullptr, QStringLiteral("today"));
+    add(QStringLiteral("明天"), ViewScope::Tomorrow, QString(), nullptr, QStringLiteral("tomorrow"));
+    add(QStringLiteral("最近7天"), ViewScope::Next7Days, QString(), nullptr,
+        QStringLiteral("next7days"));
+    add(QStringLiteral("已过期"), ViewScope::Overdue, QString(), nullptr,
+        QStringLiteral("overdue"));
     for (const TaskList& list : m_store->lists())
-        if (list.inbox) add(QStringLiteral("收集箱"), ViewScope::List, list.id);
+        if (list.inbox)
+            add(QStringLiteral("收集箱"), ViewScope::List, list.id, &list,
+                QStringLiteral("inbox"));
 
-    section(QStringLiteral("清单"));
+    interactiveSection(QStringLiteral("清单"), QStringLiteral("ListSectionHeader"),
+                       IconId::Add, QStringLiteral("GroupMenuButton"),
+                       QStringLiteral("添加清单"), false,
+                       [this]() { createListDialog(QString(), EntityKind::Task); });
     for (const TaskList& list : m_store->lists())
-        if (!list.inbox && list.folderId.isEmpty())
-            add(list.name, ViewScope::List, list.id);
+        if (!list.inbox && list.archivedAtUtcMs == 0 && list.folderId.isEmpty())
+            add(list.name, ViewScope::List, list.id, &list);
     for (const Folder& row : m_store->folders()) {
         folder(row);
         for (const TaskList& list : m_store->lists())
-            if (!list.inbox && list.folderId == row.id)
-                add(QStringLiteral("    ") + list.name, ViewScope::List, list.id);
+            if (!list.inbox && list.archivedAtUtcMs == 0 && list.folderId == row.id)
+                add(list.name, ViewScope::List, list.id, &list, QString(), 12);
     }
 
-    section(QStringLiteral("历史"));
-    add(QStringLiteral("已完成"), ViewScope::Completed);
-    add(QStringLiteral("已放弃"), ViewScope::Abandoned);
-    add(QStringLiteral("已逾期"), ViewScope::Overdue);
-    add(QStringLiteral("回收站"), ViewScope::Trash);
+    bool hasArchived = false;
+    for (const TaskList& list : m_store->lists())
+        if (!list.inbox && list.archivedAtUtcMs > 0) hasArchived = true;
+    if (hasArchived) {
+        interactiveSection(QStringLiteral("已归档的清单"), QStringLiteral("ArchiveSectionHeader"),
+                           IconId::ChevronDown, QStringLiteral("ArchiveToggleButton"),
+                           QStringLiteral("展开或收起归档清单"), true, [this]() {
+            m_archivedExpanded = !m_archivedExpanded;
+            QTimer::singleShot(0, this, [this]() { rebuildNavigation(); });
+        });
+        for (const TaskList& list : m_store->lists()) {
+            if (list.inbox || list.archivedAtUtcMs == 0) continue;
+            if (auto* item = add(list.name, ViewScope::List, list.id, &list, QString(), 12))
+                item->setHidden(!m_archivedExpanded);
+        }
+    }
 
-    m_navigation->setCurrentRow(selected); m_rebuilding = false;
+    const int historyRow = m_navigation->count();
+    section(QStringLiteral("历史"));
+    add(QStringLiteral("已完成"), ViewScope::Completed, QString(), nullptr,
+        QStringLiteral("completed"));
+    add(QStringLiteral("已放弃"), ViewScope::Abandoned, QString(), nullptr,
+        QStringLiteral("abandoned"));
+    add(QStringLiteral("垃圾桶"), ViewScope::Trash, QString(), nullptr,
+        QStringLiteral("trash"));
+    if (m_navigation->count() == historyRow + 1) delete m_navigation->takeItem(historyRow);
+
+    bool resetFilter = archivePolicyChanged;
+    if (selected < 0 && !m_keepHiddenView) {
+        for (int row = 0; row < m_navigation->count(); ++row) {
+            const auto* item = m_navigation->item(row);
+            if (item->isHidden() || item->data(NavigationDelegate::SectionRole).toBool()) continue;
+            selected = row;
+            m_filter.scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
+            m_filter.listId = item->data(Qt::UserRole + 1).toString();
+            m_filter.renderer = ViewRenderer::List;
+            m_heading->setText(item->data(Qt::UserRole + 2).toString());
+            resetFilter = true;
+            break;
+        }
+    }
+    if (selected < 0 && !m_keepHiddenView) {
+        m_filter.scope = ViewScope::AllLists;
+        m_filter.listId.clear();
+        resetFilter = true;
+    }
+    if (selected >= 0) m_keepHiddenView = false;
+    m_navigation->setCurrentRow(selected);
+    m_rebuilding = false;
+    if (resetFilter) applyFilter();
+    updateHeadingAppearance();
     m_count->setText(m_model->entityCount() > 0 ? QString::number(m_model->entityCount()) : QString());
     m_listStack->setCurrentWidget(m_model->entityCount() == 0
         ? static_cast<QWidget*>(m_empty) : static_cast<QWidget*>(m_list));
@@ -687,7 +824,28 @@ void TaskPanel::applyFilter() {
         }
     }
     m_renderer->setEnabled(supportsTime(m_filter.scope));
+    updateHeadingAppearance();
     updateQuickAddKind(); m_model->setFilter(m_filter);
+}
+
+void TaskPanel::updateHeadingAppearance() {
+    QString heading = scopeLabel(m_filter.scope);
+    TaskList selectedList;
+    if (m_filter.scope == ViewScope::List) {
+        for (const TaskList& list : m_store->lists()) {
+            if (list.id != m_filter.listId) continue;
+            selectedList = list;
+            heading = list.name;
+        }
+    }
+    m_heading->setText(heading);
+    if (auto* icon = findChild<QLabel*>(QStringLiteral("ListHeadingIcon"))) {
+        const QIcon value = m_filter.scope == ViewScope::List
+            ? ListAppearance::icon(selectedList, 18,
+                                   ThemeManager::instance().color(ds::ColorToken::Text))
+            : AppIcons::icon(scopeIcon(m_filter.scope), ds::ColorToken::Text, 18);
+        icon->setPixmap(value.pixmap(18, 18));
+    }
 }
 
 void TaskPanel::updateQuickAddKind() {
@@ -717,9 +875,15 @@ void TaskPanel::createTask() {
                                       : m_store->createTask(title, m_filter.listId);
     } else id = m_store->createTask(title);
     if (id.isEmpty()) return;
-    if (m_quickDate->isChecked()) {
+    QDate defaultDate;
+    if (m_quickDate->isChecked() || m_filter.scope == ViewScope::Today
+        || m_filter.scope == ViewScope::Next7Days || m_filter.scope == ViewScope::Overdue)
+        defaultDate = toAppTime(appNow()).date();
+    else if (m_filter.scope == ViewScope::Tomorrow)
+        defaultDate = toAppTime(appNow()).date().addDays(1);
+    if (defaultDate.isValid()) {
         Entity created = m_store->entity(id);
-        created.allDayDate = toAppTime(appNow()).date();
+        created.allDayDate = defaultDate;
         if (!m_store->saveTask(created)) return;
     }
     m_quick->clear(); showTask(id); m_detail->focusTitle();
@@ -730,17 +894,36 @@ void TaskPanel::showTask(QString id) {
     if (!m_detail->flush()) { showNormal(); raise(); activateWindow(); return; }
     if (!id.isEmpty()) {
         const Entity entity = m_store->entity(id); if (entity.id.isEmpty()) return;
-        if (!contains(entity, m_filter, toAppTime(appNow()).date())) {
+        if (!contains(entity, m_filter, toAppTime(appNow()).date(), m_archivedListIds)) {
             if (entity.deleted) m_filter.scope = ViewScope::Trash;
             else if (entity.kind == EntityKind::Task && entity.status == TaskStatus::Completed)
                 m_filter.scope = ViewScope::Completed;
             else if (entity.kind == EntityKind::Task && entity.status == TaskStatus::Abandoned)
                 m_filter.scope = ViewScope::Abandoned;
-            else m_filter.scope = ViewScope::AllLists;
-            m_filter.listId.clear(); m_filter.renderer = ViewRenderer::List;
+            else {
+                TaskList owner;
+                for (const TaskList& list : m_store->lists())
+                    if (list.id == entity.listId) owner = list;
+                if (owner.archivedAtUtcMs > 0) {
+                    m_filter.scope = ViewScope::List;
+                    m_filter.listId = owner.id;
+                    m_archivedExpanded = true;
+                } else {
+                    m_filter.scope = ViewScope::AllLists;
+                    m_filter.listId.clear();
+                }
+            }
+            if (m_filter.scope != ViewScope::List) m_filter.listId.clear();
+            m_filter.renderer = ViewRenderer::List;
             const QSignalBlocker blocker(m_renderer); m_renderer->setCurrentIndex(0);
             m_search->clear(); m_filter.search.clear();
-            m_heading->setText(scopeLabel(m_filter.scope));
+            QString heading = scopeLabel(m_filter.scope);
+            if (m_filter.scope == ViewScope::List) {
+                for (const TaskList& list : m_store->lists())
+                    if (list.id == m_filter.listId) heading = list.name;
+            }
+            m_heading->setText(heading);
+            m_keepHiddenView = true;
             applyFilter(); rebuildNavigation();
         }
         m_selectedId = id; const auto index = m_model->indexForTask(id);
@@ -1132,11 +1315,28 @@ void TaskPanel::mouseDoubleClickEvent(QMouseEvent* event) {
 // ========== R6: 任务右键菜单（暂时保留现有逻辑，待 EntityCommands 集成） ==========
 void TaskPanel::showTaskMenu(const QPoint& position) {
     const QString id = m_model->entityId(m_list->indexAt(position)); if (id.isEmpty()) return;
-    const Entity entity = m_store->entity(id); QMenu menu(this);
+    const Entity entity = m_store->entity(id); PopupMenu menu(this);
     if (entity.deleted) {
         auto* restore = menu.addAction(AppIcons::icon(IconId::Restore, 16), QStringLiteral("恢复"));
         restore->setObjectName(QStringLiteral("CmdRestore"));
         connect(restore, &QAction::triggered, this, [this, id]() { m_store->restoreTask(id); });
+        menu.addSeparator();
+        auto* permanent = menu.addAction(AppIcons::icon(IconId::Delete, 16),
+                                         QStringLiteral("永久删除"));
+        permanent->setObjectName(QStringLiteral("CmdDeletePermanently"));
+        connect(permanent, &QAction::triggered, this, [this, id, entity]() {
+            const QString title = entity.kind == EntityKind::Note
+                ? QStringLiteral("永久删除笔记？") : QStringLiteral("永久删除任务？");
+            if (!ConfirmDialog::prompt(title,
+                    QStringLiteral("此操作无法撤销，内容和附件将被永久删除。是否继续？"),
+                    QStringLiteral("永久删除"), true, this)) return;
+            if (!m_store->deletePermanently(id)) return;
+            if (m_selectedId == id) {
+                m_detail->setTask(QString());
+                m_selectedId.clear();
+                setDetailVisible(false);
+            }
+        });
     } else {
         auto* pin = menu.addAction(
             AppIcons::icon(IconId::Pin, 16),
@@ -1206,9 +1406,27 @@ void TaskPanel::showTaskMenu(const QPoint& position) {
     menu.exec(m_list->viewport()->mapToGlobal(position));
 }
 
+void TaskPanel::createListDialog(const QString& folderId, EntityKind kind) {
+    if (!flush()) return;
+    ListEditorDialog dialog(m_store->lists(), m_store->folders(), this);
+    dialog.setNewListDefaults(folderId, kind);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const TaskList draft = dialog.draft();
+    const QString id = m_store->createList(draft.name, draft.folderId, kind,
+                                           draft.icon, draft.color);
+    if (!id.isEmpty()) selectNavigation(ViewScope::List, id);
+}
+
+void TaskPanel::editListDialog(const TaskList& list) {
+    if (list.inbox || !flush()) return;
+    ListEditorDialog dialog(m_store->lists(), m_store->folders(), this);
+    dialog.setList(list);
+    if (dialog.exec() == QDialog::Accepted) m_store->saveList(dialog.draft());
+}
+
 // ========== R3: 文件夹与清单管理菜单 ==========
 void TaskPanel::groupMenu() {
-    QMenu menu(this);
+    PopupMenu menu(this);
     auto* newFolder = menu.addAction(AppIcons::icon(IconId::Folder, 16), QStringLiteral("新建文件夹…"));
     newFolder->setObjectName(QStringLiteral("CmdNewFolder"));
     connect(newFolder, &QAction::triggered, this, [this]() {
@@ -1223,11 +1441,7 @@ void TaskPanel::groupMenu() {
         action->setObjectName(kind == EntityKind::Note ? QStringLiteral("CmdNewNoteList")
                                                        : QStringLiteral("CmdNewTaskList"));
         connect(action, &QAction::triggered, this, [this, kind]() {
-            bool ok = false;
-            const QString name = QInputDialog::getText(this,
-                kind == EntityKind::Note ? QStringLiteral("新建笔记清单") : QStringLiteral("新建任务清单"),
-                QStringLiteral("名称："), QLineEdit::Normal, QString(), &ok);
-            if (ok && !name.trimmed().isEmpty()) m_store->createList(name.trimmed(), QString(), kind);
+            createListDialog(QString(), kind);
         });
     };
     createList(QStringLiteral("新建任务清单…"), EntityKind::Task);
@@ -1241,18 +1455,18 @@ void TaskPanel::groupMenu() {
 // ========== R3: 侧栏对象右键菜单 ==========
 void TaskPanel::organizationMenu(const QPoint& position) {
     QListWidgetItem* item = m_navigation->itemAt(position); if (!item) return;
-    const QString folderId = item->data(FolderIdRole).toString();
+    const QString folderId = item->data(NavigationDelegate::FolderIdRole).toString();
     const QString listId = item->data(Qt::UserRole + 1).toString();
-    if (folderId.isEmpty() && listId.isEmpty()) return;
-    QMenu menu(this);
+    if (folderId.isEmpty() && listId.isEmpty()) {
+        if (item->data(Qt::UserRole + 2).toString() == QLatin1String("清单")) groupMenu();
+        return;
+    }
+    PopupMenu menu(this);
     if (!folderId.isEmpty()) {
         const auto createInFolder = [this, &menu, folderId](const QString& label, EntityKind kind) {
             auto* action = menu.addAction(label);
-            connect(action, &QAction::triggered, this, [this, folderId, kind, label]() {
-                bool ok = false;
-                const QString name = QInputDialog::getText(this, label, QStringLiteral("清单名称："),
-                    QLineEdit::Normal, QString(), &ok);
-                if (ok && !name.trimmed().isEmpty()) m_store->createList(name.trimmed(), folderId, kind);
+            connect(action, &QAction::triggered, this, [this, folderId, kind]() {
+                createListDialog(folderId, kind);
             });
         };
         createInFolder(QStringLiteral("在此新建任务清单…"), EntityKind::Task);
@@ -1267,9 +1481,9 @@ void TaskPanel::organizationMenu(const QPoint& position) {
             if (ok && !name.trimmed().isEmpty()) m_store->renameFolder(folderId, name.trimmed());
         });
         connect(menu.addAction(QStringLiteral("删除文件夹…")), &QAction::triggered, this, [this, folderId]() {
-            if (QMessageBox::question(this, QStringLiteral("删除文件夹"),
-                    QStringLiteral("删除后，其中清单会平铺显示，清单和实体内容均保留。是否继续？"),
-                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+            if (ConfirmDialog::prompt(QStringLiteral("删除文件夹"),
+                    QStringLiteral("删除后，其中清单会平铺显示，清单和实体内容均保留。"),
+                    QStringLiteral("删除"), true, this))
                 m_store->deleteFolder(folderId);
         });
     } else {
@@ -1279,11 +1493,19 @@ void TaskPanel::organizationMenu(const QPoint& position) {
             auto* protectedAction = menu.addAction(QStringLiteral("系统收集箱不可移动或删除"));
             protectedAction->setEnabled(false);
         } else {
-            connect(menu.addAction(QStringLiteral("重命名清单…")), &QAction::triggered, this, [this, selected]() {
-                bool ok = false;
-                const QString name = QInputDialog::getText(this, QStringLiteral("重命名清单"),
-                    QStringLiteral("新名称："), QLineEdit::Normal, selected.name, &ok);
-                if (ok && !name.trimmed().isEmpty()) m_store->renameList(selected.id, name.trimmed());
+            const bool archived = selected.archivedAtUtcMs > 0;
+            auto* archive = menu.addAction(
+                AppIcons::icon(archived ? IconId::Unarchive : IconId::Archive, 16),
+                archived ? QStringLiteral("取消归档") : QStringLiteral("归档清单"));
+            archive->setObjectName(archived ? QStringLiteral("CmdUnarchiveList")
+                                            : QStringLiteral("CmdArchiveList"));
+            connect(archive, &QAction::triggered, this, [this, selected, archived]() {
+                if (!archived) m_archivedExpanded = true;
+                m_store->setListArchived(selected.id, !archived);
+            });
+            menu.addSeparator();
+            connect(menu.addAction(QStringLiteral("编辑清单…")), &QAction::triggered, this, [this, selected]() {
+                editListDialog(selected);
             });
             QMenu* move = menu.addMenu(QStringLiteral("归入文件夹"));
             for (const Folder& folder : m_store->folders()) {
@@ -1301,9 +1523,9 @@ void TaskPanel::organizationMenu(const QPoint& position) {
             });
             menu.addSeparator();
             connect(menu.addAction(QStringLiteral("删除清单…")), &QAction::triggered, this, [this, selected]() {
-                if (QMessageBox::question(this, QStringLiteral("删除清单"),
-                        QStringLiteral("删除后，其中实体将移回系统收集箱，内容不会删除。是否继续？"),
-                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+                if (!ConfirmDialog::prompt(QStringLiteral("删除清单“%1”？").arg(selected.name),
+                        QStringLiteral("清单内的所有任务和笔记也将被移入垃圾桶。"),
+                        QStringLiteral("删除"), true, this)) return;
                 if (m_store->deleteList(selected.id) && m_filter.scope == ViewScope::List
                     && m_filter.listId == selected.id) {
                     m_filter = ViewSpec(); m_heading->setText(scopeLabel(ViewScope::AllLists));
@@ -1315,9 +1537,18 @@ void TaskPanel::organizationMenu(const QPoint& position) {
     menu.exec(m_navigation->viewport()->mapToGlobal(position));
 }
 
+void TaskPanel::showSmartListSettings() {
+    SettingsDialog dialog(this);
+    connect(&dialog, &SettingsDialog::smartListVisibilityChanged, this, [this]() {
+        m_keepHiddenView = false;
+        rebuildNavigation();
+    });
+    dialog.exec();
+}
+
 // ========== R10: 备份与设置菜单 ==========
 void TaskPanel::backupMenu() {
-    QMenu menu(this);
+    PopupMenu menu(this);
     auto* exportAction = menu.addAction(AppIcons::icon(IconId::Backup, 16), QStringLiteral("导出备份…"));
     exportAction->setObjectName(QStringLiteral("CmdExportBackup"));
     connect(exportAction, &QAction::triggered, this, [this]() {
@@ -1401,7 +1632,7 @@ void TaskPanel::backupMenu() {
 
 // ========== R4: 工作区更多菜单（只管「怎么看」，考据 m04/R12） ==========
 void TaskPanel::workspaceMenu() {
-    QMenu menu(this);
+    PopupMenu menu(this);
     menu.setObjectName(QStringLiteral("WorkspaceMenu"));
 
     // 视图切换（考据 m04：视图图标条）

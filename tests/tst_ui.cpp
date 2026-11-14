@@ -38,6 +38,7 @@
 #include <QTextFragment>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QUrl>
@@ -65,6 +66,16 @@
 #include "ui/AttachmentWidget.h"
 #include "ui/DetailPopups.h"
 #include "ui/DatePickerPopup.h"
+#include "ui/ColorPickerPopup.h"
+#include "ui/EmojiPickerPopup.h"
+#include "ui/ListAppearance.h"
+#include "ui/ListEditorDialog.h"
+#include "ui/ModalDialog.h"
+#include "ui/MenuComboBox.h"
+#include "ui/PopupMenu.h"
+#include "ui/TaskDateController.h"
+#include "ui/SettingsDialog.h"
+#include "ui/SmartListSettingsWidget.h"
 #include "ui/Markdown.h"
 #include "ui/MarkdownEditor.h"
 #include "ui/NoteChecklist.h"
@@ -79,6 +90,7 @@
 #include "ui/ToastIsland.h"
 #include "ui/UpdateDialog.h"
 #include "ui/WindowChrome.h"
+#include "ui/design/ThemeManager.h"
 #include "ui/design/TypeSystem.h"
 using namespace kl;
 
@@ -214,6 +226,13 @@ private slots:
         qputenv("KYLINLIST_DATA_DIR", m_dir->path().toUtf8());
         QSettings::setPath(
             QSettings::IniFormat, QSettings::UserScope, m_dir->path() + QStringLiteral("/settings"));
+        for (const QString& key : {QStringLiteral("all"), QStringLiteral("today"),
+                                   QStringLiteral("tomorrow"), QStringLiteral("next7days"),
+                                   QStringLiteral("overdue"), QStringLiteral("inbox"),
+                                   QStringLiteral("completed"), QStringLiteral("abandoned"),
+                                   QStringLiteral("trash")})
+            Settings::instance().setSmartListVisibility(key, Settings::SmartListVisibility::Show);
+        ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
         QString error;
         QVERIFY2(Database::instance().openAt(m_dir->path() + QStringLiteral("/kylinlist.db"), &error),
                  qPrintable(error));
@@ -700,10 +719,15 @@ private slots:
         early.allDayDate = QDate(2025, 1, 1); QCOMPARE(effectiveDate(early), QDate(2026, 11, 6));
         early.dueAt = QDateTime(); QCOMPARE(effectiveDate(early), QDate(2025, 1, 1));
         early.allDayDate = QDate(); early.startAt = now; QCOMPARE(effectiveDate(early), QDate(2026, 11, 6));
-        spec.scope = ViewScope::Next7Days;
-        early.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 13), QTime(23, 59)));
+        spec.scope = ViewScope::Tomorrow;
+        early.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 7), QTime(23, 59)));
         QVERIFY(contains(early, spec, QDate(2026, 11, 6)));
-        early.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 14), QTime(0, 0)));
+        early.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 8), QTime(0, 0)));
+        QVERIFY(!contains(early, spec, QDate(2026, 11, 6)));
+        spec.scope = ViewScope::Next7Days;
+        early.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 12), QTime(23, 59)));
+        QVERIFY(contains(early, spec, QDate(2026, 11, 6)));
+        early.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 13), QTime(0, 0)));
         QVERIFY(!contains(early, spec, QDate(2026, 11, 6)));
     }
     void viewSpecNotesStayOutOfTaskScopes() {
@@ -718,8 +742,8 @@ private slots:
             ViewSpec list = all; list.scope = ViewScope::List; list.listId = note.listId; QVERIFY(contains(note, list, today));
             list.search = QStringLiteral("正文 标签 清单"); QVERIFY(contains(note, list, today));
             list.search = QStringLiteral("正文 缺失"); QVERIFY(!contains(note, list, today));
-            for (const ViewScope scope : {ViewScope::Today, ViewScope::Next7Days, ViewScope::Overdue,
-                                          ViewScope::Completed, ViewScope::Abandoned}) {
+            for (const ViewScope scope : {ViewScope::Today, ViewScope::Tomorrow, ViewScope::Next7Days,
+                                          ViewScope::Overdue, ViewScope::Completed, ViewScope::Abandoned}) {
                 ViewSpec spec; spec.scope = scope; QVERIFY(!contains(note, spec, today));
                 spec.renderer = ViewRenderer::Time; QVERIFY(!contains(note, spec, today));
             }
@@ -1418,6 +1442,352 @@ private slots:
             if (navigation->item(row)->data(Qt::UserRole + 1).toString() == noteList) listStillVisible = true;
         QVERIFY(listStillVisible);
     }
+    void hiddenSmartListDoesNotBlockExplicitTaskNavigation() {
+        const QString id = m_store->createTask(QStringLiteral("隐藏垃圾桶中的实体"));
+        QVERIFY(m_store->trashTask(id));
+        Settings::instance().setSmartListVisibility(
+            QStringLiteral("trash"), Settings::SmartListVisibility::Hide);
+        TaskPanel panel(m_store.get()); panel.showTask(id);
+        auto* model = qobject_cast<TaskListModel*>(
+            panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
+        QVERIFY(model);
+        QCOMPARE(model->filter().scope, ViewScope::Trash);
+        QVERIFY(model->indexForTask(id).isValid());
+        QCOMPARE(panel.findChild<TaskDetailWidget*>()->entityId(), id);
+        QCOMPARE(panel.findChild<QListWidget*>(QStringLiteral("Navigation"))->currentRow(), -1);
+    }
+    void popupMenuPreservesActionsAndShadow() {
+        QWidget owner; owner.resize(420, 300); owner.show();
+        PopupMenu menu(&owner);
+        QAction* restore = menu.addAction(QStringLiteral("恢复"));
+        menu.addAction(QStringLiteral("永久删除"));
+        PopupMenu* child = menu.addMenu(QStringLiteral("子菜单"));
+        child->addAction(QStringLiteral("子项"));
+        menu.popup(owner.mapToGlobal(QPoint(80, 60)));
+        QTRY_VERIFY(menu.isVisible());
+        const int margin = PopupMenu::shadowMargin();
+        const QRect actionRect = menu.actionGeometry(restore);
+        QVERIFY(actionRect.left() >= margin);
+        QVERIFY(actionRect.right() < menu.width() - margin);
+        QVERIFY(actionRect.top() >= margin);
+        QVERIFY(menu.windowFlags().testFlag(Qt::NoDropShadowWindowHint));
+        QVERIFY(nativePopupShadowDisabled(&menu));
+        const QPixmap grabbed = menu.grab();
+        const QImage image = grabbed.toImage();
+        const qreal dpr = grabbed.devicePixelRatio();
+        QCOMPARE(qAlpha(image.pixel(0, 0)), 0);
+        QVERIFY(qAlpha(image.pixel(qRound((margin - 3) * dpr), image.height() / 2)) > 0);
+        QSignalSpy triggered(restore, &QAction::triggered);
+        QTest::keyClick(&menu, Qt::Key_Down);
+        QTest::keyClick(&menu, Qt::Key_Return);
+        QTRY_COMPARE(triggered.count(), 1);
+
+        MenuComboBox combo(&owner);
+        combo.addItems({QStringLiteral("显示"), QStringLiteral("有内容时显示"), QStringLiteral("隐藏")});
+        combo.resize(130, 32); combo.show(); combo.showPopup();
+        QPointer<PopupMenu> choices = combo.findChild<PopupMenu*>(QStringLiteral("ComboChoiceMenu"));
+        QVERIFY(choices); QTRY_VERIFY(choices->isVisible());
+        QAction* hide = choices->actions().at(2);
+        QTest::mouseClick(choices, Qt::LeftButton, Qt::NoModifier,
+                          choices->actionGeometry(hide).center());
+        QTRY_COMPARE(combo.currentIndex(), 2);
+        QTRY_VERIFY(choices.isNull() || !choices->isVisible());
+    }
+    void dateControllerTargetsOnlyItsEntity() {
+        const QString first = m_store->createTask(QStringLiteral("本次日期目标"));
+        const QString second = m_store->createTask(QStringLiteral("另一个实体"));
+        QWidget owner; owner.resize(400, 250); owner.show();
+        TaskDateController controller(m_store.get(), &owner);
+        QSignalSpy saved(&controller, &TaskDateController::saved);
+        controller.open(first, QRect(owner.mapToGlobal(QPoint(30, 30)), QSize(80, 30)));
+        auto* picker = owner.findChild<DatePickerPopup*>();
+        QVERIFY(picker); QTRY_VERIFY(picker->isVisible());
+        Entity updated = m_store->entity(first);
+        updated.body = QStringLiteral("弹层打开期间写入的新正文");
+        QVERIFY(m_store->saveTask(updated));
+        const QDate chosen = toAppTime(appNow()).date().addDays(3);
+        picker->setDateTime(fromAppTime(QDateTime(chosen, QTime(12, 30))));
+        picker->setHasDate(true);
+        picker->accept();
+        QTRY_COMPARE(saved.count(), 1);
+        QCOMPARE(saved.first().first().toString(), first);
+        QCOMPARE(effectiveDate(m_store->entity(first)), chosen);
+        QCOMPARE(m_store->entity(first).body, updated.body);
+        QVERIFY(!effectiveDate(m_store->entity(second)).isValid());
+    }
+    void dirtyDesktopNoteSurvivesListArchiveAndDeletion() {
+        const QString list = m_store->createList(QStringLiteral("待归档清单"));
+        const QString id = m_store->createTask(QStringLiteral("脏便签任务"), list);
+        QVERIFY(m_store->saveDesktopState(id, NoteColor::Yellow, QRect(30, 40, 360, 320),
+                                          0, NoteLayer::Normal, true));
+        NoteManager notes(m_store.get()); QVERIFY(notes.restoreAll());
+        NoteWidget* note = notes.note(id); QVERIFY(note);
+        note->focusEditor(); QApplication::processEvents();
+        auto* editor = note->findChild<MarkdownEditor*>(); QVERIFY(editor);
+        editor->textEditor()->setPlainText(QStringLiteral("归档之前尚未自动保存的正文"));
+        QVERIFY(note->descriptionDirty());
+        QVERIFY(m_store->setListArchived(list, true));
+        QCOMPARE(notes.count(), 0);
+        QCOMPARE(m_store->entity(id).body, QStringLiteral("归档之前尚未自动保存的正文"));
+        QVERIFY(m_store->desktopNote(id).open);
+        QVERIFY(m_store->setListArchived(list, false));
+        QTRY_COMPARE(notes.count(), 1);
+        note = notes.note(id); QVERIFY(note);
+        note->focusEditor(); QApplication::processEvents();
+        editor = note->findChild<MarkdownEditor*>(); QVERIFY(editor);
+        editor->textEditor()->setPlainText(QStringLiteral("删除清单前的新正文"));
+        QVERIFY(note->descriptionDirty());
+        QVERIFY(m_store->deleteList(list));
+        QCOMPARE(notes.count(), 0);
+        QCOMPARE(m_store->entity(id).body, QStringLiteral("删除清单前的新正文"));
+        QVERIFY(m_store->entity(id).deleted);
+    }
+    void smartListVisibilityModes() {
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* listView = panel.findChild<QListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(listView->model());
+        QVERIFY(navigation && model);
+        const auto rowFor = [navigation](ViewScope scope) {
+            for (int row = 0; row < navigation->count(); ++row) {
+                const auto* item = navigation->item(row);
+                if (!item->data(NavigationDelegate::SectionRole).toBool()
+                    && item->data(Qt::UserRole).toInt() == static_cast<int>(scope)) return row;
+            }
+            return -1;
+        };
+        QVERIFY(rowFor(ViewScope::AllLists) >= 0);
+        QVERIFY(rowFor(ViewScope::Tomorrow) >= 0);
+        QVERIFY(rowFor(ViewScope::Next7Days) >= 0);
+        QVERIFY(rowFor(ViewScope::Overdue) >= 0);
+
+        SettingsDialog settingsDialog;
+        QSignalSpy changed(&settingsDialog, &SettingsDialog::smartListVisibilityChanged);
+        auto* todayCombo = settingsDialog.findChild<QComboBox*>(QStringLiteral("SmartVisibility_today"));
+        QVERIFY(todayCombo);
+        todayCombo->setCurrentIndex(todayCombo->findData(
+            static_cast<int>(Settings::SmartListVisibility::Hide)));
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(Settings::instance().smartListVisibility(QStringLiteral("today")),
+                 Settings::SmartListVisibility::Hide);
+        m_store->createTask(QStringLiteral("无日期任务"));
+        QTRY_VERIFY(rowFor(ViewScope::Today) < 0);
+
+        Settings::instance().setSmartListVisibility(
+            QStringLiteral("today"), Settings::SmartListVisibility::WhenNonEmpty);
+        m_store->createTask(QStringLiteral("仍无日期"));
+        QTRY_VERIFY(rowFor(ViewScope::Today) < 0);
+        const QString dated = m_store->createTask(QStringLiteral("今天有内容"));
+        Entity task = m_store->entity(dated);
+        task.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(task));
+        QTRY_VERIFY(rowFor(ViewScope::Today) >= 0);
+
+        navigation->setCurrentRow(rowFor(ViewScope::Today));
+        QTRY_COMPARE(model->filter().scope, ViewScope::Today);
+        Settings::instance().setSmartListVisibility(
+            QStringLiteral("today"), Settings::SmartListVisibility::Hide);
+        QVERIFY(m_store->setPinnedAt(dated, appNow()));
+        QTRY_COMPARE(model->filter().scope, ViewScope::AllLists);
+        QTRY_VERIFY(rowFor(ViewScope::Today) < 0);
+
+        Settings::instance().setSmartListVisibility(
+            QStringLiteral("today"), Settings::SmartListVisibility::WhenNonEmpty);
+        QVERIFY(m_store->setPinnedAt(dated, appNow()));
+        QTRY_VERIFY(rowFor(ViewScope::Today) >= 0);
+        QVERIFY(m_store->trashTask(dated));
+        QTRY_VERIFY(rowFor(ViewScope::Today) < 0);
+    }
+    void listAppearanceAndArchiveNavigation() {
+        const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
+        const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,
+                                                 QStringLiteral("🏛️"), QStringLiteral("#4CA1FF"));
+        const QString id = m_store->createTask(QStringLiteral("过期任务"), list);
+        Entity task = m_store->entity(id); task.allDayDate = toAppTime(appNow()).date().addDays(-1);
+        QVERIFY(m_store->saveTask(task));
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* model = qobject_cast<TaskListModel*>(
+            panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
+        QVERIFY(navigation && model);
+        const auto rowForList = [navigation](const QString& listId) {
+            for (int row = 0; row < navigation->count(); ++row)
+                if (navigation->item(row)->data(Qt::UserRole + 1).toString() == listId) return row;
+            return -1;
+        };
+        int row = rowForList(list);
+        QVERIFY(row >= 0);
+        QCOMPARE(navigation->item(row)->data(NavigationDelegate::IconNameRole).toString(),
+                 QStringLiteral("🏛️"));
+        QCOMPARE(navigation->item(row)->data(NavigationDelegate::ListColorRole).toString(),
+                 QStringLiteral("#4CA1FF"));
+        QModelIndex taskIndex = model->indexForTask(id);
+        QVERIFY(taskIndex.isValid());
+        QCOMPARE(model->data(taskIndex, TaskListModel::ListNameRole).toString(), QStringLiteral("工作"));
+        QCOMPARE(model->data(taskIndex, TaskListModel::ListColorRole).toString(),
+                 QStringLiteral("#4CA1FF"));
+        QCOMPARE(model->data(taskIndex, TaskListModel::ScheduleRole).toString(), QStringLiteral("昨天"));
+        TaskList appearance;
+        for (const TaskList& candidate : m_store->lists()) if (candidate.id == list) appearance = candidate;
+        QVERIFY(!ListAppearance::icon(appearance, 18, QColor()).isNull());
+
+        QVERIFY(m_store->setListArchived(list, true));
+        QTRY_VERIFY(!model->indexForTask(id).isValid());
+        QTRY_VERIFY(rowForList(list) >= 0);
+        QVERIFY(navigation->item(rowForList(list))->isHidden());
+        auto* toggle = panel.findChild<QToolButton*>(QStringLiteral("ArchiveToggleButton"));
+        QVERIFY(toggle);
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QTRY_VERIFY(!navigation->item(rowForList(list))->isHidden());
+        navigation->setCurrentRow(rowForList(list));
+        QTRY_COMPARE(model->filter().scope, ViewScope::List);
+        QTRY_VERIFY(model->indexForTask(id).isValid());
+        QVERIFY(m_store->setListArchived(list, false));
+        QTRY_VERIFY(rowForList(list) >= 0);
+        QVERIFY(!navigation->item(rowForList(list))->isHidden());
+    }
+    void taskRowDelegateMetaActions() {
+        const QString list = m_store->createList(QStringLiteral("工作"), QString(), EntityKind::Task,
+                                                 QStringLiteral("🏛️"), QStringLiteral("#4CA1FF"));
+        const QString id = m_store->createTask(QStringLiteral("元信息任务"), list);
+        Entity task = m_store->entity(id); task.allDayDate = toAppTime(appNow()).date().addDays(-1);
+        QVERIFY(m_store->saveTask(task));
+        TaskListModel model(m_store.get());
+        const QModelIndex taskIndex = model.indexForTask(id);
+        QVERIFY(taskIndex.isValid());
+        QModelIndex overdueHeader;
+        for (int row = 0; row < model.rowCount(); ++row) {
+            const QModelIndex index = model.index(row, 0);
+            if (model.data(index, TaskListModel::SectionKeyRole).toString() == QLatin1String("overdue"))
+                overdueHeader = index;
+        }
+        QVERIFY(overdueHeader.isValid());
+        QCOMPARE(model.data(overdueHeader, TaskListModel::HeaderActionRole).toString(),
+                 QStringLiteral("postpone"));
+        QVERIFY(model.data(overdueHeader, TaskListModel::HeaderEntityIdsRole).toStringList().contains(id));
+
+        TaskDelegate delegate;
+        QSignalSpy dateSpy(&delegate, &TaskDelegate::dateActivated);
+        QSignalSpy listSpy(&delegate, &TaskDelegate::listActivated);
+        QSignalSpy postponeSpy(&delegate, &TaskDelegate::postponeActivated);
+        QStyleOptionViewItem option; option.rect = QRect(0, 0, 560, 40);
+        const QFontMetrics metrics(AppStyle::font(AppStyle::Font::Small));
+        const qreal dateWidth = qMin(112.0, metrics.horizontalAdvance(QStringLiteral("昨天")) + 8.0);
+        const qreal listWidth = qMin(72.0, metrics.horizontalAdvance(QStringLiteral("工作")) + 0.0) + 27.0;
+        QMouseEvent dateEvent(QEvent::MouseButtonRelease,
+                              QPointF(560 - 12 - dateWidth / 2, 20),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QVERIFY(delegate.editorEvent(&dateEvent, &model, option, taskIndex));
+        QMouseEvent listEvent(QEvent::MouseButtonRelease,
+                              QPointF(560 - 12 - dateWidth - 8 - listWidth / 2, 20),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QVERIFY(delegate.editorEvent(&listEvent, &model, option, taskIndex));
+        QMouseEvent headerEvent(QEvent::MouseButtonRelease, QPointF(525, 18),
+                                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QVERIFY(delegate.editorEvent(&headerEvent, &model, option, overdueHeader));
+        QCOMPARE(dateSpy.count(), 1); QCOMPARE(dateSpy.first().first().toString(), id);
+        QCOMPARE(listSpy.count(), 1); QCOMPARE(listSpy.first().first().toString(), list);
+        QCOMPARE(postponeSpy.count(), 1);
+        QVERIFY(postponeSpy.first().first().toStringList().contains(id));
+
+        ViewSpec direct; direct.scope = ViewScope::List; direct.listId = list;
+        model.setFilter(direct);
+        bool postponeHidden = true;
+        for (int row = 0; row < model.rowCount(); ++row) {
+            const QModelIndex index = model.index(row, 0);
+            if (model.data(index, TaskListModel::SectionKeyRole).toString() == QLatin1String("overdue"))
+                postponeHidden = model.data(index, TaskListModel::HeaderActionRole).toString().isEmpty();
+        }
+        QVERIFY(postponeHidden);
+    }
+    void listEditorAndAppearancePickers() {
+        const QString folder = m_store->createFolder(QStringLiteral("表单文件夹"));
+        const QString existingId = m_store->createList(QStringLiteral("已有清单"), folder,
+            EntityKind::Task, QStringLiteral("🏛️"), QStringLiteral("#4CA1FF"));
+
+        ListEditorDialog editor(m_store->lists(), m_store->folders());
+        editor.setNewListDefaults(folder, EntityKind::Note);
+        auto* name = editor.findChild<QLineEdit*>(QStringLiteral("ListNameEdit"));
+        auto* save = editor.findChild<QPushButton*>(QStringLiteral("ListEditorSave"));
+        QVERIFY(name && save); QVERIFY(!save->isEnabled());
+        name->setText(QStringLiteral("已有清单"));
+        QVERIFY(!editor.findChild<QLabel*>(QStringLiteral("ListEditorError"))->text().isEmpty());
+        name->setText(QStringLiteral("新笔记清单")); QVERIFY(save->isEnabled());
+        editor.show();
+        auto* iconButton = editor.findChild<QToolButton*>(QStringLiteral("ListIconButton"));
+        auto* noneColor = editor.findChild<QToolButton*>(QStringLiteral("ListColorNoneButton"));
+        auto* customColor = editor.findChild<QToolButton*>(QStringLiteral("ListCustomColorButton"));
+        QVERIFY(iconButton && noneColor && customColor);
+        auto* nameField = editor.findChild<QWidget*>(QStringLiteral("ListNameField"));
+        QVERIFY(nameField && nameField->isAncestorOf(iconButton) && nameField->isAncestorOf(name));
+        QVERIFY(nameField->rect().contains(rectIn(iconButton, nameField)));
+        QVERIFY(nameField->rect().contains(rectIn(name, nameField)));
+        QTRY_VERIFY(iconButton->isVisible() && noneColor->isVisible() && customColor->isVisible());
+        QVERIFY(rectIn(customColor, &editor).right() < editor.width() - 24);
+        QTest::mouseClick(save, Qt::LeftButton);
+        QTRY_COMPARE(editor.result(), static_cast<int>(QDialog::Accepted));
+        QCOMPARE(editor.draft().kind, EntityKind::Note);
+        QCOMPARE(editor.draft().folderId, folder);
+        QVERIFY(!editor.isEditing());
+
+        QVERIFY(m_store->setListArchived(existingId, true));
+        TaskList existing;
+        for (const TaskList& list : m_store->lists()) if (list.id == existingId) existing = list;
+        ListEditorDialog editExisting(m_store->lists(), m_store->folders());
+        editExisting.setList(existing);
+        QCOMPARE(editExisting.draft().icon, QStringLiteral("🏛️"));
+        QCOMPARE(editExisting.draft().color, QStringLiteral("#4ca1ff"));
+        QCOMPARE(editExisting.draft().archivedAtUtcMs, existing.archivedAtUtcMs);
+        editExisting.findChild<QLineEdit*>(QStringLiteral("ListNameEdit"))->setText(QStringLiteral("改名清单"));
+        editExisting.show();
+        QTest::mouseClick(editExisting.findChild<QPushButton*>(QStringLiteral("ListEditorSave")), Qt::LeftButton);
+        QTRY_COMPARE(editExisting.result(), static_cast<int>(QDialog::Accepted));
+        QCOMPARE(editExisting.draft().name, QStringLiteral("改名清单"));
+        QCOMPARE(editExisting.draft().kind, EntityKind::Task);
+        QCOMPARE(editExisting.draft().archivedAtUtcMs, existing.archivedAtUtcMs);
+
+        TaskList legacy = existing;
+        legacy.name = QStringLiteral("  ") + QString(70, QChar(0x65E7)) + QStringLiteral("  ");
+        ListEditorDialog editLegacy(m_store->lists(), m_store->folders());
+        editLegacy.setList(legacy);
+        auto* legacyName = editLegacy.findChild<QLineEdit*>(QStringLiteral("ListNameEdit"));
+        auto* legacySave = editLegacy.findChild<QPushButton*>(QStringLiteral("ListEditorSave"));
+        QCOMPARE(legacyName->text(), legacy.name);
+        QVERIFY(legacySave->isEnabled());
+        QCOMPARE(editLegacy.draft().name, legacy.name);
+        QTest::mouseClick(editLegacy.findChild<QToolButton*>(QStringLiteral("ListColorNoneButton")),
+                          Qt::LeftButton);
+        QCOMPARE(editLegacy.draft().name, legacy.name);
+        legacyName->setText(QString(69, QChar(0x65B0)));
+        QVERIFY(!legacySave->isEnabled());
+        legacyName->setText(QStringLiteral("已改为短名称"));
+        QVERIFY(legacySave->isEnabled());
+        editLegacy.setNewListDefaults(QString(), EntityKind::Task);
+        QCOMPARE(legacyName->maxLength(), kListNameMaxLength);
+
+        ColorPickerPopup colors;
+        colors.setInitialColor(QColor(QStringLiteral("#4CA1FF")));
+        QSignalSpy colorSpy(&colors, &ColorPickerPopup::colorSelected);
+        colors.show();
+        auto* custom = colors.findChild<QPushButton*>(QStringLiteral("ColorCustomEntry"));
+        QVERIFY(custom); QTest::mouseClick(custom, Qt::LeftButton);
+        auto* hex = colors.findChild<QLineEdit*>(QStringLiteral("ColorHexEdit"));
+        QVERIFY(hex); QTRY_VERIFY(hex->isVisible());
+        hex->setText(QStringLiteral("12AB34"));
+        QTest::mouseClick(colors.findChild<QPushButton*>(QStringLiteral("ColorSave")), Qt::LeftButton);
+        QCOMPARE(colorSpy.count(), 1);
+        QCOMPARE(colorSpy.first().first().value<QColor>().name(QColor::HexRgb),
+                 QStringLiteral("#12ab34"));
+
+        EmojiPickerPopup emojis;
+        QSignalSpy emojiSpy(&emojis, &EmojiPickerPopup::emojiSelected);
+        emojis.show();
+        auto* search = emojis.findChild<QLineEdit*>(QStringLiteral("EmojiSearchEdit"));
+        QVERIFY(search); search->setText(QStringLiteral("🏛️"));
+        QTest::keyClick(search, Qt::Key_Return);
+        QCOMPARE(emojiSpy.count(), 1);
+        QCOMPARE(emojiSpy.first().first().toString(), QStringLiteral("🏛️"));
+    }
     void reminderPopupSnoozeUsesExactReminderUuid() {
         Entity task;
         task.id = newUuid();
@@ -1998,6 +2368,15 @@ private slots:
         QTRY_VERIFY(snoozeMenu->isVisible()); verifyNativeOnly(snoozeMenu);
         snoozeMenu->hide();
         reminder.hide();
+
+        ConfirmDialog confirm(QStringLiteral("确认"), QStringLiteral("正文"),
+                              QStringLiteral("删除"), true);
+        confirm.show(); verify(&confirm); confirm.reject();
+        ListEditorDialog listEditor(m_store->lists(), m_store->folders());
+        listEditor.show(); verify(&listEditor); listEditor.reject();
+        ColorPickerPopup colorPicker; colorPicker.show(); verify(&colorPicker); colorPicker.reject();
+        EmojiPickerPopup emojiPicker; emojiPicker.show(); verify(&emojiPicker); emojiPicker.reject();
+        SettingsDialog settings; settings.show(); verify(&settings); settings.reject();
     }
 
     void detailListSearchMovesByUuidAndPreservesEditingSession() {
@@ -2191,7 +2570,8 @@ private slots:
     }
 
     void visualPreview() {
-        const QString group = m_store->createGroup(QStringLiteral("工作安排"));
+        const QString group = m_store->createList(QStringLiteral("工作安排"), QString(), EntityKind::Task,
+                                                  QStringLiteral("💼"), QStringLiteral("#4CA1FF"));
         const QDate today = toAppTime(appNow()).date();
         Entity task;
         const auto id = m_store->createTask(QStringLiteral("完成本周项目复盘"), group);
@@ -2221,10 +2601,27 @@ private slots:
                                   QStringLiteral("整理个人学习笔记"),
                                   QStringLiteral("确认下周工作清单")})
             QVERIFY(!m_store->createTask(title).isEmpty());
+        const QString overdue = m_store->createTask(QStringLiteral("补充上周验收记录"), group);
+        Entity overdueTask = m_store->entity(overdue);
+        overdueTask.allDayDate = today.addDays(-1);
+        QVERIFY(m_store->saveTask(overdueTask));
+        const QString tomorrow = m_store->createTask(QStringLiteral("准备明日评审材料"), group);
+        Entity tomorrowTask = m_store->entity(tomorrow);
+        tomorrowTask.allDayDate = today.addDays(1);
+        QVERIFY(m_store->saveTask(tomorrowTask));
+        const QString archived = m_store->createList(QStringLiteral("历史参考资料"), QString(),
+            EntityKind::Task, QStringLiteral("🗂️"), QStringLiteral("#C09EEB"));
+        QVERIFY(!m_store->createTask(QStringLiteral("归档清单中的示例任务"), archived).isEmpty());
+        QVERIFY(m_store->setListArchived(archived, true));
         TaskPanel panel(m_store.get());
         panel.resize(1240, 820);
         panel.showTask(id);
         QTest::qWait(100);
+        const qreal expectedDpr = qEnvironmentVariable("KYLINLIST_EXPECT_DPR").toDouble();
+        if (expectedDpr > 0)
+            QVERIFY2(qAbs(panel.devicePixelRatioF() - expectedDpr) < 0.01,
+                     qPrintable(QStringLiteral("实际 DPR=%1，预期=%2")
+                         .arg(panel.devicePixelRatioF()).arg(expectedDpr)));
         auto* detail = panel.findChild<TaskDetailWidget*>(); QVERIFY(detail);
         auto* attachments = detail->findChild<AttachmentWidget*>(); QVERIFY(attachments);
         QTRY_VERIFY(attachments->isVisible());
@@ -2236,6 +2633,23 @@ private slots:
         if (!dir.isEmpty()) {
             QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
+            auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+            const int originalRow = navigation->currentRow();
+            for (int row = 0; row < navigation->count(); ++row) {
+                const auto* item = navigation->item(row);
+                if (!item->data(NavigationDelegate::SectionRole).toBool()
+                    && item->data(Qt::UserRole).toInt() == static_cast<int>(ViewScope::Next7Days)) {
+                    navigation->setCurrentRow(row);
+                    break;
+                }
+            }
+            QApplication::processEvents();
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-week.png")));
+            navigation->setCurrentRow(originalRow);
+            auto* addListButton = panel.findChild<QToolButton*>(QStringLiteral("GroupMenuButton"));
+            QVERIFY(addListButton);
+            QTest::mouseMove(addListButton); QApplication::processEvents();
+            QVERIFY(navigation->grab().save(dir + QStringLiteral("/sidebar-list-hover.png")));
             QImage divider = panel.grab().toImage().copy(
                 rectIn(panel.findChild<QFrame*>(QStringLiteral("ListPane")), &panel).right() - 12, 16, 40, 100);
             QVERIFY(divider.scaled(240, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
@@ -2321,8 +2735,12 @@ private slots:
             QVERIFY(nativePopupShadowDisabled(datePopup));
             QVERIFY(savePopupPreview(detail, datePopup, dir + QStringLiteral("/detail-date-light.png"),
                                      QColor(QStringLiteral("#E9E9E9"))));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+            QApplication::processEvents();
             QVERIFY(savePopupPreview(detail, datePopup, dir + QStringLiteral("/detail-date-dark.png"),
                                      QColor(QStringLiteral("#24272E"))));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+            QApplication::processEvents();
             QRect calendarBounds;
             const auto dayButtons = datePopup->findChildren<QToolButton*>(QStringLiteral("DatePickerDay"));
             QCOMPARE(dayButtons.size(), 42);
@@ -2348,8 +2766,12 @@ private slots:
             QVERIFY(nativePopupShadowDisabled(&reminder));
             QVERIFY(savePopupPreview(&reminder, nullptr, dir + QStringLiteral("/reminder-light.png"),
                                      QColor(QStringLiteral("#E9E9E9"))));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+            QApplication::processEvents();
             QVERIFY(savePopupPreview(&reminder, nullptr, dir + QStringLiteral("/reminder-dark.png"),
                                      QColor(QStringLiteral("#24272E"))));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+            QApplication::processEvents();
             auto* reminderSnooze = reminder.findChild<QToolButton*>(QStringLiteral("ReminderSnoozeButton"));
             auto* reminderMenu = reminder.findChild<QMenu*>(QStringLiteral("ReminderSnoozeMenu"));
             QVERIFY(reminderSnooze && reminderMenu);
@@ -2358,8 +2780,12 @@ private slots:
             QVERIFY(nativePopupShadowDisabled(reminderMenu));
             QVERIFY(savePopupPreview(&reminder, reminderMenu, dir + QStringLiteral("/reminder-snooze-light.png"),
                                      QColor(QStringLiteral("#E9E9E9"))));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+            QApplication::processEvents();
             QVERIFY(savePopupPreview(&reminder, reminderMenu, dir + QStringLiteral("/reminder-snooze-dark.png"),
                                      QColor(QStringLiteral("#24272E"))));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+            QApplication::processEvents();
             reminderMenu->hide();
             reminder.hide();
             // 原生 Windows 上菜单窗口也必须没有系统直角投影。
@@ -2369,6 +2795,79 @@ private slots:
             QTRY_VERIFY(shadowProbe.isVisible());
             QVERIFY(nativePopupShadowDisabled(&shadowProbe));
             shadowProbe.hide();
+
+            PopupMenu trashMenu(&panel);
+            trashMenu.addAction(AppIcons::icon(IconId::Restore), QStringLiteral("恢复"));
+            trashMenu.addAction(AppIcons::icon(IconId::Delete), QStringLiteral("永久删除"));
+            trashMenu.popup(panel.mapToGlobal(QPoint(520, 240)));
+            QTRY_VERIFY(trashMenu.isVisible());
+            QVERIFY(trashMenu.grab().save(dir + QStringLiteral("/trash-context-menu.png")));
+            trashMenu.hide();
+
+            ListEditorDialog listEditor(m_store->lists(), m_store->folders(), &panel);
+            listEditor.setNewListDefaults(QString(), EntityKind::Task);
+            listEditor.findChild<QLineEdit*>(QStringLiteral("ListNameEdit"))->setText(QStringLiteral("旅行计划"));
+            listEditor.show(); listEditor.activateWindow();
+            listEditor.findChild<QLineEdit*>(QStringLiteral("ListNameEdit"))->setFocus();
+            QTRY_VERIFY(listEditor.findChild<QLineEdit*>(QStringLiteral("ListNameEdit"))->hasFocus());
+            QTest::qWait(50);
+            QVERIFY(listEditor.grab().save(dir + QStringLiteral("/list-editor-light.png")));
+            auto* customColor = listEditor.findChild<QToolButton*>(QStringLiteral("ListCustomColorButton"));
+            QVERIFY(customColor); QTest::mouseClick(customColor, Qt::LeftButton);
+            ColorPickerPopup* colorPicker = nullptr;
+            QTRY_VERIFY((colorPicker = listEditor.findChild<ColorPickerPopup*>()) != nullptr);
+            QTRY_VERIFY(colorPicker->isVisible());
+            QVERIFY(savePopupPreview(&listEditor, colorPicker, dir + QStringLiteral("/list-colors.png")));
+            auto* customEntry = colorPicker->findChild<QPushButton*>(QStringLiteral("ColorCustomEntry"));
+            QVERIFY(customEntry); QTest::mouseClick(customEntry, Qt::LeftButton);
+            QVERIFY(savePopupPreview(&listEditor, colorPicker, dir + QStringLiteral("/list-color-custom.png")));
+            colorPicker->reject();
+            auto* iconButton = listEditor.findChild<QToolButton*>(QStringLiteral("ListIconButton"));
+            QVERIFY(iconButton); QTest::mouseClick(iconButton, Qt::LeftButton);
+            EmojiPickerPopup* emojiPicker = nullptr;
+            QTRY_VERIFY((emojiPicker = listEditor.findChild<EmojiPickerPopup*>()) != nullptr);
+            QTRY_VERIFY(emojiPicker->isVisible());
+            QVERIFY(savePopupPreview(&listEditor, emojiPicker, dir + QStringLiteral("/list-emoji.png")));
+            emojiPicker->reject();
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+            QApplication::processEvents();
+            QVERIFY(listEditor.grab().save(dir + QStringLiteral("/list-editor-dark.png")));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+            QApplication::processEvents(); listEditor.reject();
+
+            SettingsDialog settings(&panel); settings.show(); QTest::qWait(50);
+            QVERIFY(settings.grab().save(dir + QStringLiteral("/settings-smart-light.png")));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+            QApplication::processEvents();
+            QVERIFY(settings.grab().save(dir + QStringLiteral("/settings-smart-dark.png")));
+            QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-dark.png")));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+            QApplication::processEvents(); settings.reject();
+
+            ConfirmDialog confirm(QStringLiteral("删除清单“旅行计划”？"),
+                QStringLiteral("清单内的所有任务和笔记也将被移入垃圾桶。"),
+                QStringLiteral("删除"), true, &panel);
+            confirm.show(); QTest::qWait(30);
+            QVERIFY(confirm.grab().save(dir + QStringLiteral("/confirm-delete.png")));
+            confirm.reject();
+
+            QToolButton tooltipProbe;
+            tooltipProbe.setToolTip(QStringLiteral("添加清单"));
+            tooltipProbe.show(); tooltipProbe.activateWindow(); QTest::qWait(30);
+            QToolTip::showText(tooltipProbe.mapToGlobal(QPoint(0, tooltipProbe.height())),
+                               tooltipProbe.toolTip(), &tooltipProbe);
+            QTRY_VERIFY(QToolTip::isVisible());
+            QWidget* tooltip = nullptr;
+            QTRY_VERIFY(([&tooltip]() {
+                for (QWidget* candidate : QApplication::topLevelWidgets())
+                    if (candidate->isVisible() && candidate->inherits("QTipLabel")) {
+                        tooltip = candidate;
+                        return true;
+                    }
+                return false;
+            })());
+            QVERIFY(tooltip->grab().save(dir + QStringLiteral("/tooltip.png")));
+            QToolTip::hideText(); tooltipProbe.hide();
 
             TaskDetailWidget narrow(m_store.get()); narrow.resize(360, 700); QVERIFY(narrow.setTask(id)); narrow.show();
             auto* narrowTitle = narrow.findChild<QLineEdit*>(QStringLiteral("TaskTitle")); QVERIFY(narrowTitle);

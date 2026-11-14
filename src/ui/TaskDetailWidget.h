@@ -21,6 +21,7 @@ class SelectionBubble;
 class FormatPanel;
 class EntityInfoPopup;
 class ListSelectPopup;
+class TaskDateController;
 class TaskDetailWidget : public QWidget {
     Q_OBJECT
 public:
@@ -30,6 +31,7 @@ public:
     bool flush();
     bool finishEditing();
     void focusTitle();
+    void openDatePicker();
     void setOverlayMode(bool overlay);
     // 检查项“添加新项”输入框中有未回车提交的文字时返回 true；这类草稿不会被 flush() 保存。
     bool hasDraftInput(QString* what = nullptr) const;
@@ -56,7 +58,6 @@ private:
     void updateDateChip();
     void refreshIcons();
     void setStatus(const QString& text, bool error = false);
-    void openDatePicker();
     void setSettingsExpanded(bool expanded);
     TaskStore* m_store;
     QString m_id;
@@ -84,6 +85,7 @@ private:
     QToolButton *m_infoButton = nullptr, *m_reminderButton = nullptr, *m_closeButton = nullptr;
     EntityInfoPopup* m_infoPopup = nullptr;
     ListSelectPopup* m_groupPopup = nullptr;
+    TaskDateController* m_dateController = nullptr;
     bool m_focusMode = false;
     bool m_overlayMode = false;
     SelectionBubble* m_bubble = nullptr;    // 选中文字气泡工具条
