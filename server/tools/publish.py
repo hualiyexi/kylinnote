@@ -21,14 +21,29 @@ stable 清单自带可选的 history 数组（每项 {version, publishedAt, note
 按版本升序）：publish 会汇总新 release、当前 stable 与全部归档的版本公告
 （同版本冲突取最近一次发布），rollback 保留全部已知历史、artifacts 仍取
 归档目标版本。
+
+watch 命令轮询 incoming 目录自动发布 CI release：
+
+    <incoming>/kylinlist-<X.Y.Z>/     # 目录名必须严格匹配，隐藏目录忽略
+      READY                            # 就绪标记，缺了不处理
+      SHA256SUMS                       # 标准 sha256sum 文本，覆盖目录内全部原始文件
+      RELEASE-INFO.json                # 必须通过 CI 流程门禁（partial=false 等）
+      updates/...                      # 与手工发布相同的 release 结构
+      .publish-state.json              # watch 写入的目录状态（publishing/succeeded/...）
+
+publish / rollback / watch 通过 data/.publisher.lock 跨进程互斥；watch 只把
+RELEASE-INFO 的 CI 一致性检查当流程门禁，不构成来源签名。
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -45,6 +60,40 @@ ARCHIVE_RE = re.compile(r"^manifest-(\d+\.\d+\.\d+)-(\d{8}T\d{6}Z)(?:-(\d+))?\.j
 PLATFORMS = ("linux", "windows")
 ARCHES = ("arm64", "amd64")
 VARIANTS = ("system-qt", "bundled-qt", "setup", "portable")
+
+# ---------------------------------------------------------------- watch 常量
+LOCK_FILENAME = ".publisher.lock"       # data/ 下，publish/rollback/watch 共用
+STATE_FILENAME = ".publish-state.json"  # 每个 incoming 候选目录内的状态文件
+READY_FILENAME = "READY"
+SUMS_FILENAME = "SHA256SUMS"
+DEFAULT_WATCH_INTERVAL = 30             # 秒
+
+# 状态文件取值；succeeded/failed/skipped 为终态，后续轮次不再处理
+STATE_PUBLISHING = "publishing"
+STATE_SUCCEEDED = "succeeded"
+STATE_FAILED = "failed"
+STATE_SKIPPED = "skipped"
+TERMINAL_STATES = frozenset({STATE_SUCCEEDED, STATE_FAILED, STATE_SKIPPED})
+
+# watch 只认本仓库 build.yml 的完整产物：六个 target 精确齐全
+CI_REPOSITORY = "hualiyexi/kylinnote"
+CI_WORKFLOW_PATH = ".github/workflows/build.yml"
+CI_RUN_URL_TEMPLATE = "https://github.com/%s/actions/runs/%s"
+GIT_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+REQUIRED_TARGETS = (
+    "linux-arm64-system-qt",
+    "linux-arm64-bundled-qt",
+    "linux-amd64-system-qt",
+    "linux-amd64-bundled-qt",
+    "windows-amd64-setup",
+    "windows-amd64-portable",
+)
+# sha256sum 文本行：<64位小写hex><空格><空格|*><相对路径>
+SUMS_LINE_RE = re.compile(r"^([0-9a-f]{64}) ([ *])(.+)$")
+# SHA256SUMS 必须至少覆盖清单与 RELEASE-INFO
+SUMS_REQUIRED_ENTRIES = ("RELEASE-INFO.json", "updates/v1/stable/manifest.json")
+# 状态文件与就绪标记不参与 SHA256SUMS 覆盖核对
+SUMS_EXCLUDED_FILES = frozenset({READY_FILENAME, SUMS_FILENAME, STATE_FILENAME})
 
 
 class PublishError(Exception):
@@ -97,6 +146,90 @@ def unique_archive_path(archive_dir, prefix, ts, suffix):
 
 def version_tuple(version):
     return tuple(int(x) for x in version.split("."))
+
+
+def utc_iso_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# ---------------------------------------------------------------- 跨进程锁
+
+class PublisherLock(object):
+    """data/.publisher.lock 跨进程互斥锁。
+
+    Linux 用 flock(LOCK_EX)；Windows 用 msvcrt 对文件首字节加锁，
+    语义足够单机互斥（手工 CLI 与 watch 不会同时改写数据目录）。
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._fd = None
+
+    @property
+    def held(self):
+        return self._fd is not None
+
+    def acquire(self):
+        """尝试加锁（非阻塞）。成功返回 True；被占用或出错返回 False。"""
+        if self._fd is not None:
+            return True
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        try:
+            fd = os.open(str(self.path), flags, 0o644)
+        except OSError:
+            return False
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self._fd = fd
+        return True
+
+    def release(self):
+        if self._fd is None:
+            return
+        fd, self._fd = self._fd, None
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
+
+def publisher_lock_guard(data_dir, purpose="发布"):
+    """手工 CLI 用的加锁保护：锁被占用时给出明确错误。"""
+    lock = PublisherLock(Path(data_dir) / LOCK_FILENAME)
+
+    @contextlib.contextmanager
+    def _guard():
+        if not lock.acquire():
+            raise PublishError(
+                "%s失败：数据目录正被另一个发布进程使用（锁文件 %s）。"
+                "请等它结束、或停止正在运行的 watch 后重试"
+                % (purpose, lock.path))
+        try:
+            yield lock
+        finally:
+            lock.release()
+
+    return _guard()
 
 
 # ---------------------------------------------------------------- 清单校验
@@ -330,12 +463,18 @@ def render_manifest(manifest, history):
 
 
 def do_publish(release_dir, data_dir):
-    """发布 release 目录：先全部校验，再安装文件，最后原子替换 stable 清单。
+    """发布 release 目录（自动持有发布锁）。
 
     stable 清单始终带完整 history：汇总新 release、当前 stable 与全部归档的
     版本公告（同版本冲突取最近一次发布），先生成最终字节再做幂等比较，
     重复发布同一 release 不会改写 stable、也不会归档自己。
     """
+    with publisher_lock_guard(data_dir):
+        return _do_publish_locked(release_dir, data_dir)
+
+
+def _do_publish_locked(release_dir, data_dir):
+    """do_publish 的实现体；调用方必须已持有发布锁（watch 复用，不重复加锁）。"""
     release_dir = Path(release_dir)
     data_dir = Path(data_dir)
     manifest, version, artifacts = load_release(release_dir)
@@ -375,8 +514,15 @@ def do_publish(release_dir, data_dir):
                 "请升版本号或先人工清理）" % art["path"])
         install_file(src, dst, art["sha256"], art["path"])
 
-    # 3) 幂等：与最终清单字节完全一致则直接结束（不改写 stable、不新增归档）
+    # 3) 幂等：与最终清单字节完全一致则确认 RELEASE-INFO 归档后结束
+    #    （不改写 stable、不归档 stable；但若该 release 的 INFO 尚未归档
+    #    ——例如上次发布在替换清单后、归档 INFO 前中断——这里补齐）
     if stable_bytes == final_bytes:
+        ts = utc_timestamp()
+        recovered = _archive_release_info(release_dir, version,
+                                          updates_root / "v1" / "archive", ts)
+        if recovered is not None:
+            print("幂等恢复：补归档 RELEASE-INFO.json -> archive/%s" % recovered)
         print("stable 清单已是 %s（内容一致），发布幂等完成" % version)
         return
 
@@ -394,14 +540,41 @@ def do_publish(release_dir, data_dir):
     atomic_write_bytes(stable_path, final_bytes)
 
     # 6) RELEASE-INFO.json 透传归档：不解析、不强依赖，存在即原样归档
-    info_path = release_dir / "RELEASE-INFO.json"
-    if info_path.is_file():
-        archive_dir = updates_root / "v1" / "archive"
-        info_dst = unique_archive_path(archive_dir, "release-info-%s" % version, ts, ".json")
-        atomic_write_bytes(info_dst, info_path.read_bytes())
-        print("已透传归档 RELEASE-INFO.json -> archive/%s" % info_dst.name)
+    #    （已存在同内容归档则不重复写，回退后重发同版本也不会翻倍）
+    info_dst = _archive_release_info(release_dir, version,
+                                     updates_root / "v1" / "archive", ts)
+    if info_dst is not None:
+        print("已透传归档 RELEASE-INFO.json -> archive/%s" % info_dst)
 
     print("发布完成: stable 版本 -> %s（history %d 条）" % (version, len(history)))
+
+
+def _archive_release_info(release_dir, version, archive_dir, ts):
+    """透传归档 RELEASE-INFO.json；同内容归档已存在则不重复写。
+
+    返回写入的归档文件名；release 目录没有 RELEASE-INFO.json 或已有
+    同内容归档时返回 None。
+    """
+    info_path = Path(release_dir) / "RELEASE-INFO.json"
+    if not info_path.is_file():
+        return None
+    try:
+        data = info_path.read_bytes()
+    except OSError as e:
+        raise PublishError("RELEASE-INFO.json 读取失败: %s" % e)
+    prefix = "release-info-%s-" % version
+    if archive_dir.is_dir():
+        for p in sorted(archive_dir.iterdir()):
+            if not (p.is_file() and p.name.startswith(prefix) and p.name.endswith(".json")):
+                continue
+            try:
+                if p.read_bytes() == data:
+                    return None
+            except OSError:
+                continue
+    dst = unique_archive_path(archive_dir, "release-info-%s" % version, ts, ".json")
+    atomic_write_bytes(dst, data)
+    return dst.name
 
 
 def _parse_manifest_bytes(data, source):
@@ -454,12 +627,18 @@ def load_archive_manifests(archives):
 
 
 def do_rollback(data_dir, to_version=None):
-    """把 stable 清单回退到归档中的旧版本；默认取最近一份早于当前版本的归档。
+    """把 stable 清单回退到归档中的旧版本（自动持有发布锁）。
 
     回退后的清单保留当前已知的全部版本公告（包括高于目标版本的），
     artifacts 与顶层公告仍取归档目标版本；客户端自行忽略高于自身的公告，
     网站则可以展示历次公告。
     """
+    with publisher_lock_guard(data_dir, purpose="回退"):
+        return _do_rollback_locked(data_dir, to_version)
+
+
+def _do_rollback_locked(data_dir, to_version=None):
+    """do_rollback 的实现体；调用方必须已持有发布锁。"""
     data_dir = Path(data_dir)
     updates_root = data_dir / "public" / "updates"
     stable_path = updates_root / "v1" / "stable" / "manifest.json"
@@ -542,7 +721,385 @@ def do_status(data_dir):
         print("  %s  %s  %s" % (version, ts, p.name))
 
 
+# ---------------------------------------------------------------- watch
+
+_watch_logger = logging.getLogger("publish.watch")
+
+
+def setup_watch_logging(stream=None):
+    """watch 日志走 stdout logging；空闲轮次不输出任何记录。"""
+    logger = _watch_logger
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler(stream if stream is not None else sys.stdout)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%dT%H:%M:%SZ"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
+
+
+def scan_incoming_candidates(incoming_dir):
+    """扫描 incoming 目录，返回按版本数值升序的候选 [(版本元组, 版本串, 路径)]。
+
+    只认非隐藏、目录名严格为 kylinlist-<X.Y.Z> 的目录；READY 与 SHA256SUMS
+    由调用方在处理时检查（缺了不处理也不报错，等 CI 写完再来）。
+    """
+    incoming_dir = Path(incoming_dir)
+    if not incoming_dir.is_dir():
+        return []
+    candidates = []
+    for entry in incoming_dir.iterdir():
+        name = entry.name
+        if name.startswith(".") or not entry.is_dir():
+            continue
+        m = re.match(r"^kylinlist-(\d+\.\d+\.\d+)$", name)
+        if not m or not VERSION_RE.match(m.group(1)):
+            continue
+        candidates.append((version_tuple(m.group(1)), m.group(1), entry))
+    candidates.sort(key=lambda item: item[0])
+    return candidates
+
+
+def _is_safe_sums_path(rel):
+    """SHA256SUMS 条目路径必须是目录内安全的相对路径。"""
+    if not rel or rel.startswith("/") or "\\" in rel or ":" in rel:
+        return False
+    parts = rel.split("/")
+    if not all(parts):
+        return False
+    return not any(p in (".", "..") for p in parts)
+
+
+def parse_sha256sums(text, source=SUMS_FILENAME):
+    """解析标准 sha256sum 文本，返回 [(相对路径, sha256)]。
+
+    行格式为 <64位小写hex><空格><空格|*><文件名>（文本/二进制模式标记均可）。
+    拒绝格式错误、绝对路径、反斜杠、点片段与重复条目。
+    """
+    entries = {}
+    order = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        where = "%s 第 %d 行" % (source, lineno)
+        if not line:
+            raise PublishError("%s 为空行" % where)
+        m = SUMS_LINE_RE.match(line)
+        if not m:
+            raise PublishError("%s 不是合法的 sha256sum 行" % where)
+        rel = m.group(3)
+        if not _is_safe_sums_path(rel):
+            raise PublishError("%s 路径不安全: %r" % (where, rel))
+        if rel in entries:
+            raise PublishError("%s 重复条目: %s" % (where, rel))
+        entries[rel] = m.group(1)
+        order.append(rel)
+    return [(rel, entries[rel]) for rel in order]
+
+
+def verify_sha256sums(release_dir):
+    """校验候选目录的 SHA256SUMS：格式、安全路径、重复、缺文件、覆盖与哈希。
+
+    SHA256SUMS 必须恰好覆盖目录内全部原始文件（READY、SHA256SUMS 与
+    .publish-state.json 除外），且至少包含 manifest 与 RELEASE-INFO。
+    """
+    release_dir = Path(release_dir)
+    sums_path = release_dir / SUMS_FILENAME
+    try:
+        text = sums_path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise PublishError("%s 读取失败: %s" % (SUMS_FILENAME, e))
+    entries = parse_sha256sums(text)
+    if not entries:
+        raise PublishError("%s 没有任何条目" % SUMS_FILENAME)
+    listed = dict(entries)
+    for required in SUMS_REQUIRED_ENTRIES:
+        if required not in listed:
+            raise PublishError("%s 缺少必需条目: %s" % (SUMS_FILENAME, required))
+    actual = set()
+    for p in release_dir.rglob("*"):
+        if p.is_symlink():
+            raise PublishError("候选目录不得包含符号链接: %s"
+                               % p.relative_to(release_dir).as_posix())
+        if not p.is_file():
+            continue
+        rel = p.relative_to(release_dir).as_posix()
+        if rel in SUMS_EXCLUDED_FILES:
+            continue
+        actual.add(rel)
+    missing = sorted(set(listed) - actual)
+    if missing:
+        raise PublishError("%s 条目对应的文件不存在: %s"
+                           % (SUMS_FILENAME, ", ".join(missing)))
+    unlisted = sorted(actual - set(listed))
+    if unlisted:
+        raise PublishError("目录内存在未列入 %s 的文件: %s"
+                           % (SUMS_FILENAME, ", ".join(unlisted)))
+    for rel, sha in entries:
+        digest = sha256_file(release_dir / rel)
+        if digest != sha:
+            raise PublishError("sha256 不符: %s（%s 记录 %s，实际 %s）"
+                               % (rel, SUMS_FILENAME, sha, digest))
+
+
+def load_release_info(release_dir):
+    """读取 RELEASE-INFO.json 为 dict；watch 在门禁里解析，publish 仍只透传。"""
+    path = Path(release_dir) / "RELEASE-INFO.json"
+    try:
+        return json.loads(path.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        raise PublishError("RELEASE-INFO.json 读取或解析失败: %s" % e)
+
+
+def validate_ci_release(info, dir_version, manifest_version, artifacts):
+    """watch 的 CI 流程门禁：只认本仓库 build.yml 完整产出的 release。
+
+    检查 RELEASE-INFO 的 partial/gitSha/ci 元数据、六个 target 精确齐全、
+    manifest 与 release 版本等于目录版本。这只是流程一致性检查：
+    RELEASE-INFO 随产物一起生成与传输，不构成来源签名。
+    """
+
+    def err(msg):
+        raise PublishError("RELEASE-INFO 门禁: %s" % msg)
+
+    if not isinstance(info, dict):
+        err("必须是 JSON 对象")
+    if info.get("partial") is not False:
+        err("partial 必须为 false（不发布部分构建，实际 %r）" % (info.get("partial"),))
+    ci = info.get("ci")
+    if not isinstance(ci, dict):
+        err("缺少 ci 来源信息（需为 JSON 对象）")
+    if ci.get("repository") != CI_REPOSITORY:
+        err("ci.repository 必须为 %s（实际 %r）" % (CI_REPOSITORY, ci.get("repository")))
+    if ci.get("workflowPath") != CI_WORKFLOW_PATH:
+        err("ci.workflowPath 必须为 %s（实际 %r）"
+            % (CI_WORKFLOW_PATH, ci.get("workflowPath")))
+    run_id = ci.get("runId")
+    if isinstance(run_id, bool) or not (
+            (isinstance(run_id, int) and run_id > 0)
+            or (isinstance(run_id, str) and run_id.isdigit() and int(run_id) > 0)):
+        err("ci.runId 必须是正整数（实际 %r）" % (run_id,))
+    run_id_text = run_id if isinstance(run_id, str) else str(run_id)
+    expected_url = CI_RUN_URL_TEMPLATE % (CI_REPOSITORY, run_id_text)
+    if ci.get("runUrl") != expected_url:
+        err("ci.runUrl 必须为 %s（实际 %r）" % (expected_url, ci.get("runUrl")))
+    head_sha = ci.get("headSha")
+    if not isinstance(head_sha, str) or not GIT_SHA_RE.match(head_sha):
+        err("ci.headSha 必须是 40/64 位小写十六进制（实际 %r）" % (head_sha,))
+    if info.get("gitSha") != head_sha:
+        err("gitSha 必须等于 ci.headSha（gitSha %r，headSha %r）"
+            % (info.get("gitSha"), head_sha))
+    if info.get("version") != dir_version:
+        err("version 必须等于目录版本 %s（实际 %r）" % (dir_version, info.get("version")))
+    if manifest_version != dir_version:
+        err("manifest 版本必须等于目录版本 %s（实际 %s）" % (dir_version, manifest_version))
+    info_artifacts = info.get("artifacts")
+    if not isinstance(info_artifacts, list):
+        err("artifacts 必须是非空数组")
+    info_targets = []
+    for art in info_artifacts:
+        if not isinstance(art, dict):
+            err("artifacts 内必须是 JSON 对象")
+        info_targets.append(art.get("target"))
+    if sorted(t for t in info_targets if isinstance(t, str)) != sorted(REQUIRED_TARGETS) \
+            or len(info_targets) != len(REQUIRED_TARGETS):
+        err("artifacts 必须恰好覆盖六个 target: %s（实际 %s）"
+            % (", ".join(REQUIRED_TARGETS), ", ".join(str(t) for t in info_targets)))
+    manifest_targets = sorted(
+        "%s-%s-%s" % (a["platform"], a["arch"], a["variant"]) for a in artifacts)
+    if manifest_targets != sorted(REQUIRED_TARGETS):
+        err("manifest artifacts 必须恰好覆盖六个 target（实际 %s）"
+            % ", ".join(manifest_targets))
+
+
+def read_publish_state(release_dir):
+    """读取 .publish-state.json；不存在或损坏返回 None（视为未处理，可重试）。"""
+    try:
+        data = (Path(release_dir) / STATE_FILENAME).read_bytes()
+        state = json.loads(data.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if isinstance(state, dict) and isinstance(state.get("state"), str):
+        return state
+    return None
+
+
+def write_publish_state(release_dir, state, version, *, error=None, reason=None,
+                        increment=False):
+    """原子写入目录状态；increment 在开始一次发布尝试时把 attempts 加一。"""
+    path = Path(release_dir) / STATE_FILENAME
+    prev = read_publish_state(release_dir) or {}
+    attempts = prev.get("attempts")
+    if not isinstance(attempts, int) or attempts < 0:
+        attempts = 0
+    if increment:
+        attempts += 1
+    record = {
+        "state": state,
+        "version": version,
+        "attempts": attempts,
+        "updatedAt": utc_iso_now(),
+        "error": error,
+        "reason": reason,
+    }
+    atomic_write_bytes(
+        path, json.dumps(record, ensure_ascii=False, indent=2).encode("utf-8"))
+    return record
+
+
+def current_stable_version(data_dir):
+    """当前 stable 版本；尚未发布返回 None，清单损坏抛 PublishError。"""
+    stable_path = Path(data_dir) / "public" / "updates" / "v1" / "stable" / "manifest.json"
+    if not stable_path.is_file():
+        return None
+    manifest = _parse_manifest_bytes(stable_path.read_bytes(), "当前 stable 清单")
+    return manifest["version"]
+
+
+def _process_watch_candidate(release_dir, version, data_dir, log):
+    """处理单个候选目录（调用方必须已持有发布锁）。返回结果或 None（无需处理）。"""
+    release_dir = Path(release_dir)
+    state = read_publish_state(release_dir)
+    if state is not None and state.get("state") in TERMINAL_STATES:
+        return None
+    try:
+        # READY 与 SHA256SUMS 是就绪标记：缺任一个视为 CI 尚未写完，
+        # 本轮忽略、不写状态，等下一轮再看
+        if not (release_dir / READY_FILENAME).is_file():
+            return None
+        if not (release_dir / SUMS_FILENAME).is_file():
+            return None
+        verify_sha256sums(release_dir)
+        _, manifest_version, artifacts = load_release(release_dir)
+        info = load_release_info(release_dir)
+        validate_ci_release(info, version, manifest_version, artifacts)
+        current = current_stable_version(data_dir)
+        if current is not None and version_tuple(version) < version_tuple(current):
+            write_publish_state(release_dir, STATE_SKIPPED, version,
+                                reason="低于当前 stable 版本 %s" % current)
+            log.info("跳过 kylinlist-%s（低于当前 stable %s）", version, current)
+            return STATE_SKIPPED
+        write_publish_state(release_dir, STATE_PUBLISHING, version, increment=True)
+        try:
+            _do_publish_locked(release_dir, data_dir)
+        except Exception as e:
+            message = str(e) if isinstance(e, PublishError) \
+                else "%s: %s" % (type(e).__name__, e)
+            write_publish_state(release_dir, STATE_FAILED, version, error=message)
+            log.error("发布失败 kylinlist-%s: %s", version, message)
+            return STATE_FAILED
+        write_publish_state(release_dir, STATE_SUCCEEDED, version)
+        log.info("发布成功 kylinlist-%s", version)
+        return STATE_SUCCEEDED
+    except PublishError as e:
+        write_publish_state(release_dir, STATE_FAILED, version, error=str(e))
+        log.error("候选 kylinlist-%s 无效: %s", version, e)
+        return STATE_FAILED
+
+
+def do_watch_round(incoming_dir, data_dir, log=None):
+    """扫描并处理一轮 incoming 候选，返回 [(版本, 结果)]；失败目录不中断本轮。
+
+    终态目录静默跳过；发布锁被其他进程占用时本轮留待下轮，不写任何状态。
+    """
+    log = log if log is not None else _watch_logger
+    incoming_dir = Path(incoming_dir)
+    outcomes = []
+    if not incoming_dir.is_dir():
+        return outcomes
+    lock = PublisherLock(Path(data_dir) / LOCK_FILENAME)
+    held = False
+    try:
+        for _, version, candidate in scan_incoming_candidates(incoming_dir):
+            pre = read_publish_state(candidate)
+            if pre is not None and pre.get("state") in TERMINAL_STATES:
+                continue
+            if not held:
+                if not lock.acquire():
+                    log.info("发布锁被其他进程占用（%s），本轮留待下轮处理", lock.path)
+                    break
+                held = True
+            try:
+                outcome = _process_watch_candidate(candidate, version, data_dir, log)
+            except Exception as e:  # 单目录意外异常不杀死整轮
+                log.error("处理 kylinlist-%s 时发生未预期异常: %s: %s",
+                          version, type(e).__name__, e)
+                try:
+                    write_publish_state(candidate, STATE_FAILED, version,
+                                        error="%s: %s" % (type(e).__name__, e))
+                except OSError:
+                    pass  # 状态写不进去时留待下轮重试
+                outcome = STATE_FAILED
+            if outcome is not None:
+                outcomes.append((version, outcome))
+    finally:
+        if held:
+            lock.release()
+    return outcomes
+
+
+class WatchStop(object):
+    """watch 的停止标记；SIGINT/SIGTERM 触发 request()。"""
+
+    def __init__(self):
+        self.requested = False
+
+    def request(self, signum=None, frame=None):
+        self.requested = True
+
+
+def install_watch_signal_handlers(stop):
+    """注册 SIGINT/SIGTERM 停止 watch；非主线程等不支持的场景静默跳过。"""
+    for name in ("SIGINT", "SIGTERM"):
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        try:
+            signal.signal(signum, stop.request)
+        except (ValueError, OSError):
+            pass
+
+
+def do_watch(incoming_dir, data_dir, interval=DEFAULT_WATCH_INTERVAL, stop=None):
+    """常驻轮询 incoming 目录；SIGINT/SIGTERM 优雅停止（退出码 0）。
+
+    空闲轮次不输出日志；单目录失败只记录状态并继续。
+    """
+    log = _watch_logger
+    if stop is None:
+        stop = WatchStop()
+    install_watch_signal_handlers(stop)
+    log.info("watch 启动: incoming=%s 数据目录=%s 轮询间隔=%d 秒",
+             incoming_dir, data_dir, interval)
+    try:
+        while not stop.requested:
+            try:
+                do_watch_round(incoming_dir, data_dir, log)
+            except Exception as e:  # 轮次级异常不终止 watch
+                log.error("本轮处理异常（继续运行）: %s: %s", type(e).__name__, e)
+            if stop.requested:
+                break
+            deadline = time.monotonic() + interval
+            while not stop.requested:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.25, remaining))
+    finally:
+        log.info("watch 已停止")
+
+
 # ---------------------------------------------------------------- CLI
+
+def positive_int(value):
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("必须是整数: %r" % (value,))
+    if number <= 0:
+        raise argparse.ArgumentTypeError("必须是正整数: %r" % (value,))
+    return number
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
@@ -563,6 +1120,14 @@ def main(argv=None):
 
     sub.add_parser("status", help="查看当前 stable 版本与归档列表")
 
+    p = sub.add_parser("watch", help="常驻轮询 incoming 目录，自动发布就绪的 CI release")
+    p.add_argument("incoming_dir", metavar="incoming目录",
+                   help="存放 kylinlist-<X.Y.Z> 候选目录的目录（容器内如 /data/incoming）")
+    p.add_argument("--interval", metavar="秒", type=positive_int,
+                   default=DEFAULT_WATCH_INTERVAL,
+                   help="轮询间隔秒数（默认 %d）；SIGINT/SIGTERM 优雅停止"
+                        % DEFAULT_WATCH_INTERVAL)
+
     args = parser.parse_args(argv)
     data_dir = Path(os.environ.get(ENV_DATA_DIR, DEFAULT_DATA_DIR))
     try:
@@ -574,6 +1139,9 @@ def main(argv=None):
             do_validate(Path(args.release_dir))
         elif args.command == "status":
             do_status(data_dir)
+        elif args.command == "watch":
+            setup_watch_logging()
+            do_watch(Path(args.incoming_dir), data_dir, args.interval)
     except PublishError as e:
         print("错误: %s" % e, file=sys.stderr)
         return 1
