@@ -1,6 +1,11 @@
 #pragma once
 #include <QDialog>
 #include "../domain/Entity.h"
+
+class QLabel;
+class QPushButton;
+class QToolButton;
+
 namespace kl {
 class ReminderPopup : public QDialog {
     Q_OBJECT
@@ -13,8 +18,20 @@ signals:
     void completeRequested(QString entityId);
     void snoozeRequested(QString entityId, QString reminderId, int minutes);
     void openRequested(QString entityId);
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 private:
+    void applyTheme();
+    void positionOnScreen();
+    void updateTitleElision();
+
     QString m_entityId;
     QString m_reminderId;
+    QWidget* m_card = nullptr;
+    QLabel* m_scheduleIcon = nullptr;
+    QPushButton* m_title = nullptr;
+    QToolButton* m_close = nullptr;
+    QToolButton* m_snooze = nullptr;
 };
 }  // namespace kl

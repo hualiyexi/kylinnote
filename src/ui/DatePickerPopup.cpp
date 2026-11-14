@@ -606,6 +606,7 @@ QToolButton#DatePickerQuick, QToolButton#DatePickerNav {
     background: transparent;
     border: 1px solid %SURFACE%;
     border-radius: 6px;
+    padding: 0;
 }
 QToolButton#DatePickerQuick:hover, QToolButton#DatePickerNav:hover { background-color: %HOVER%; }
 QToolButton#DatePickerQuick:focus, QToolButton#DatePickerNav:focus { border-color: %FOCUS_RING%; }
@@ -614,6 +615,7 @@ QToolButton#DatePickerDay {
     background-color: %SURFACE%;
     border: 1px solid %SURFACE%;
     border-radius: 15px;
+    padding: 0;
 }
 QToolButton#DatePickerDay[outsideMonth="true"] { color: %TEXT_TERTIARY%; }
 QToolButton#DatePickerDay:hover { background-color: %FIELD_HOVER%; }

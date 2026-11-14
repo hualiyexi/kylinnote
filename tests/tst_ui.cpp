@@ -19,6 +19,7 @@
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QPushButton>
+#include <QPointer>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -112,15 +113,20 @@ bool nativePopupShadowDisabled(QWidget* popup) {
     return true;
 }
 
-bool savePopupPreview(QWidget* detail, QWidget* popup, const QString& path) {
+bool savePopupPreview(QWidget* detail, QWidget* popup, const QString& path,
+                      const QColor& background = QColor()) {
     const QRect detailBounds(detail->mapToGlobal(QPoint()), detail->size());
-    const QRect popupBounds(popup->mapToGlobal(QPoint()), popup->size());
-    const QRect bounds = detailBounds.united(popupBounds);
+    QRect bounds = detailBounds;
+    QRect popupBounds;
+    if (popup) {
+        popupBounds = QRect(popup->mapToGlobal(QPoint()), popup->size());
+        bounds = bounds.united(popupBounds);
+    }
     QImage image(bounds.size(), QImage::Format_ARGB32_Premultiplied);
-    image.fill(detail->palette().window().color());
+    image.fill(background.isValid() ? background : detail->palette().window().color());
     QPainter painter(&image);
     painter.drawPixmap(detailBounds.topLeft() - bounds.topLeft(), detail->grab());
-    painter.drawPixmap(popupBounds.topLeft() - bounds.topLeft(), popup->grab());
+    if (popup) painter.drawPixmap(popupBounds.topLeft() - bounds.topLeft(), popup->grab());
     painter.end();
     return image.save(path);
 }
@@ -1372,21 +1378,76 @@ private slots:
         second.triggerAt = fromUtcMs(2000);
         task.reminders << first << second;
 
-        ReminderPopup popup(task, second.id);
-        QSignalSpy snoozed(&popup, &ReminderPopup::snoozeRequested);
-        QPushButton* snooze = nullptr;
-        for (QPushButton* button : popup.findChildren<QPushButton*>())
-            if (button->text() == QStringLiteral("稍后提醒"))
-                snooze = button;
-        QVERIFY(snooze);
-        QTest::mouseClick(snooze, Qt::LeftButton);
-        QCOMPARE(snoozed.count(), 1);
-        const QList<QVariant> args = snoozed.takeFirst();
-        QCOMPARE(args.size(), 3);
-        QCOMPARE(args.at(0).toString(), task.id);
-        QCOMPARE(args.at(1).toString(), second.id);
-        QVERIFY(args.at(1).toString() != first.id);
-        QCOMPARE(args.at(2).toInt(), 10);
+        auto* popup = new ReminderPopup(task, second.id);
+        QPointer<ReminderPopup> popupGuard(popup);
+        QSignalSpy snoozed(popup, &ReminderPopup::snoozeRequested);
+        auto* snooze = popup->findChild<QToolButton*>(QStringLiteral("ReminderSnoozeButton"));
+        auto* menu = popup->findChild<QMenu*>(QStringLiteral("ReminderSnoozeMenu"));
+        QVERIFY(snooze && menu);
+        const QPair<QString, int> actions[] = {
+            {QStringLiteral("ReminderSnooze15"), 15},
+            {QStringLiteral("ReminderSnooze30"), 30},
+            {QStringLiteral("ReminderSnooze60"), 60},
+            {QStringLiteral("ReminderSnooze180"), 180}
+        };
+        for (const auto& expected : actions) {
+            QAction* action = menu->findChild<QAction*>(expected.first);
+            QVERIFY(action);
+            action->trigger();
+            QCOMPARE(snoozed.count(), 1);
+            const QList<QVariant> args = snoozed.takeFirst();
+            QCOMPARE(args.size(), 3);
+            QCOMPARE(args.at(0).toString(), task.id);
+            QCOMPARE(args.at(1).toString(), second.id);
+            QVERIFY(args.at(1).toString() != first.id);
+            QCOMPARE(args.at(2).toInt(), expected.second);
+        }
+
+        QSignalSpy completed(popup, &ReminderPopup::completeRequested);
+        auto* done = popup->findChild<QPushButton*>(QStringLiteral("ReminderDoneButton"));
+        QVERIFY(done);
+        QTest::mouseClick(done, Qt::LeftButton);
+        QCOMPARE(completed.count(), 1);
+        QCOMPARE(completed.takeFirst().at(0).toString(), task.id);
+        auto* dismiss = popup->findChild<QToolButton*>(QStringLiteral("ReminderDismissButton"));
+        QVERIFY(dismiss);
+        QTest::mouseClick(dismiss, Qt::LeftButton);
+        QTRY_VERIFY(!popupGuard);
+
+        auto* openPopup = new ReminderPopup(task, second.id);
+        QPointer<ReminderPopup> openGuard(openPopup);
+        QSignalSpy opened(openPopup, &ReminderPopup::openRequested);
+        auto* title = openPopup->findChild<QPushButton*>(QStringLiteral("ReminderOpenButton"));
+        QVERIFY(title);
+        openPopup->show();
+        QApplication::processEvents();
+        QCOMPARE(title->text(), task.title);
+        QTest::mouseClick(title, Qt::LeftButton);
+        QCOMPARE(opened.count(), 1);
+        QCOMPARE(opened.takeFirst().at(0).toString(), task.id);
+        QTRY_VERIFY(!openGuard);
+    }
+
+    void datePickerDayButtonsFitTwoDigitLabels() {
+        DatePickerPopup popup;
+        popup.setDateTime(fromAppTime(QDateTime(QDate(2026, 11, 14), QTime(9, 30))));
+        popup.setHasDate(true);
+        popup.show();
+        QApplication::processEvents();
+        const auto days = popup.findChildren<QToolButton*>(QStringLiteral("DatePickerDay"));
+        QCOMPARE(days.size(), 42);
+        for (QToolButton* day : days) {
+            if (day->property("outsideMonth").toBool() || day->text().size() != 2) continue;
+            day->ensurePolished();
+            const int textWidth = day->fontMetrics().horizontalAdvance(day->text());
+            QVERIFY2(textWidth <= day->width() - 2,
+                     qPrintable(QStringLiteral("%1: text=%2, cell=%3")
+                                    .arg(day->text()).arg(textWidth).arg(day->width())));
+            QVERIFY2(day->sizeHint().width() <= day->width(),
+                     qPrintable(QStringLiteral("%1 sizeHint %2 exceeds cell %3")
+                                    .arg(day->text()).arg(day->sizeHint().width()).arg(day->width())));
+        }
+        popup.reject();
     }
     void desktopProjectionUsesSameTaskAndCloseOnlyCloses() {
         const QString id = m_store->createTask(QStringLiteral("桌面任务"));
@@ -1873,6 +1934,17 @@ private slots:
         menu.addAction(QStringLiteral("菜单阴影检查"));
         menu.popup(detail.mapToGlobal(QPoint(24, 24)));
         QTRY_VERIFY(menu.isVisible()); verifyNativeOnly(&menu); menu.hide();
+
+        ReminderPopup reminder(m_store->entity(id));
+        reminder.show();
+        QTRY_VERIFY(reminder.isVisible()); verify(&reminder);
+        auto* snooze = reminder.findChild<QToolButton*>(QStringLiteral("ReminderSnoozeButton"));
+        auto* snoozeMenu = reminder.findChild<QMenu*>(QStringLiteral("ReminderSnoozeMenu"));
+        QVERIFY(snooze && snoozeMenu);
+        snoozeMenu->popup(snooze->mapToGlobal(QPoint(0, snooze->height())));
+        QTRY_VERIFY(snoozeMenu->isVisible()); verifyNativeOnly(snoozeMenu);
+        snoozeMenu->hide();
+        reminder.hide();
     }
 
     void detailListSearchMovesByUuidAndPreservesEditingSession() {
@@ -2187,6 +2259,56 @@ private slots:
             QVERIFY(nativePopupShadowDisabled(groupPopup));
             QVERIFY(savePopupPreview(detail, groupPopup, dir + QStringLiteral("/detail-list.png")));
             groupPopup->hide();
+
+            auto* dateChip = detail->findChild<QPushButton*>(QStringLiteral("DateChip")); QVERIFY(dateChip);
+            QTest::mouseClick(dateChip, Qt::LeftButton);
+            DatePickerPopup* datePopup = nullptr;
+            QTRY_VERIFY((datePopup = detail->findChild<DatePickerPopup*>()) != nullptr);
+            QTRY_VERIFY(datePopup->isVisible());
+            QVERIFY(nativePopupShadowDisabled(datePopup));
+            QVERIFY(savePopupPreview(detail, datePopup, dir + QStringLiteral("/detail-date-light.png"),
+                                     QColor(QStringLiteral("#E9E9E9"))));
+            QVERIFY(savePopupPreview(detail, datePopup, dir + QStringLiteral("/detail-date-dark.png"),
+                                     QColor(QStringLiteral("#24272E"))));
+            QRect calendarBounds;
+            const auto dayButtons = datePopup->findChildren<QToolButton*>(QStringLiteral("DatePickerDay"));
+            QCOMPARE(dayButtons.size(), 42);
+            for (QToolButton* day : dayButtons) {
+                const QRect dayBounds = rectIn(day, datePopup);
+                calendarBounds = calendarBounds.isNull() ? dayBounds : calendarBounds.united(dayBounds);
+            }
+            QImage calendarGrid = datePopup->grab().toImage().copy(calendarBounds);
+            QVERIFY(calendarGrid.scaled(calendarBounds.width() * 3, calendarBounds.height() * 3,
+                                        Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                        .save(dir + QStringLiteral("/detail-date-grid.png")));
+            datePopup->reject();
+
+            Entity reminderTask = m_store->entity(id);
+            TaskReminder reminderSpec;
+            reminderSpec.id = newUuid();
+            reminderSpec.entityId = id;
+            reminderSpec.triggerAt = appNow();
+            reminderTask.reminders << reminderSpec;
+            ReminderPopup reminder(reminderTask, reminderSpec.id);
+            reminder.show();
+            QTRY_VERIFY(reminder.isVisible());
+            QVERIFY(nativePopupShadowDisabled(&reminder));
+            QVERIFY(savePopupPreview(&reminder, nullptr, dir + QStringLiteral("/reminder-light.png"),
+                                     QColor(QStringLiteral("#E9E9E9"))));
+            QVERIFY(savePopupPreview(&reminder, nullptr, dir + QStringLiteral("/reminder-dark.png"),
+                                     QColor(QStringLiteral("#24272E"))));
+            auto* reminderSnooze = reminder.findChild<QToolButton*>(QStringLiteral("ReminderSnoozeButton"));
+            auto* reminderMenu = reminder.findChild<QMenu*>(QStringLiteral("ReminderSnoozeMenu"));
+            QVERIFY(reminderSnooze && reminderMenu);
+            reminderMenu->popup(reminderSnooze->mapToGlobal(QPoint(0, reminderSnooze->height())));
+            QTRY_VERIFY(reminderMenu->isVisible());
+            QVERIFY(nativePopupShadowDisabled(reminderMenu));
+            QVERIFY(savePopupPreview(&reminder, reminderMenu, dir + QStringLiteral("/reminder-snooze-light.png"),
+                                     QColor(QStringLiteral("#E9E9E9"))));
+            QVERIFY(savePopupPreview(&reminder, reminderMenu, dir + QStringLiteral("/reminder-snooze-dark.png"),
+                                     QColor(QStringLiteral("#24272E"))));
+            reminderMenu->hide();
+            reminder.hide();
             // 原生 Windows 上菜单窗口也必须没有系统直角投影。
             QMenu shadowProbe;
             shadowProbe.addAction(QStringLiteral("菜单阴影检查"));
