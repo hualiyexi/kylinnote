@@ -2,6 +2,7 @@
 #include <QMap>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include "../domain/Entity.h"
 namespace kl {
 class TaskStore;
@@ -39,9 +40,14 @@ public slots:
 private:
     void syncTask(QString id);
     void closeNote(NoteWidget* note);
+    // finishEditing 落盘会经 taskChanged 重新进入 syncTask 的关窗分支；
+    // m_finishing 让同步重入的刷新/关窗等待最外层保存结束；
+    // 重入或保存失败返回 false，保留窗口供最外层收尾或后续重试。
+    bool finishNoteEditing(NoteWidget* note);
     TaskStore* m_store;
     QMap<QString, NoteWidget*> m_notes;
     QPointer<NoteWidget> m_active;
+    QSet<QString> m_finishing;
     bool m_hidden = false;
     bool m_restoreFrozen = false;
 };

@@ -50,11 +50,13 @@ public:
                        const QString &icon = QString(), const QString &color = QString());
     bool renameList(const QString &id, const QString &name);
     bool setListFolder(const QString &id, const QString &folderId);
-    // 完整清单一事务更新：名称 trim 后 1..64、icon（空或 ≤16 个 UTF-16 码元的 emoji 文本）、
-    // color（空或 #RRGGBB）、folderId（空 = 无文件夹）。不能改变 inbox/kind/归档状态。
+    // 完整清单一事务更新：新建/改名 trim 后 1..64，旧长名称未改名时保留；
+    // icon（空或 ≤16 个 UTF-16 码元的 emoji 文本）、color（空或 #RRGGBB）、
+    // folderId（空 = 无文件夹）。不能改变 inbox/kind/归档状态。
     bool updateList(const QString &id, const QString &name, const QString &icon, const QString &color,
                     const QString &folderId);
-    bool saveList(const TaskList &list);          // 门面版本：kind/inbox/archivedAtUtcMs 以库内现值为准
+    // saveList 要求草稿 revision 与当前快照一致；repository 再以数据库 revision 作 CAS。
+    bool saveList(const TaskList &list);          // kind/inbox/archivedAtUtcMs 以当前快照为准
     // 归档只改清单本身（archivedAtUtcMs），绝不批量改任务状态、日期或生成重复实例；
     // 收集箱禁止归档。归档清单的任务不再提醒、不进活动视图。
     bool setListArchived(const QString &id, bool archived);
@@ -65,7 +67,8 @@ public:
     bool renameGroup(const QString &id, const QString &name) { return renameList(id, name); }
     bool deleteGroup(const QString &id) { return deleteList(id); }
     // 顺延至今天：只处理 active、未删除、未归档清单且 effectiveDate<today 的任务。
-    // 全天任务 allDayDate=today；带时刻的 due/start 在应用时区下保留时刻改日期；其余字段不动。
+    // 按 effectiveDate 到 today 的天数统一平移 allDayDate/due/start；
+    // 带时刻的值在应用时区下保留时刻和跨日跨度；提醒及其余字段不动。
     // 单事务提交，失败不产生部分成功；返回 false 时可用 lastError() 查原因。
     bool postponeOverdueTasks(const QStringList &ids, const QDate &today);
     QString createSection(const QString &listId, const QString &name);

@@ -864,11 +864,17 @@ bool TaskStore::saveList(const TaskList &list)
     if (!existing) return fail(QStringLiteral("清单不存在"));
     if (existing->inbox) return fail(QStringLiteral("系统 inbox 不支持外观编辑"));
     if (!list.folderId.isEmpty() && !hasFolder(list.folderId)) return fail(QStringLiteral("文件夹不存在"));
-    TaskList row = *existing;                    // kind/inbox/归档状态以库内现值为准，调用方不可改
+    // 旧草稿必须基于本 store 的当前快照；repository 还会核对实际数据库 revision。
+    if (list.revision != existing->revision)
+        return fail(QStringLiteral("清单已被其他操作修改，请重新加载"));
+    TaskList row = *existing;                    // kind/inbox/归档状态以当前快照为准，调用方不可改
     row.name = list.name.trimmed();
+    if (row.name == existing->name.trimmed()) row.name = existing->name; // 原名更新保留 v5 原文
     row.icon = list.icon; row.color = list.color;
     row.folderId = list.folderId; row.sortOrder = list.sortOrder;
-    if (row.name.isEmpty() || row.name.size() > kListNameMaxLength)
+    if (row.name.isEmpty()) return fail(QStringLiteral("清单名称不能为空"));
+    // 长度上限只约束新建与真正改名；v5 历史长名称的原名更新照常放行。
+    if (row.name != existing->name && row.name.size() > kListNameMaxLength)
         return fail(QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength));
     if (!isValidListIcon(row.icon)) return fail(QStringLiteral("清单图标超出长度限制"));
     if (!isValidListColor(row.color)) return fail(QStringLiteral("清单颜色必须为空或 #RRGGBB"));
@@ -920,15 +926,14 @@ bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
         const QDate date = effectiveDate(task);
         if (!date.isValid() || date >= today) continue;
         Entity value = task;
-        const auto shiftToToday = [&today](const QDateTime &when) {
+        const qint64 days = date.daysTo(today);
+        const auto shiftDate = [days](const QDateTime &when) {
             if (!when.isValid()) return QDateTime();
-            QDateTime local = toAppTime(when);
-            local.setDate(today);
-            return fromAppTime(local);
+            return fromAppTime(toAppTime(when).addDays(days));
         };
-        if (value.allDayDate.isValid()) value.allDayDate = today;      // 全天：只改日期
-        if (value.dueAt.isValid()) value.dueAt = shiftToToday(value.dueAt);
-        if (value.startAt.isValid()) value.startAt = shiftToToday(value.startAt);
+        if (value.allDayDate.isValid()) value.allDayDate = value.allDayDate.addDays(days);
+        if (value.dueAt.isValid()) value.dueAt = shiftDate(value.dueAt);
+        if (value.startAt.isValid()) value.startAt = shiftDate(value.startAt);
         if (!prepareSave(value, &changes)) return false;               // 事务内统一提交，失败无部分成功
         ++postponed;
     }

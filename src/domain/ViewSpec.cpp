@@ -110,8 +110,8 @@ bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today, co
         if (!date.isValid()) return false;
         if (spec.scope == ViewScope::Today && date > today) return false;
         if (spec.scope == ViewScope::Tomorrow && date != today.addDays(1)) return false;
-        // 含今天在内 7 个日历日：today..today+6。
-        if (spec.scope == ViewScope::Next7Days && (date < today || date > today.addDays(6))) return false;
+        // 最近 7 天包含全部逾期，以及今天起的 7 个日历日（today..today+6）。
+        if (spec.scope == ViewScope::Next7Days && date > today.addDays(6)) return false;
         if (spec.scope == ViewScope::Overdue && date >= today) return false;
     }
     return searchMatches(entity, spec.search);

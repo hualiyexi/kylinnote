@@ -40,7 +40,8 @@ bool NoteManager::restoreAll() {
     return true;
 }
 void NoteManager::syncTask(QString id) {
-    if (m_restoreFrozen) return;
+    // finishEditing 的同步保存尚未结束时，等最外层取得真实结果后再刷新或关窗。
+    if (m_restoreFrozen || m_finishing.contains(id)) return;
     const Entity task = presentedTask(m_store, id);
     const DesktopNote desktop = m_store->desktopNote(id);
     NoteWidget* window = m_notes.value(id, nullptr);
@@ -48,10 +49,14 @@ void NoteManager::syncTask(QString id) {
     if (task.id.isEmpty() || task.kind != EntityKind::Task || desktop.id.isEmpty() || !desktop.open
         || task.deleted || task.status != TaskStatus::Active || m_store->isListArchived(task.listId)) {
         if (window) {
-            if (!window->finishEditing()) return;
-            m_notes.remove(id);
-            window->hide();
-            window->deleteLater();
+            // 落盘期间 taskChanged 会重入 syncTask 的本分支；重入时让最外层继续，
+            // 保存失败保留窗口，成功后再移除投影。
+            if (!finishNoteEditing(window)) return;
+            if (m_notes.value(id) == window) {
+                m_notes.remove(id);
+                window->hide();
+                window->deleteLater();
+            }
         }
         return;
     }
@@ -69,7 +74,7 @@ void NoteManager::syncTask(QString id) {
     connect(window, &NoteWidget::taskOpenRequested, this, &NoteManager::taskOpenRequested);
     connect(window, &NoteWidget::completionRequested, this, [this](QString id, bool completed) {
         if (NoteWidget* window = m_notes.value(id)) {
-            if (window->finishEditing())
+            if (finishNoteEditing(window))
                 m_store->setCompleted(id, completed);
         }
     });
@@ -138,11 +143,21 @@ void NoteManager::hideAll() {
 }
 void NoteManager::closeNote(NoteWidget* window) {
     if (m_restoreFrozen) return;
-    if (!window || !window->finishEditing())
+    if (!window || !finishNoteEditing(window))
         return;
     const Entity snapshot = window->snapshot();
     m_store->saveDesktopState(window->id(), snapshot.color, snapshot.geometry,
                               snapshot.zOrder, snapshot.layer, false);
+}
+bool NoteManager::finishNoteEditing(NoteWidget* window) {
+    if (!window) return true;
+    const QString id = window->id();
+    // 内层尚不知道保存结果，不能把“正在保存”当作成功并提前关窗。
+    if (m_finishing.contains(id)) return false;
+    m_finishing.insert(id);
+    const bool ok = window->finishEditing();
+    m_finishing.remove(id);
+    return ok;
 }
 void NoteManager::deleteActive() {
     closeNote(m_active);
@@ -161,7 +176,7 @@ bool NoteManager::flushAll() {
     bool ok = true;
     const auto windows = m_notes.values();
     for (auto* window : windows) {
-        if (!window->finishEditing()) {
+        if (!finishNoteEditing(window)) {
             ok = false;
             continue;
         }

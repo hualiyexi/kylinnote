@@ -491,27 +491,43 @@ bool TaskRepository::saveFolder(Folder *folder, QString *error)
 bool TaskRepository::saveGroup(TaskList *group, QString *error)
 {
     if (!isUuid(group->id) || entityKindName(group->kind).isEmpty() || group->name.trimmed().isEmpty()
-        || group->name.trimmed().size() > kListNameMaxLength || group->sortOrder < 0
+        || group->sortOrder < 0
         || !group->createdAt.isValid() || !group->updatedAt.isValid() || (group->inbox && group->kind != EntityKind::Task)
         || (!group->folderId.isEmpty() && !isUuid(group->folderId))
         || !isValidListIcon(group->icon) || !isValidListColor(group->color) || group->archivedAtUtcMs < 0
         || (group->inbox && group->archivedAtUtcMs != 0))
         return entitycodec::fail(error, QStringLiteral("清单字段非法"));
     group->name = group->name.trimmed();
-    QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT is_inbox FROM lists WHERE id=?")); exists.addBindValue(group->id);
+    QSqlQuery exists(m_database);
+    exists.prepare(QStringLiteral("SELECT is_inbox,name,revision FROM lists WHERE id=?")); exists.addBindValue(group->id);
     if (!exists.exec()) return sqlFailure(exists, error);
     const bool update = exists.next();
-    if (update && (exists.value(0).toInt() != 0) != group->inbox)
-        return entitycodec::fail(error, QStringLiteral("清单不可改变 inbox 属性"));
+    qint64 storedRevision = 0;
+    QString storedName;
+    if (update) {
+        if ((exists.value(0).toInt() != 0) != group->inbox)
+            return entitycodec::fail(error, QStringLiteral("清单不可改变 inbox 属性"));
+        storedName = exists.value(1).toString();
+        storedRevision = exists.value(2).toLongLong();
+        if (group->name == storedName.trimmed()) group->name = storedName;
+        // 名称长度只约束新建与真正改名；v5 历史长名称的归档/移动/颜色更新保留原名。
+        if (group->name != storedName && group->name.size() > kListNameMaxLength)
+            return entitycodec::fail(error, QStringLiteral("清单名称超出长度限制"));
+        // CAS：陈旧快照不得覆盖其他 store 已提交的归档/外观等变更。
+        if (group->revision != storedRevision)
+            return entitycodec::fail(error, QStringLiteral("清单已被其他操作修改，请重新加载"));
+    } else if (group->name.size() > kListNameMaxLength) {
+        return entitycodec::fail(error, QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+    }
     QSqlQuery query(m_database);
-    if (!query.prepare(update ? QStringLiteral("UPDATE lists SET folder_id=?,kind=?,name=?,icon=?,color=?,archived_at_utc_ms=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
+    if (!query.prepare(update ? QStringLiteral("UPDATE lists SET folder_id=?,kind=?,name=?,icon=?,color=?,archived_at_utc_ms=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=? AND revision=?")
                               : QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,icon,color,archived_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?)")))
         return sqlFailure(query, error);
     if (update) {
         query.addBindValue(nullableText(group->folderId)); query.addBindValue(entityKindName(group->kind));
         query.addBindValue(group->name); query.addBindValue(safeText(group->icon)); query.addBindValue(safeText(group->color));
         query.addBindValue(group->archivedAtUtcMs); query.addBindValue(group->sortOrder);
-        query.addBindValue(utcMs(group->updatedAt)); query.addBindValue(group->id);
+        query.addBindValue(utcMs(group->updatedAt)); query.addBindValue(group->id); query.addBindValue(storedRevision);
     } else {
         query.addBindValue(group->id); query.addBindValue(nullableText(group->folderId)); query.addBindValue(entityKindName(group->kind));
         query.addBindValue(group->name); query.addBindValue(group->inbox ? 1 : 0);
@@ -519,7 +535,10 @@ bool TaskRepository::saveGroup(TaskList *group, QString *error)
         query.addBindValue(group->sortOrder);
         query.addBindValue(utcMs(group->createdAt)); query.addBindValue(utcMs(group->updatedAt));
     }
-    return query.exec() ? true : sqlFailure(query, error);
+    if (!query.exec()) return sqlFailure(query, error);
+    if (update && query.numRowsAffected() != 1)
+        return entitycodec::fail(error, QStringLiteral("清单已被其他操作修改，请重新加载"));
+    return true;
 }
 
 bool TaskRepository::saveSection(Section *section, QString *error)

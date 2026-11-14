@@ -307,10 +307,14 @@ private slots:
     void allDayRecurrenceAndFlatBackup();
     void entityCodecAndBackupRoundTrip();
     void listAppearanceArchiveAndAtomicUpdate();
+    void listUpdatesRejectStaleRevisions();
+    void legacyLongListNamesRemainEditable_data();
+    void legacyLongListNamesRemainEditable();
     void deleteListMovesContentToTrashAtomically();
     void viewSpecScopesAndArchivedFiltering();
     void archivedListsSuppressReminders();
     void postponeOverdueTasksShiftsDates();
+    void postponePreservesDateSpansAndReminders();
     void backupRoundTripAndLegacyRejection();
     void backupValidationAndSqlRollbackAreAtomic();
     void backupContainerLimitsAndStreaming();
@@ -1741,6 +1745,121 @@ void TaskTests::listAppearanceArchiveAndAtomicUpdate()
     QVERIFY(store.createList(QStringLiteral("坏图标"), QString(), EntityKind::Task, QString(17, QChar(0x56FE))).isEmpty());
 }
 
+void TaskTests::listUpdatesRejectStaleRevisions()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString list = store.createList(QStringLiteral("原清单"));
+    const QString other = store.createList(QStringLiteral("同批清单"));
+    QVERIFY(isUuid(list)); QVERIFY(isUuid(other));
+    const auto currentList = [&store](const QString &id) {
+        for (const TaskList &row : store.lists()) if (row.id == id) return row;
+        return TaskList();
+    };
+    TaskList staleDraft = currentList(list);
+    QVERIFY(store.updateList(list, QStringLiteral("已更新名称"), QStringLiteral("🏡"), QStringLiteral("#123456"), QString()));
+    const QString rowsSql = QStringLiteral("SELECT * FROM lists ORDER BY id");
+    const auto beforeDraft = queryRows(rowsSql);
+    staleDraft.color = QStringLiteral("#ABCDEF");
+    QVERIFY(!store.saveList(staleDraft));
+    QVERIFY(store.lastError().contains(QStringLiteral("修改")));
+    QCOMPARE(queryRows(rowsSql), beforeDraft);
+
+    TaskStore staleStore(Database::instance().connection()); QVERIFY(staleStore.load());
+    const TaskList beforeArchive = currentList(list);
+    QVERIFY(store.setListArchived(list, true));
+    const auto archivedRows = queryRows(rowsSql);
+    QVERIFY(!store.saveList(beforeArchive));                      // 未改外观的旧草稿同样必须拒绝
+    QVERIFY(!staleStore.updateList(list, QStringLiteral("陈旧覆盖"), QString(), QStringLiteral("#ABCDEF"), QString()));
+    QVERIFY(staleStore.lastError().contains(QStringLiteral("修改")));
+    QCOMPARE(queryRows(rowsSql), archivedRows);                    // 旧 store 不得撤销归档
+
+    TaskRepository repository(Database::instance().connection());
+    EntityChanges changes; EntitySnapshot after; QString error;
+    TaskList valid = currentList(other); valid.name = QStringLiteral("应回滚的同批修改");
+    TaskList invalid = beforeArchive; invalid.color = QStringLiteral("#ABCDEF");
+    changes.groupSaves.append(valid); changes.groupSaves.append(invalid);
+    QVERIFY(!repository.apply(&changes, &after, &error));           // 绕过门面仍由 repository CAS 拒绝
+    QVERIFY(error.contains(QStringLiteral("修改")));
+    QCOMPARE(queryRows(rowsSql), archivedRows);                    // 同批先写入的清单也整体回滚
+
+    QVERIFY(staleStore.load()); QVERIFY(staleStore.isListArchived(list));
+    QVERIFY(staleStore.updateList(list, QStringLiteral("重新加载后修改"), QStringLiteral("🏡"), QStringLiteral("#ABCDEF"), QString()));
+    QVERIFY(staleStore.isListArchived(list));
+    const auto updatedRows = queryRows(rowsSql);
+    QVERIFY(!store.setListArchived(list, false));                  // 归档入口也不能使用陈旧 revision
+    QCOMPARE(queryRows(rowsSql), updatedRows);
+    QVERIFY(store.load()); QVERIFY(store.setListArchived(list, false));
+    QVERIFY(!store.isListArchived(list));
+    QCOMPARE(currentList(list).name, QStringLiteral("重新加载后修改"));
+    QCOMPARE(currentList(list).color, QStringLiteral("#ABCDEF"));
+}
+
+void TaskTests::legacyLongListNamesRemainEditable_data()
+{
+    QTest::addColumn<QString>("legacyName");
+    const QString name(65, QChar(0x540D));
+    QTest::newRow("v5-long-name") << name;
+    QTest::newRow("v5-padded-long-name") << QStringLiteral("  %1  ").arg(name);
+}
+
+void TaskTests::legacyLongListNamesRemainEditable()
+{
+    QFETCH(QString, legacyName);
+    const QString inbox = newUuid(), list = newUuid();
+    const QString now = QString::number(utcMs(utcNow()));
+    QStringList statements = v5SchemaStatements(inbox, now);
+    statements.append(QStringLiteral("INSERT INTO lists(id,name,created_at_utc_ms,updated_at_utc_ms) VALUES('%1','%2',%3,%3)")
+                      .arg(list, legacyName, now));
+    QVERIFY(seed(dbPath(), statements));
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const auto currentList = [&store, &list]() {
+        for (const TaskList &row : store.lists()) if (row.id == list) return row;
+        return TaskList();
+    };
+    QCOMPARE(currentList().name, legacyName);
+    QVERIFY(store.setListArchived(list, true));
+    QVERIFY(store.isListArchived(list));
+    QVERIFY(store.setListArchived(list, false));
+    const QString folder = store.createFolder(QStringLiteral("迁移后文件夹")); QVERIFY(isUuid(folder));
+    QVERIFY(store.setListFolder(list, folder));
+    QVERIFY(store.updateList(list, legacyName, QStringLiteral("🏡"), QStringLiteral("#123456"), folder));
+    TaskList appearance = currentList(); appearance.sortOrder = 7;
+    QVERIFY(store.saveList(appearance));
+    QCOMPARE(currentList().name, legacyName);                      // 不改名的操作保留旧名称原文
+    QCOMPARE(currentList().folderId, folder);
+    QCOMPARE(currentList().icon, QStringLiteral("🏡"));
+    QCOMPARE(currentList().color, QStringLiteral("#123456"));
+    QCOMPARE(currentList().sortOrder, 7);
+
+    QVERIFY(store.exportBackup(backupPath()));
+    QVERIFY(store.importBackup(backupPath()));                     // v3 备份恢复不截断旧名称
+    QCOMPARE(currentList().name, legacyName);
+    QVERIFY(store.setListArchived(list, true));
+    QVERIFY(store.setListArchived(list, false));
+
+    const auto beforeRejected = queryRows(QStringLiteral("SELECT * FROM lists ORDER BY id"));
+    const QString changedLongName(66, QChar(0x65B0));
+    QVERIFY(store.createList(legacyName).isEmpty());                // 历史豁免不允许新建长名称
+    QVERIFY(!store.renameList(list, changedLongName));
+    QVERIFY(!store.updateList(list, changedLongName, QString(), QString(), folder));
+    TaskList renamed = currentList(); renamed.name = changedLongName;
+    QVERIFY(!store.saveList(renamed));
+
+    TaskRepository repository(Database::instance().connection());
+    EntityChanges changes; EntitySnapshot after; QString error;
+    changes.groupSaves.append(renamed);
+    QVERIFY(!repository.apply(&changes, &after, &error));           // repository 也限制真正改名
+    changes = EntityChanges();
+    TaskList created; created.id = newUuid(); created.name = legacyName;
+    created.createdAt = utcNow(); created.updatedAt = created.createdAt;
+    changes.groupSaves.append(created);
+    QVERIFY(!repository.apply(&changes, &after, &error));           // 绕过门面新建也不允许超长
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM lists ORDER BY id")), beforeRejected);
+    QVERIFY(store.renameList(list, QString(64, QChar(0x540D))));
+    QCOMPARE(currentList().name.size(), 64);
+    QVERIFY(isUuid(store.createList(QString(64, QChar(0x65B0)))));
+}
+
 void TaskTests::deleteListMovesContentToTrashAtomically()
 {
     QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
@@ -1859,12 +1978,32 @@ void TaskTests::viewSpecScopesAndArchivedFiltering()
     QVERIFY(!contains(tomorrowArchived, spec, today, archiveSet));
 
     spec.scope = ViewScope::Next7Days;
-    QVERIFY(!contains(overdueNormal, spec, today, noArchive));      // 七天内不再包含逾期
-    QVERIFY(contains(todayNormal, spec, today, noArchive));         // 含今天
+    QVERIFY(contains(overdueNormal, spec, today, noArchive));       // 保留全部逾期，未来含今天至今天+6
+    const Entity longOverdue = task(normalList, today.addDays(-730));
+    QVERIFY(contains(longOverdue, spec, today, noArchive));
+    QVERIFY(contains(todayNormal, spec, today, noArchive));
     QVERIFY(contains(tomorrowNormal, spec, today, noArchive));
     QVERIFY(contains(day6Normal, spec, today, noArchive));          // 今天+6 为最后一天
     QVERIFY(!contains(day7Normal, spec, today, noArchive));         // 今天+7 排除
+    QVERIFY(!contains(overdueArchived, spec, today, archiveSet));
     QVERIFY(!contains(tomorrowArchived, spec, today, archiveSet));
+
+    QVector<Entity> recent;
+    for (int i = 0; i < 4; ++i) {
+        Entity pinned = task(normalList, today.addDays(i)); pinned.pinnedAt = utc(2026, 11, 14);
+        recent.append(pinned);
+    }
+    recent << longOverdue << overdueNormal << todayNormal << task(normalList, today)
+           << tomorrowNormal << task(normalList, today.addDays(2)) << task(normalList, today.addDays(4));
+    recent << day7Normal << overdueArchived << tomorrowArchived;
+    const QVector<ViewSection> recentSections = buildSections(recent, spec, today, archiveSet);
+    QCOMPARE(recentSections.size(), 3);
+    QCOMPARE(recentSections.at(0).key, QStringLiteral("pinned"));
+    QCOMPARE(recentSections.at(0).items.size(), 4);
+    QCOMPARE(recentSections.at(1).key, QStringLiteral("overdue"));
+    QCOMPARE(recentSections.at(1).items.size(), 2);
+    QCOMPARE(recentSections.at(2).key, QStringLiteral("upcoming"));
+    QCOMPARE(recentSections.at(2).items.size(), 5);                  // 4 置顶+2 逾期+5 当天及未来 = 11
 
     spec.scope = ViewScope::Overdue;
     QVERIFY(contains(overdueNormal, spec, today, noArchive));
@@ -2044,6 +2183,79 @@ void TaskTests::postponeOverdueTasksShiftsDates()
     QCOMPARE(store.entity(allDay).allDayDate, today);
     QCOMPARE(toAppTime(store.entity(timed).dueAt).date(), today);
     QCOMPARE(toAppTime(store.entity(timed).dueAt).time(), QTime(18, 30));
+}
+
+void TaskTests::postponePreservesDateSpansAndReminders()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today(2026, 11, 15);
+    const QString overnight = store.createTask(QStringLiteral("跨午夜逾期"));
+    const QString multiDay = store.createTask(QStringLiteral("跨多日逾期"));
+    const QString startOnly = store.createTask(QStringLiteral("仅开始日期逾期"));
+    const QString allDay = store.createTask(QStringLiteral("全天且保留开始日期"));
+    {
+        Entity value = store.entity(overnight);
+        value.startAt = fromAppTime(QDateTime(QDate(2026, 11, 10), QTime(22, 15, 25, 123)));
+        value.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 11), QTime(7, 30, 40, 456)));
+        for (int i = 0; i < 3; ++i) {
+            TaskReminder reminder; reminder.triggerAt = value.startAt.addSecs((i - 2) * 3600);
+            value.reminders.append(reminder);
+        }
+        QVERIFY(store.saveTask(value));
+    }
+    {
+        Entity value = store.entity(multiDay);
+        value.startAt = fromAppTime(QDateTime(QDate(2026, 11, 7), QTime(9, 5)));
+        value.dueAt = fromAppTime(QDateTime(QDate(2026, 11, 11), QTime(18, 30)));
+        value.recurrence = QStringLiteral("daily");
+        QVERIFY(store.saveTask(value));
+    }
+    {
+        Entity value = store.entity(startOnly);
+        value.startAt = fromAppTime(QDateTime(QDate(2026, 11, 12), QTime(0, 30)));
+        QVERIFY(store.saveTask(value));
+    }
+    {
+        Entity value = store.entity(allDay);
+        value.allDayDate = QDate(2026, 11, 11);
+        value.startAt = fromAppTime(QDateTime(QDate(2026, 11, 9), QTime(22, 0)));
+        QVERIFY(store.saveTask(value));
+    }
+    const TaskReminder delivered = store.entity(overnight).reminders.first();
+    QVERIFY(store.markReminderDelivered(delivered.id, delivered.triggerAt, utc(2026, 11, 14)));
+    QVERIFY(store.saveDesktopState(overnight, NoteColor::Blue, QRect(30, 40, 320, 300), 3, NoteLayer::OnTop, true));
+    const Entity overnightBefore = store.entity(overnight), multiBefore = store.entity(multiDay);
+    const auto reminderRows = queryRows(QStringLiteral("SELECT * FROM reminders ORDER BY id"));
+    const auto deliveryRows = queryRows(QStringLiteral("SELECT * FROM reminder_deliveries ORDER BY reminder_id,installation_id"));
+    const auto desktopRows = queryRows(QStringLiteral("SELECT * FROM desktop_notes ORDER BY id"));
+    const int count = store.entities().size();
+
+    QVERIFY2(store.postponeOverdueTasks(QStringList{overnight, multiDay, startOnly, allDay}, today), qPrintable(store.lastError()));
+    const Entity overnightAfter = store.entity(overnight), multiAfter = store.entity(multiDay);
+    QCOMPARE(toAppTime(overnightAfter.startAt).date(), today.addDays(-1));
+    QCOMPARE(toAppTime(overnightAfter.startAt).time(), QTime(22, 15, 25, 123));
+    QCOMPARE(toAppTime(overnightAfter.dueAt).date(), today);
+    QCOMPARE(toAppTime(overnightAfter.dueAt).time(), QTime(7, 30, 40, 456));
+    QCOMPARE(overnightAfter.startAt.msecsTo(overnightAfter.dueAt), overnightBefore.startAt.msecsTo(overnightBefore.dueAt));
+    QCOMPARE(toAppTime(multiAfter.startAt).date(), today.addDays(-4));
+    QCOMPARE(toAppTime(multiAfter.startAt).time(), QTime(9, 5));
+    QCOMPARE(toAppTime(multiAfter.dueAt).date(), today);
+    QCOMPARE(toAppTime(multiAfter.dueAt).time(), QTime(18, 30));
+    QCOMPARE(multiAfter.startAt.msecsTo(multiAfter.dueAt), multiBefore.startAt.msecsTo(multiBefore.dueAt));
+    QCOMPARE(multiAfter.recurrenceSeriesId, multiBefore.recurrenceSeriesId);
+    QCOMPARE(multiAfter.rrule, multiBefore.rrule);
+    QCOMPARE(store.entities().size(), count);                      // 顺延重复任务不生成下一实例
+    QCOMPARE(toAppTime(store.entity(startOnly).startAt).date(), today);
+    QCOMPARE(toAppTime(store.entity(startOnly).startAt).time(), QTime(0, 30));
+    QVERIFY(!store.entity(startOnly).dueAt.isValid());
+    QCOMPARE(store.entity(allDay).allDayDate, today);
+    QCOMPARE(toAppTime(store.entity(allDay).startAt).date(), today.addDays(-2));
+    QCOMPARE(toAppTime(store.entity(allDay).startAt).time(), QTime(22, 0));
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM reminders ORDER BY id")), reminderRows);
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM reminder_deliveries ORDER BY reminder_id,installation_id")), deliveryRows);
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM desktop_notes ORDER BY id")), desktopRows);
+    QCOMPARE(overnightAfter.reminders.size(), 3);
+    QVERIFY(store.isReminderDelivered(delivered.id));
 }
 
 void TaskTests::backupRoundTripAndLegacyRejection()
