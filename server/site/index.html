@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" id="brand-description" content="麒麟清单：本地优先的任务、笔记与桌面便签，为银河麒麟桌面而生。">
+  <title>麒麟清单 KylinList · 简单好用的本地清单</title>
+  <link rel="icon" id="brand-favicon" href="assets/kylinlist.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="common.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true">
+    <div class="glow glow-cyan"></div>
+    <div class="glow glow-peach"></div>
+  </div>
+
+  <header class="site-header">
+    <div class="nav-row">
+      <a class="brand" href="./" aria-label="麒麟清单首页">
+        <img src="assets/kylinlist.svg" width="42" height="42" alt="" data-brand-logo>
+        <span id="brand-name">麒麟清单</span>
+      </a>
+      <nav class="navigation" aria-label="主导航">
+        <a class="nav-link active" href="#features">功能介绍</a>
+        <button class="nav-link nav-button" id="history-open" type="button">更新日志</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="features">
+      <h1>
+        <span class="title-line">简单好用的<img class="title-icon" src="assets/kylinlist.svg" alt="" data-brand-logo><span class="accent">清单</span></span>
+        <span class="title-line">让每一天更从容</span>
+      </h1>
+      <p class="hero-description">本地优先的任务、笔记与桌面便签，<br class="desktop-break">为银河麒麟桌面而生，让记录回归简单。</p>
+
+      <div class="download-area" id="download">
+        <p class="download-status" id="download-status" role="status">正在获取最新版本…</p>
+        <div class="primary-downloads" id="primary-downloads"></div>
+        <noscript><p class="download-error">请启用 JavaScript，以读取最新版本与下载地址。</p></noscript>
+      </div>
+    </section>
+  </main>
+
+  <div class="history-modal" id="history-modal" hidden>
+    <div class="history-backdrop" data-close-history></div>
+    <section class="history-panel" role="dialog" aria-modal="true" aria-labelledby="history-title" tabindex="-1">
+      <header class="history-header">
+        <h2 id="history-title">更新日志</h2>
+        <button class="history-close" id="history-close" type="button" aria-label="关闭更新日志">×</button>
+      </header>
+      <div class="history-content" id="history-content">
+        <p class="history-loading">正在读取更新日志…</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

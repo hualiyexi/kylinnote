@@ -1,29 +1,45 @@
-# KylinList 可信局域网 HTTP 更新发布服务。
-#
-# 日常只有 http 常驻；发布 / 校验 / 回退 / 查看状态通过 tools profile 按需运行：
-#   docker compose run --rm publisher validate /data/incoming/<release目录>
-#   docker compose run --rm publisher publish  /data/incoming/<release目录>
-#   docker compose run --rm publisher rollback [--to <版本>]
-#   docker compose run --rm publisher status
-# 详细用法见 server/README.md。
-#
-# 镜像固定具体版本 tag；如需升级请整体替换为新 tag 并重新验证，不要用 latest。
+# KylinList 可信局域网 HTTP 更新、统计与产品页服务。
+# 发布 / 校验 / 回退 / 查看状态通过 tools profile 按需运行 publisher。
+# 镜像与运行数据由根目录 deploy/ 打包后拷贝到生产机；生产入口由宿主 nginx 提供。
 services:
   http:
-    # 唯一常驻服务：只读对外提供 data/public 下的清单与安装包
-    image: nginx:1.27-alpine
+    image: kylinlist-http:${KYLINLIST_IMAGE_VERSION:-1.3.0}
+    build:
+      context: ..
+      dockerfile: server/Dockerfile.http
+    # 开发直连可用于本机/虚拟机验收，但不能作为真实 IP 信任边界；
+    # 生产使用 deploy 编排，仅绑定回环并由宿主 nginx 覆盖来源请求头。
     ports:
       - "${HTTP_PORT:-8080}:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./data/public:/usr/share/nginx/html:ro
+      - ./data/public/updates:/usr/share/nginx/html/updates:ro
+      - ./data/branding/site:/usr/share/nginx/html/local:ro
+      - ./data/logs:/var/log/nginx
+    depends_on:
+      - stats
     restart: unless-stopped
+    logging: &container-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  stats:
+    image: kylinlist-stats:${KYLINLIST_IMAGE_VERSION:-1.3.0}
+    build: ./stats
+    volumes:
+      - ./data/stats:/data
+      - ./data/logs:/logs:ro
+    environment:
+      TZ: Asia/Shanghai
+    restart: unless-stopped
+    logging: *container-logging
 
   publisher:
-    # 发布工具：不常驻，仅 docker compose run 按需调用；宿主机无需安装 Python
+    image: kylinlist-publisher:${KYLINLIST_IMAGE_VERSION:-1.3.0}
+    build:
+      context: ..
+      dockerfile: server/Dockerfile.publisher
     profiles: ["tools"]
-    image: python:3.12-alpine
     volumes:
-      - ./tools:/tools:ro
       - ./data:/data
-    entrypoint: ["python", "-I", "/tools/publish.py"]

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" id="brand-description" content="麒麟清单聚合使用统计。">
+  <title>麒麟清单 · 统计概览</title>
+  <link rel="icon" id="brand-favicon" href="../assets/kylinlist.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="admin.css">
+  <script src="../common.js" defer></script>
+  <script src="admin.js" defer></script>
+</head>
+<body>
+  <header class="admin-header">
+    <a class="brand" href="../" aria-label="返回首页">
+      <img src="../assets/kylinlist.svg" data-default-logo="../assets/kylinlist.svg" data-brand-logo alt="">
+      <span id="brand-name">麒麟清单</span>
+    </a>
+    <span class="section-label">统计概览</span>
+    <button class="refresh-button" id="refresh" type="button">刷新数据</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="page-heading">
+      <div>
+        <p class="eyebrow">AGGREGATE OVERVIEW</p>
+        <h1>使用统计</h1>
+      </div>
+      <p id="updated-at">正在读取服务器数据…</p>
+    </div>
+
+    <p class="error-message" id="error" role="alert" hidden></p>
+
+    <section class="metric-grid" aria-label="聚合指标">
+      <article class="metric-card"><span class="metric-name">不同 IP 用户</span><strong id="metric-users">—</strong><span class="metric-note">上报与下载 IP 的并集</span></article>
+      <article class="metric-card"><span class="metric-name">累计创建任务</span><strong id="metric-tasks">—</strong><span class="metric-note">各用户最新快照之和</span></article>
+      <article class="metric-card"><span class="metric-name">累计创建笔记</span><strong id="metric-notes">—</strong><span class="metric-note">各用户最新快照之和</span></article>
+      <article class="metric-card"><span class="metric-name">累计完成任务</span><strong id="metric-completed">—</strong><span class="metric-note">按不同任务去重</span></article>
+      <article class="metric-card"><span class="metric-name">最久使用天数</span><strong id="metric-days">—</strong><span class="metric-note">首个任务至今的最大天数</span></article>
+      <article class="metric-card accent-card"><span class="metric-name">安装包下载</span><strong id="metric-downloads">—</strong><span class="metric-note">GET / 200 · request_id 去重</span></article>
+    </section>
+
+    <section class="downloads-card">
+      <div class="card-heading">
+        <div><h2>各版本下载次数</h2><p>网页与客户端更新下载使用同一统计口径</p></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">版本</th><th scope="col">下载次数</th><th scope="col">相对占比</th></tr></thead>
+          <tbody id="downloads-body"><tr><td colspan="3" class="empty">正在加载…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <p class="privacy-note">此页仅展示聚合数据，不提供用户 IP 或任务内容明细。</p>
+  </main>
+</body>
+</html>
