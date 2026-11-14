@@ -13,9 +13,9 @@
 
 ```mermaid
 flowchart LR
-    CI[三目标 CI] --> G[generate-update-manifest.py] --> R[发布目录]
-    R --> P[内网电脑上传] --> S[server/data/incoming]
-    S --> PUB[publish.py] --> F[server/data/public]
+    CI[三目标 GitHub CI] --> G[generate-update-manifest.py] --> R[完整 CI release]
+    R --> P[投递到隐藏暂存目录] --> M[原子改名] --> S[data/incoming]
+    S --> PUB[publisher watch 自动校验发布] --> F[data/public]
     F --> NG[nginx http 容器]
     K[KylinList 客户端] -->|HTTP| NG
     NG -. 未来 .-> API[/api/v1/ 账号与同步/]
@@ -87,12 +87,12 @@ flowchart LR
 
 ## 发布流程
 
-1. CI（普通推送与 `v*` 标签）在 Windows x64、Linux ARM64、Linux amd64 构建通过后，运行生成器产出完整发布目录并上传为 `kylinlist-update-bundle` 产物；标签发布同时校验 tag 与版本一致并把该归档附到 GitHub Release。
-2. 从能访问内网的电脑取到发布目录，放到服务器 `server/data/incoming/`（约定目录，自行创建；生产机对应 `deploy/data/incoming/kylinlist-<版本>/`，由 `deploy/package.sh` 生成）。
-3. 在服务器上执行 `docker compose run --rm publisher validate <release目录>` 校验，再 `publish` 发布。发布是事务性的：先安装文件（同版本同哈希幂等、不同哈希拒绝），合并并校验完整历史公告，最后原子替换 stable 清单并归档旧清单。生产离线目录的完整命令见 `deploy/README.txt`。
-4. 回退用 `publisher rollback [--to <版本>]`；它只影响尚未更新的客户端，已装新版者以更高版本继续。
+1. GitHub CI 在 Windows x64、Linux ARM64、Linux amd64 构建通过后，运行生成器产出完整六目标发布目录并上传为 `kylinlist-update-bundle`；更新公告必须来自 `docs/release-notes/<版本>.txt`。RELEASE-INFO 记录 run、workflow、headSha 等溯源字段；标签发布仍校验 tag 与版本一致并附到 GitHub Release。
+2. 开发机用 `python -I deploy/fetch_ci_release.py <RUN_ID> <新目录>` 下载并交叉核验指定 CI 运行，再执行 `bash deploy/package.sh <目录>`。该入口拒绝 partial/本地手工包，只生成带 SHA256SUMS 与 READY 的 incoming，不编译客户端、不构建服务端镜像。
+3. 把结果复制到生产 `data/incoming/.kylinlist-<版本>.uploading/`，完成后在同一文件系统原子改名为正式版本目录。常驻 publisher 自动校验 CI 来源、校验清单、manifest 与安装包，安装文件、合并完整 history 并原子替换 stable。无需手动 publish、重启服务或更新服务端镜像。
+4. 回退用显式 `publisher rollback [--to <版本>]`；watch 的一次性消费状态保证回滚后不会被旧 incoming 自动升回。publish/rollback/watch 共用跨进程锁。安装包发布与服务端镜像升级由 `deploy/package.sh` / `deploy/package-images.sh` 分开执行。
 
-日常发布不经过 GitHub 之外的外部服务；服务器无需访问公网（镜像可离线导入，见 server/README.md）。
+日常发布不经过 GitHub 之外的外部服务；服务器无需访问公网。所有业务数据使用宿主 bind mount，不使用 named/anonymous volume。完整操作见 `deploy/README.txt`。
 
 ## 已经验证到什么程度
 
@@ -101,9 +101,10 @@ flowchart LR
 - Windows Qt 5.12.8 的 `tasks` / `ui` / `updates` / `stats` / `branding` 五套 CTest 全部通过；`branding` 含 35 项名称、图标、运行时配置与系统菜单覆盖测试。测试后确认没有 `test_ui.exe` 的真实自启残留。
 - 在 Ubuntu 20.04 / Qt 5.12.8 中构建 amd64、arm64 的 system-qt 与 bundled-qt 四个 deb；每个构建均再次通过五套 CTest，包内版本、ELF 架构和 install-info 均匹配。amd64 为本机原生构建，arm64 使用 QEMU，不等于真机验收。
 - 四个 deb 均在一次性容器中完成无 DISPLAY 的合成品牌安装/卸载测试：安装后 `/usr/local` 的高优先级菜单项使用测试名称与 SVG，包内 `/usr/share` 原文件不变；卸载后只清理 managed 覆盖。amd64 bundle 还在无系统 Qt 的运行环境中验证。
-- 发布工具 49 项、统计服务 69 项测试在本机与 Python 3.12 Alpine 容器中通过；更新清单生成器 41 项通过（Windows 上 6 项按平台跳过）。
+- 发布工具 98 项、统计服务 69 项测试在本机与 Python 3.12 Alpine 容器中通过；更新清单生成器 55 项通过（Windows 上 6 项按平台跳过）。CI 下载工具 43 项与 release 打包器 8 项测试通过，GitHub 交互使用本地 fake gh，不访问网络。
 - 本机从 1.2.0 发布到 1.3.0 后，stable 清单含两条升序 history 和四个真实安装包；Chrome 78 实测默认品牌、ARM64 分段下载、浅色近全屏多版本更新日志、/s 相对跳转与空统计，鼠标焦点框已清除。
-- `deploy/package.sh` 已生成三个实际镜像 tar、四包 incoming 目录与 SHA256SUMS；校验、三次 `docker load`、生产 Compose 发布/启动和健康检查通过，容器只绑定 `127.0.0.1:18080`，宿主 nginx 配置也在容器内通过 `nginx -t`。
+- 早期本地部署流程已验证镜像 tar、四包 incoming、SHA256SUMS、离线导入与生产 Compose 启动。随后已拆分为 `package.sh`（仅 CI release）与 `package-images.sh`（仅服务端镜像）；目录驱动改造没有重新编译客户端。
+- 新自动发布链路已用六目标合成 CI release 实测：隐藏暂存目录不发布，原子改名后 watch 自动切换 stable、合并 1.2.0/1.3.0/1.4.0 历史并写 succeeded；显式回滚 1.3.0 后等待多个轮询周期不会自动升回。两套 Compose 均无 named volume，更新后的三个镜像 tar 已重新校验并离线导入。
 
 ### 1.2.0 历史验证
 
@@ -115,12 +116,12 @@ flowchart LR
 - 在 Ubuntu 20.04 容器中分别构建 arm64 与 amd64 的普通包和 bundle，包内 `install-info.json` 的版本、架构、安装形式与构建参数一致。
 - 用这四个真实 deb 运行生成器，再用 `server/tools/publish.py validate` 与 `publish` 发布，stable 清单与安装包可从数据目录原样取到。
 
-尚未验证：真实生产宿主的部署、真实银河麒麟上的图形化 deb 安装器与菜单显示（文件关联、授权窗口、覆盖安装时序），以及飞腾 ARM64 真机。这些必须由用户在实际设备上确认，不能由上述自动化与容器结果代替。
+尚未验证：代码推送后真实 GitHub CI 的新来源元数据/公告与下载链路、真实生产宿主的自动目录发布、真实银河麒麟上的图形化 deb 安装器与菜单显示（文件关联、授权窗口、覆盖安装时序），以及飞腾 ARM64 真机。这些必须在相应真实环境确认，不能由上述自动化、fake gh 与容器结果代替。
 
 ## 测试
 
 - `tests/tst_updates.cpp`：版本解析与比较、清单校验各类错误、目标选择、安装身份、待安装判定、文件校验、`UpdateService` 检查/下载/取消/停滞/超时/哈希与大小不符（本地 HTTP 夹具）、基础地址前缀、假安装器交接，以及一份与生成器输出同形的完整六件套清单解析——它把生成器与客户端之间的协议契约固定下来。
-- `server/tools/test_publish.py`：发布工具的事务性、幂等、拒绝规则与回退。
+- `server/tools/test_publish.py`：发布工具的校验、幂等、拒绝规则与回退，以及 READY/SHA256SUMS、CI 门禁、watch 状态、版本顺序、跨进程锁和崩溃恢复。
 - `packaging/test_update_manifest_generator.py`：生成器纯函数校验；完整六件套在 CI 的 `update-bundle` 作业中验证。
 - CI 保留既有三目标构建、CTest、安装启动检查；新增发布归档生成与 tag 校验。
 - 覆盖安装（旧 deb → 新 deb）与升级数据保留断言由打包脚本测试与 CI 安装检查承担；真实麒麟上的图形化安装器行为（授权窗口、关联打开）在虚拟机/真机试用时确认。

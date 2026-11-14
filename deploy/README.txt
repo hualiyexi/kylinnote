@@ -1,90 +1,135 @@
 ========================================
-KylinList 可信内网生产部署包（1.3.0）
+KylinList 可信内网生产部署
 ========================================
 
-本目录自包含：版本化镜像 tar、Compose、宿主 nginx 配置、安装包与更新清单。
-生产客户端默认入口为 http://143.147.10.31:11924，无需手填服务器地址。
-截至 2026-11-14，已在开发机完成 tar 校验、离线导入与本机生产 Compose 演练；
-尚未在真实生产宿主或麒麟/飞腾真机执行，实际部署仍需用户验收。
-
 安全边界：纯 HTTP、无鉴权，只允许可信内网访问，严禁暴露公网。
-统计只上报聚合数量；服务器按 IP 识别用户，同一 IP 的多次上报只保留最新快照。
-聚合结果只在 /s 管理页（http://143.147.10.31:11924/s/），首页无入口，
-无鉴权，仅限可信内网管理员访问，API 不返回 IP 明细。
+统计只上报聚合数量；服务器按 IP 识别用户，同一 IP 只保留最新快照。
+聚合结果由管理员自行访问 /s/，首页无入口，API 不返回 IP 明细。
+
+核心原则：
+1. 客户端安装包只使用 GitHub Actions 的 kylinlist-update-bundle，不在开发机编译。
+2. 日常更新只投递 release 目录；publisher 常驻监视并自动发布，不重启服务。
+3. 服务端镜像只在服务自身变化时单独打包，版本号不与客户端版本绑定。
+4. 清单、安装包、统计 SQLite、品牌和 nginx 日志全部使用宿主 bind mount，
+   不使用 Docker named/anonymous volume。容器 stdout 的 json-file 日志不是数据卷。
 
 ----------------------------------------
-一、开发机生成部署目录
+一、日常发布：CI 下载 → 本地打包 → 拷贝
 ----------------------------------------
 
-先用现有 Docker/CI 流程生成 release 目录（updates/ + RELEASE-INFO.json），然后：
+1) 在 GitHub Actions 确认目标 build.yml 运行的全部 job 成功，复制 RUN_ID。
+   在开发机仓库根目录执行（需要本机已有 gh 和 Python）：
 
-  bash deploy/package.sh <release目录> 1.3.0
+   python -I deploy/fetch_ci_release.py RUN_ID dist/ci-release
+   bash deploy/package.sh dist/ci-release
 
-脚本会：
-  1. 核对版本与 CMakeLists.txt 一致；
-  2. 构建 kylinlist-http / publisher / stats 三个镜像；
-  3. 用 publisher validate 校验安装包大小与 sha256；
-  4. 把 release 拷贝到 data/incoming/kylinlist-1.3.0/；
-  5. 导出 images/*.tar，并生成 SHA256SUMS。
+   fetch_ci_release.py 会核验 GitHub run、workflow、headSha，并安全解压到全新目录。
+   package.sh 只校验并复制 CI release，不编译客户端，也不构建/导出服务端镜像。
+   RELEASE-INFO 必须来自完整 CI 六目标，partial=true 或本地手工包会被拒绝。
 
-tar、.env.prod、安装包、运行数据均不入 Git。同版本 incoming 目录拒绝覆盖；
-如确需重导同名镜像 tar，可设 FORCE=1，但这不能绕过同版本安装包不可替换规则。
+   CI 更新公告来自源码中的 docs/release-notes/<版本>.txt；服务器自动合并历史公告。
 
-----------------------------------------
-二、首次部署到生产机
-----------------------------------------
+2) 打包结果：
 
-1) 把整个 deploy 目录拷贝到生产机，例如 /opt/kylinlist/。
+   deploy/data/incoming/kylinlist-<版本>/
+     updates/...             安装包与原始清单
+     RELEASE-INFO.json       CI 来源与文件信息
+     SHA256SUMS              逐文件完整性校验
+     READY                   最后生成的就绪标记
 
-2) 导入镜像（版本号以本次为准）：
+3) 复制到生产机时，先使用同文件系统内的隐藏暂存目录：
+
+   /opt/kylinlist/data/incoming/.kylinlist-<版本>.uploading/
+
+   整个目录复制完成并确认无写入后，在生产机执行一次原子改名：
+
+   cd /opt/kylinlist/data/incoming
+   mv .kylinlist-<版本>.uploading kylinlist-<版本>
+
+   必须先隐藏暂存、后改名。publisher 只消费带 READY/SHA256SUMS 的正式目录，
+   不读取 .uploading。不要直接向正式目录边复制边发布。
+
+4) publisher 自动校验 CI 来源、SHA256SUMS、manifest 和安装包哈希，然后安装文件、
+   合并 history 并原子替换 stable。无需执行 publish 命令，无需 restart/up。
+
+   查看状态：
 
    cd /opt/kylinlist
-   docker load -i images/kylinlist-http-1.3.0.tar
-   docker load -i images/kylinlist-publisher-1.3.0.tar
-   docker load -i images/kylinlist-stats-1.3.0.tar
+   docker compose --env-file .env.prod -f docker-compose-prod.yml logs -f publisher
+   curl http://127.0.0.1:18080/updates/v1/stable/manifest.json
 
-3) 配置并检查：
+   每个输入目录写 .publish-state.json。succeeded/failed/skipped 不会每轮重复处理；
+   修复失败输入时，先移走该 failed incoming，再重新投递一个完整的新目录。
+   同版本安装包仍禁止原地替换。旧版本自动投递只会 skipped，不会自动降级。
 
-   cp -n .env.example .env.prod   # package.sh 已生成时跳过
-   编辑 .env.prod，确认 KYLINLIST_IMAGE_VERSION=1.3.0、HTTP_PORT=18080。
-   如果修改 HTTP_PORT，也要同步修改 host_nginx.conf 的 proxy_pass 回源端口。
-   sha256sum -c SHA256SUMS
+----------------------------------------
+二、首次部署或服务端镜像升级
+----------------------------------------
 
-4) 校验并发布安装包：
+仅首次部署，或 nginx/publisher/stats 代码、配置发生变化时执行：
 
-   docker compose --env-file .env.prod -f docker-compose-prod.yml run --rm publisher \
-     validate /data/incoming/kylinlist-1.3.0
-   docker compose --env-file .env.prod -f docker-compose-prod.yml run --rm publisher \
-     publish /data/incoming/kylinlist-1.3.0
+  bash deploy/package-images.sh <服务端镜像版本>
 
-5) 启动服务：
+该脚本只构建/导出 kylinlist-http、publisher、stats 三个服务端镜像，
+不读取 CMake 客户端版本，不生成 incoming。输出：
 
+  images/kylinlist-http-<镜像版本>.tar
+  images/kylinlist-publisher-<镜像版本>.tar
+  images/kylinlist-stats-<镜像版本>.tar
+  images/SHA256SUMS
+
+首次部署：
+1) 准备 CI release（见第一节），并生成服务端镜像包。
+2) 把整个 deploy 目录复制到生产机，例如 /opt/kylinlist/。
+3) 导入镜像并核对：
+
+   cd /opt/kylinlist
+   (cd images && sha256sum -c SHA256SUMS)
+   docker load -i images/kylinlist-http-<镜像版本>.tar
+   docker load -i images/kylinlist-publisher-<镜像版本>.tar
+   docker load -i images/kylinlist-stats-<镜像版本>.tar
+   (cd data/incoming/kylinlist-<客户端版本> && sha256sum -c SHA256SUMS)
+
+4) 配置并启动：
+
+   cp -n .env.example .env.prod
+   编辑 .env.prod：KYLINLIST_IMAGE_VERSION=<镜像版本>、HTTP_PORT=18080。
+   若修改回源端口，也同步修改 host_nginx.conf 的 proxy_pass。
    docker compose --env-file .env.prod -f docker-compose-prod.yml up -d
    curl http://127.0.0.1:18080/healthz
    curl http://127.0.0.1:18080/api/v1/stats/healthz
 
-6) 接入宿主 nginx（必须经此入口，才能获取真实 IP）：
+   publisher 随 Compose 常驻；首次启动时自动消费已就绪的 incoming。
+   生产容器只绑定 127.0.0.1:18080，不对外直接开放。
+
+5) 接入宿主 nginx（真实客户端 IP 由此写入）：
 
    sudo cp host_nginx.conf /etc/nginx/conf.d/kylinlist.conf
    sudo nginx -t && sudo systemctl reload nginx
    curl http://127.0.0.1:11924/healthz
 
-生产防火墙只允许可信内网访问 TCP 11924；不要对外开放 18080，也不要把容器端口改为 0.0.0.0。
+   生产防火墙只允许可信内网访问 TCP 11924。
+
+服务端镜像升级：只复制新 images 和本次变更的 Compose/nginx 配置，
+保留生产 data/public、data/stats、data/branding、data/logs 与 .env.prod；
+导入新 tar，修改 .env.prod 的镜像版本后 up -d。不需要重新投递客户端安装包。
 
 ----------------------------------------
-三、升级与回滚
+三、显式回滚与恢复
 ----------------------------------------
 
-升级：开发机用新版本运行 package.sh，整体拷贝新 deploy 内容到生产机，保留生产 data/public、
-data/stats 与 data/branding；导入新 tar，把 .env.prod 的镜像版本改为新版本，publish 新 incoming，
-最后 up -d。本次若 host_nginx.conf 有变化，还需重新复制并 nginx -t / reload。
+自动 watch 是“一次性消费”，不是永远追随 incoming 最高版本。
+已成功消费的版本在回滚后不会被自动升回。
 
-回退更新通道（不会回滚程序或统计数据）：
+  cd /opt/kylinlist
+  docker compose --env-file .env.prod -f docker-compose-prod.yml run --rm publisher status
+  docker compose --env-file .env.prod -f docker-compose-prod.yml run --rm publisher rollback --to 1.3.0
 
-  docker compose --env-file .env.prod -f docker-compose-prod.yml run --rm publisher rollback
-  # 或指定版本：... rollback --to 1.2.0
+手工 publish 仍作为故障恢复命令保留，但不是日常流程。publish/rollback/watch
+共用 data/.publisher.lock，避免并发破坏 stable 或 history。
 
-回滚镜像：保留旧 tar，.env.prod 指回旧镜像版本后 up -d。安装包历史目录不要手工删除。
+回滚更新通道不会回滚客户端程序或统计数据。镜像回滚则保留旧 tar，
+将 .env.prod 指回旧镜像版本后 up -d。历史安装包目录不要手工删除。
 
 ----------------------------------------
 四、统计、品牌与日志
@@ -92,28 +137,24 @@ data/stats 与 data/branding；导入新 tar，把 .env.prod 的镜像版本改�
 
   GET  /api/v1/stats/summary       聚合统计，不返回 IP 明细
   POST /api/v1/stats/usage         客户端每小时聚合上报，body 最大 8KiB
-  /s/                              聚合统计管理页（首页无入口，无鉴权，
-                                   仅限可信内网管理员访问；/s 会以相对
-                                   Location 跳转到 /s/）
+  /s/                              管理页，无鉴权，仅限可信内网管理员
 
 客户端“使用统计”窗口只显示本机累计数据，不含全局统计、下载量与上报状态。
+网站品牌覆盖在 data/branding/site/，编辑 config.json 和 Logo 后刷新生效，
+无需重建镜像；客户端、开始菜单和桌面入口的品牌覆盖见源码 docs/branding.md。
 
-网站品牌覆盖在运行数据 data/branding/site/（挂载为容器内
-/usr/share/nginx/html/local）：编辑 config.json 的
-displayName/title/description/logo，值为空即不覆盖；修改后刷新生效，
-不需要重建镜像或重启容器，/s 管理页同样生效。该目录不入 Git，
-生产值在生产机自行填写。客户端名称/Logo 覆盖见 docs/branding.md。
-
-下载量来自 nginx 实际 GET/200 安装包日志，不是网页按钮点击数；按 request_id 去重。
-日志轮转：
+下载量来自 nginx 实际 GET/200 安装包日志，按 request_id 去重。日志轮转：
 
   bash rotate-logs.sh
 
-脚本先触发下载日志导入，再轮转并让 nginx 重开文件，90 天后清理已导入旧日志。
-可由生产机 cron 每日调用。容器 stdout 由 Compose 限制为 10MiB × 3。
+脚本先触发统计导入，再轮转并通知 nginx，90 天后清理旧日志。
+所有业务持久化都在 data/ 的宿主目录中；升级时不要盲目覆盖生产 data。
 
 常用维护：
 
   docker compose --env-file .env.prod -f docker-compose-prod.yml ps
-  docker compose --env-file .env.prod -f docker-compose-prod.yml logs -f http stats
+  docker compose --env-file .env.prod -f docker-compose-prod.yml logs -f http stats publisher
   docker compose --env-file .env.prod -f docker-compose-prod.yml down
+
+tar、.env.prod、incoming、public、stats、日志、品牌素材与校验文件均不入 Git。
+真实生产宿主和麒麟/飞腾真机验收由用户完成，不能以开发机演练替代。
