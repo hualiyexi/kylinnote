@@ -372,7 +372,7 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     more->setToolTip(QStringLiteral("更多格式")); more->setAccessibleName(QStringLiteral("更多格式"));
     more->setFocusPolicy(Qt::NoFocus); more->setPopupMode(QToolButton::InstantPopup);
     auto* moreMenu = new QMenu(more); moreMenu->setObjectName(QStringLiteral("MoreFormatsMenu"));
-    moreMenu->setToolTipsVisible(true); more->setMenu(moreMenu);
+    moreMenu->setToolTipsVisible(false); more->setMenu(moreMenu);
     grid->addWidget(more, 0, 0);
 
     // 9 个格式动作：objectName 仍为 format0..8，行为统一走 applyFormat()。

@@ -43,7 +43,7 @@ QString buildStyleSheet(Theme theme) {
     const QString tooltipText = hex(ColorToken::TooltipText, theme);
 
     return QStringLiteral(
-        "QToolTip{color:%26;background:%2;border:0;padding:5px 7px;border-radius:4px;font-size:12px;}"
+        "QToolTip{color:%26;background:%2;border:0;padding:3px 8px;border-radius:6px;font-size:13px;}"
         "QLabel[muted=\"true\"]{color:%4;}"
         "QLabel[section=\"true\"]{color:%5;font-weight:600;padding-top:10px;}"
         "QPushButton,QToolButton{background:transparent;border:1px solid transparent;"

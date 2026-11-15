@@ -51,7 +51,7 @@ constexpr QRgb L_MenuHover = 0xFFF2F4F8;
 constexpr QRgb L_Disabled = 0xFFA8A8A8;  // 考据 disabled #a8a8a8
 constexpr QRgb L_Scrollbar = 0xFFD9DFEA;
 constexpr QRgb L_ScrollbarHover = 0xFFC2CCDD;
-constexpr QRgb L_TooltipBg = 0xC4000000;
+constexpr QRgb L_TooltipBg = 0xE6191919;
 // 深色中性阶（KylinList 自定）
 constexpr QRgb D_Text = 0xFFE8EAED;
 constexpr QRgb D_TextSecondary = 0xFF9AA0A6;
@@ -70,7 +70,7 @@ constexpr QRgb D_MenuHover = 0xFF2E333B;
 constexpr QRgb D_Disabled = 0xFF5A5F68;
 constexpr QRgb D_Scrollbar = 0xFF3A3F49;
 constexpr QRgb D_ScrollbarHover = 0xFF4A505C;
-constexpr QRgb D_TooltipBg = 0xD9000000;
+constexpr QRgb D_TooltipBg = 0xFF2C2C2C;
 constexpr QRgb D_PrimarySoft = 0xFF2A3350;  // 深色选中底
 }  // namespace raw
 

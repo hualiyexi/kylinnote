@@ -80,6 +80,7 @@ set(KYLINLIST_UI_SOURCES
     src/ui/design/TypeSystem.cpp
     src/ui/design/QssBuilder.cpp
     src/ui/AppIcons.cpp
+    src/ui/AppToolTip.cpp
     src/ui/icons/IconData.gen.cpp
     src/ui/AppStyle.cpp
     src/ui/Markdown.cpp

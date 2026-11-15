@@ -12,10 +12,11 @@
 
 namespace kl {
 EntityHoverPreview::EntityHoverPreview(TaskStore* store, QWidget* parent)
-    : QWidget(parent, Qt::ToolTip | Qt::FramelessWindowHint), m_store(store), m_timer(this) {
+    : QWidget(parent, Qt::ToolTip | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint), m_store(store), m_timer(this) {
     setObjectName(QStringLiteral("EntityHoverPreview")); setAttribute(Qt::WA_DeleteOnClose, false);
+    setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_StyledBackground, true);
-    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(14, 10, 14, 10); layout->setSpacing(5);
+    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(10, 6, 10, 6); layout->setSpacing(3);
     m_title = new QLabel(this); m_title->setObjectName(QStringLiteral("HoverTitle")); m_title->setFont(AppStyle::font(AppStyle::Font::Body));
     m_meta = new QLabel(this); m_meta->setObjectName(QStringLiteral("HoverMeta")); m_meta->setFont(AppStyle::font(AppStyle::Font::Small));
     m_summary = new QLabel(this); m_summary->setObjectName(QStringLiteral("HoverSummary")); m_summary->setWordWrap(true);
@@ -36,15 +37,13 @@ EntityHoverPreview::EntityHoverPreview(TaskStore* store, QWidget* parent)
 }
 void EntityHoverPreview::applyTheme() {
     const ThemeManager& theme = ThemeManager::instance();
+    const QColor background = theme.color(ds::ColorToken::TooltipBg);
     setStyleSheet(QStringLiteral(
-                      "#EntityHoverPreview{background:%1;border:1px solid %2;}"
-                      "#EntityHoverPreview QLabel{background:transparent;border:0;}"
-                      "#HoverTitle,#HoverSummary{color:%3;}"
-                      "#HoverMeta{color:%4;}")
-                      .arg(theme.color(ds::ColorToken::TooltipBg).name())
-                      .arg(theme.color(ds::ColorToken::Border).name())
-                      .arg(theme.color(ds::ColorToken::TooltipText).name())
-                      .arg(theme.color(ds::ColorToken::TextSecondary).name()));
+                      "#EntityHoverPreview{background:rgba(%1,%2,%3,%4);border:0;border-radius:6px;}"
+                      "#EntityHoverPreview QLabel{background:transparent;border:0;color:%5;}")
+                      .arg(background.red()).arg(background.green()).arg(background.blue())
+                      .arg(background.alpha())
+                      .arg(theme.color(ds::ColorToken::TooltipText).name()));
 }
 void EntityHoverPreview::schedule(const QString& entityId, const QPoint& globalPosition) {
     if (!m_store || m_store->entity(entityId).id.isEmpty()) { cancel(); return; }
@@ -71,7 +70,8 @@ void EntityHoverPreview::showEntity(const QString& entityId, const QPoint& globa
     m_meta->setText(status);
     QString summary = Markdown::plainText(entity, Markdown::entityMap(m_store->entities())).simplified();
     if (summary.size() > 220) summary = summary.left(219) + QChar(0x2026);
-    m_summary->setText(summary.isEmpty() ? QStringLiteral("（无正文）") : summary);
+    m_summary->setText(summary);
+    m_summary->setVisible(!summary.isEmpty());
     adjustSize();
     QPoint position = globalPosition + QPoint(12, 16);
     if (QScreen* screen = QGuiApplication::screenAt(globalPosition)) {

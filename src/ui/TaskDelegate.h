@@ -45,7 +45,8 @@ public:
         IconNameRole = Qt::UserRole + 7,
         ListColorRole = Qt::UserRole + 8,
         IndentRole = Qt::UserRole + 9,
-        ListKindRole = Qt::UserRole + 10
+        ListKindRole = Qt::UserRole + 10,
+        DividerRole = Qt::UserRole + 11
     };
     explicit NavigationDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {
     }
@@ -53,5 +54,7 @@ public:
                const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+    bool helpEvent(QHelpEvent* event, QAbstractItemView* view,
+                   const QStyleOptionViewItem& option, const QModelIndex& index) override;
 };
 }  // namespace kl

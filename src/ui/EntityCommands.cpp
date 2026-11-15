@@ -134,7 +134,7 @@ CommandInfo commandInfo(EntityCommand cmd)
     case EntityCommand::Share:
         return {"share", QStringLiteral("共享"), IconId::Link};
     case EntityCommand::Archive:
-        return {"archive", QStringLiteral("归档"), IconId::Backup};
+        return {"archive", QStringLiteral("归档"), IconId::Archive};
     case EntityCommand::Count:
         break;
     }
@@ -153,7 +153,7 @@ QMenu *newMenu(const QString &objectName, QWidget *parent)
 {
     QMenu *menu = new QMenu(parent);
     menu->setObjectName(objectName);
-    menu->setToolTipsVisible(true);
+    menu->setToolTipsVisible(false);
     menu->setSeparatorsCollapsible(false);
     // QssBuilder 已统一提供 12px 外框、34px item 与 8px hover 圆角。
     return menu;
@@ -478,6 +478,8 @@ void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const 
         button->setIconSize(QSize(18, 18));
         button->setFocusPolicy(Qt::StrongFocus);
         button->setDefaultAction(action);
+        if (AppIcons::hasIcon(objectName))
+            button->setIcon(AppIcons::icon(objectName, ds::ColorToken::TextSecondary, 18));
         button->setAccessibleName(action->property("accessibleName").toString());
         connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
         layout->addWidget(button);

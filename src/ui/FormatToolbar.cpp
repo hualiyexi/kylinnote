@@ -281,7 +281,7 @@ void FormatPanel::buildUi() {
             finishAction();
         });
     }
-    m_palette->setToolTipsVisible(true);
+    m_palette->setToolTipsVisible(false);
 
     const auto apply = [this](Action action) {
         if (!beginAction()) return;

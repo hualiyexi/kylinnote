@@ -606,7 +606,8 @@ void TaskPanel::buildUi() {
         if (m_rebuilding || row < 0) return;
         if (!m_detail->flush()) { rebuildNavigation(); return; }
         auto* item = m_navigation->item(row);
-        if (!item || item->data(NavigationDelegate::SectionRole).toBool()) return;
+        if (!item || item->data(NavigationDelegate::SectionRole).toBool()
+            || item->data(NavigationDelegate::DividerRole).toBool()) return;
         m_keepHiddenView = false;
         m_filter.scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
         m_filter.listId = item->data(Qt::UserRole + 1).toString();
@@ -651,7 +652,7 @@ void TaskPanel::rebuildNavigation() {
     m_rebuilding = true;
     const QSignalBlocker blocker(m_navigation);
     m_navigation->clear();
-    int selected = -1;
+    QListWidgetItem* selected = nullptr;
 
     QSet<QString> archivedIds;
     for (const TaskList& list : m_store->lists())
@@ -661,10 +662,13 @@ void TaskPanel::rebuildNavigation() {
     const bool archivePolicyChanged = archivedIds != m_archivedListIds;
     m_archivedListIds = archivedIds;
 
-    auto section = [this](const QString& title) {
-        auto* item = new QListWidgetItem(title, m_navigation);
+    auto divider = [this]() {
+        auto* item = new QListWidgetItem(m_navigation);
         item->setFlags(Qt::NoItemFlags);
-        item->setData(NavigationDelegate::SectionRole, true);
+        item->setData(NavigationDelegate::DividerRole, true);
+        item->setData(Qt::UserRole, -1); // 分隔线不是“所有”（AllLists 的枚举值为 0）。
+        item->setData(Qt::DisplayRole, QString());
+        item->setSizeHint(QSize(160, 33));
         return item;
     };
     auto interactiveSection = [this](const QString& title, const QString& objectName,
@@ -713,9 +717,8 @@ void TaskPanel::rebuildNavigation() {
             item->setData(NavigationDelegate::ListColorRole, appearance->color);
             item->setData(NavigationDelegate::ListKindRole, static_cast<int>(appearance->kind));
         }
-        item->setToolTip(label);
         if (scope == m_filter.scope && (scope != ViewScope::List || listId == m_filter.listId))
-            selected = m_navigation->count() - 1;
+            selected = item;
         return item;
     };
     auto folder = [this](const Folder& row) {
@@ -727,22 +730,17 @@ void TaskPanel::rebuildNavigation() {
         item->setToolTip(QStringLiteral("文件夹：%1（右键管理）").arg(row.name));
     };
 
-    interactiveSection(QStringLiteral("智能清单"), QStringLiteral("SmartListHeader"),
-                       IconId::SmartSettings, QStringLiteral("SmartListSettingsButton"),
-                       QStringLiteral("智能清单设置"), false,
-                       [this]() { showSmartListSettings(); });
     add(QStringLiteral("所有"), ViewScope::AllLists, QString(), nullptr, QStringLiteral("all"));
     add(QStringLiteral("今天"), ViewScope::Today, QString(), nullptr, QStringLiteral("today"));
     add(QStringLiteral("明天"), ViewScope::Tomorrow, QString(), nullptr, QStringLiteral("tomorrow"));
     add(QStringLiteral("最近7天"), ViewScope::Next7Days, QString(), nullptr,
         QStringLiteral("next7days"));
-    add(QStringLiteral("已过期"), ViewScope::Overdue, QString(), nullptr,
-        QStringLiteral("overdue"));
     for (const TaskList& list : m_store->lists())
         if (list.inbox)
             add(QStringLiteral("收集箱"), ViewScope::List, list.id, &list,
                 QStringLiteral("inbox"));
 
+    divider();
     interactiveSection(QStringLiteral("清单"), QStringLiteral("ListSectionHeader"),
                        IconId::Add, QStringLiteral("GroupMenuButton"),
                        QStringLiteral("添加清单"), false,
@@ -761,12 +759,14 @@ void TaskPanel::rebuildNavigation() {
     for (const TaskList& list : m_store->lists())
         if (!list.inbox && list.archivedAtUtcMs > 0) hasArchived = true;
     if (hasArchived) {
-        interactiveSection(QStringLiteral("已归档的清单"), QStringLiteral("ArchiveSectionHeader"),
-                           IconId::ChevronDown, QStringLiteral("ArchiveToggleButton"),
-                           QStringLiteral("展开或收起归档清单"), true, [this]() {
-            m_archivedExpanded = !m_archivedExpanded;
-            QTimer::singleShot(0, this, [this]() { rebuildNavigation(); });
-        });
+        auto* archiveHeader = interactiveSection(
+            QStringLiteral("已归档的清单"), QStringLiteral("ArchiveSectionHeader"),
+            IconId::ChevronDown, QStringLiteral("ArchiveToggleButton"),
+            QStringLiteral("展开或收起归档清单"), true, [this]() {
+                m_archivedExpanded = !m_archivedExpanded;
+                QTimer::singleShot(0, this, [this]() { rebuildNavigation(); });
+            });
+        archiveHeader->setLeadingIcon(IconId::ArchivedLists);
         for (const TaskList& list : m_store->lists()) {
             if (list.inbox || list.archivedAtUtcMs == 0) continue;
             if (auto* item = add(list.name, ViewScope::List, list.id, &list, QString(), 12))
@@ -774,22 +774,33 @@ void TaskPanel::rebuildNavigation() {
         }
     }
 
-    const int historyRow = m_navigation->count();
-    section(QStringLiteral("历史"));
+    divider();
+    add(QStringLiteral("已过期"), ViewScope::Overdue, QString(), nullptr,
+        QStringLiteral("overdue"));
+    divider();
     add(QStringLiteral("已完成"), ViewScope::Completed, QString(), nullptr,
         QStringLiteral("completed"));
     add(QStringLiteral("已放弃"), ViewScope::Abandoned, QString(), nullptr,
         QStringLiteral("abandoned"));
     add(QStringLiteral("垃圾桶"), ViewScope::Trash, QString(), nullptr,
         QStringLiteral("trash"));
-    if (m_navigation->count() == historyRow + 1) delete m_navigation->takeItem(historyRow);
+
+    // 智能入口可被隐藏；只保留两个可见分组之间的分隔线。
+    for (int row = m_navigation->count() - 1; row >= 0; --row) {
+        const auto* item = m_navigation->item(row);
+        if (!item->data(NavigationDelegate::DividerRole).toBool()) continue;
+        const bool redundant = row == 0 || row == m_navigation->count() - 1
+            || m_navigation->item(row - 1)->data(NavigationDelegate::DividerRole).toBool();
+        if (redundant) delete m_navigation->takeItem(row);
+    }
 
     bool resetFilter = archivePolicyChanged;
-    if (selected < 0 && !m_keepHiddenView) {
+    if (!selected && !m_keepHiddenView) {
         for (int row = 0; row < m_navigation->count(); ++row) {
-            const auto* item = m_navigation->item(row);
-            if (item->isHidden() || item->data(NavigationDelegate::SectionRole).toBool()) continue;
-            selected = row;
+            auto* item = m_navigation->item(row);
+            if (item->isHidden() || item->data(NavigationDelegate::SectionRole).toBool()
+                || item->data(NavigationDelegate::DividerRole).toBool()) continue;
+            selected = item;
             m_filter.scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
             m_filter.listId = item->data(Qt::UserRole + 1).toString();
             m_filter.renderer = ViewRenderer::List;
@@ -798,13 +809,13 @@ void TaskPanel::rebuildNavigation() {
             break;
         }
     }
-    if (selected < 0 && !m_keepHiddenView) {
+    if (!selected && !m_keepHiddenView) {
         m_filter.scope = ViewScope::AllLists;
         m_filter.listId.clear();
         resetFilter = true;
     }
-    if (selected >= 0) m_keepHiddenView = false;
-    m_navigation->setCurrentRow(selected);
+    if (selected) m_keepHiddenView = false;
+    m_navigation->setCurrentRow(selected ? m_navigation->row(selected) : -1);
     m_rebuilding = false;
     if (resetFilter) applyFilter();
     updateHeadingAppearance();
@@ -1202,7 +1213,8 @@ void TaskPanel::refreshWorkspaceIcons() {
 void TaskPanel::selectNavigation(ViewScope scope, const QString& listId) {
     for (int row = 0; row < m_navigation->count(); ++row) {
         const auto* item = m_navigation->item(row);
-        if (item->data(NavigationDelegate::SectionRole).toBool()) continue;
+        if (item->data(NavigationDelegate::SectionRole).toBool()
+            || item->data(NavigationDelegate::DividerRole).toBool()) continue;
         if (static_cast<ViewScope>(item->data(Qt::UserRole).toInt()) == scope
             && (scope != ViewScope::List || item->data(Qt::UserRole + 1).toString() == listId)) {
             m_navigation->setCurrentRow(row);

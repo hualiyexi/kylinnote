@@ -6,9 +6,9 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QToolTip>
 #include "AppIcons.h"
 #include "AppStyle.h"
+#include "AppToolTip.h"
 #include "ListAppearance.h"
 #include "TaskListModel.h"
 #include "design/ThemeManager.h"
@@ -79,6 +79,29 @@ TaskList listFromIndex(const QModelIndex& index) {
     return list;
 }
 
+struct NavigationLayout {
+    QRectF background;
+    QRectF icon;
+    QRectF label;
+    QString count;
+};
+
+NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
+    const QRectF row = option.rect;
+    NavigationLayout layout;
+    layout.background = row.adjusted(10.0, 1.0, -10.0, -1.0);
+    const int indent = index.data(NavigationDelegate::IndentRole).toInt();
+    layout.icon = QRectF(layout.background.left() + 12.0 + indent,
+                         layout.background.center().y() - 10.0, 20.0, 20.0);
+    layout.count = index.data(NavigationDelegate::CountRole).toString();
+    const QFont countFont = AppStyle::font(AppStyle::Font::Small);
+    const int countWidth = QFontMetrics(countFont).horizontalAdvance(layout.count);
+    const qreal right = layout.background.right() - 12.0 - countWidth;
+    layout.label = QRectF(layout.icon.right() + 6.0, row.top(),
+                          qMax(0.0, right - layout.icon.right() - 6.0), row.height());
+    return layout;
+}
+
 }  // namespace
 
 void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
@@ -136,9 +159,8 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
 
     const QColor listColor(i.data(TaskListModel::ListColorRole).toString());
     if (!deleted && listColor.isValid()) {
-        p->setPen(Qt::NoPen);
-        p->setBrush(listColor);
-        p->drawRoundedRect(QRectF(row.left() + 5.0, row.center().y() - 9.0, 3.0, 18.0), 1.5, 1.5);
+        // 清单色是实体列的连续左边框，不是悬浮在行内的小圆角标记。
+        p->fillRect(QRect(row.left(), row.top(), 3, row.height()), listColor);
     }
 
     const QRectF box = checkBoxRect(row);
@@ -197,7 +219,8 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
 }
 
 QSize TaskDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& index) const {
-    return QSize(320, index.data(TaskListModel::HeaderRole).toBool() ? 36 : 40);
+    return QSize(320, index.data(TaskListModel::HeaderRole).toBool()
+                          ? 36 : AppStyle::metric(Metric::TaskRowHeight));
 }
 
 bool TaskDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
@@ -213,14 +236,24 @@ bool TaskDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
         const TaskLayout layout = taskLayout(option, index);
         if (layout.date.contains(event->pos())) {
             target = layout.date.toAlignedRect();
-            text = index.data(TaskListModel::ScheduleTooltipRole).toString();
+            const QString fullDate = index.data(TaskListModel::ScheduleTooltipRole).toString();
+            if (fullDate != index.data(TaskListModel::ScheduleRole).toString()) text = fullDate;
         } else if (layout.list.contains(event->pos())) {
             target = layout.list.toAlignedRect();
-            text = index.data(TaskListModel::ListNameRole).toString();
+            const QString listName = index.data(TaskListModel::ListNameRole).toString();
+            const QFontMetrics metrics(AppStyle::font(AppStyle::Font::Small));
+            if (metrics.horizontalAdvance(listName) > layout.list.width() - 18.0) text = listName;
+        } else if (layout.title.contains(event->pos())) {
+            target = layout.title.toAlignedRect();
+            const QString title = index.data(Qt::DisplayRole).toString();
+            const QFontMetrics metrics(AppStyle::font(AppStyle::Font::Body));
+            if (metrics.horizontalAdvance(title) > layout.title.width()) text = title;
         }
     }
-    if (text.isEmpty()) return QStyledItemDelegate::helpEvent(event, view, option, index);
-    QToolTip::showText(event->globalPos(), text, view->viewport(), target);
+    if (!text.isEmpty())
+        AppToolTip::showText(event->globalPos(), text, view->viewport(), target);
+    else
+        AppToolTip::hideText();
     return true;
 }
 
@@ -273,8 +306,16 @@ bool TaskDelegate::editorEvent(QEvent* event,
 
 void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
     p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
     const QRect row = o.rect;
+    if (i.data(DividerRole).toBool()) {
+        p->setRenderHint(QPainter::Antialiasing, false);
+        p->setPen(QPen(ThemeManager::instance().color(ds::ColorToken::Divider), 1.0));
+        const int y = row.top() + 16;
+        p->drawLine(row.left() + 10, y, row.right() - 10, y);
+        p->restore();
+        return;
+    }
+    p->setRenderHint(QPainter::Antialiasing, true);
     const QString folderId = i.data(FolderIdRole).toString();
     if (i.data(SectionRole).toBool() && folderId.isEmpty()) {
         p->setFont(AppStyle::font(AppStyle::Font::Small));
@@ -284,19 +325,16 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
         p->restore();
         return;
     }
+    const NavigationLayout layout = navigationLayout(o, i);
     const bool selected = o.state & QStyle::State_Selected;
     const bool hovered = o.state & QStyle::State_MouseOver;
-    const QRectF background = QRectF(row).adjusted(6.0, 1.5, -6.0, -1.5);
-    const qreal radius = AppStyle::metric(Metric::RadiusRow);
+    const qreal radius = 10.0;
     if ((selected || hovered) && folderId.isEmpty()) {
         p->setPen(Qt::NoPen);
         p->setBrush(AppStyle::color(selected ? Color::Selection : Color::SidebarHover));
-        p->drawRoundedRect(background, radius, radius);
+        p->drawRoundedRect(layout.background, radius, radius);
     }
-    const int indent = i.data(IndentRole).toInt();
     const QColor iconColor = AppStyle::color(selected ? Color::Accent : Color::Muted);
-    const QRectF iconRect(background.left() + 10.0 + indent,
-                          background.center().y() - 9.0, 18.0, 18.0);
     const QString iconName = i.data(IconNameRole).toString();
     if (!iconName.isEmpty()) {
         TaskList list;
@@ -304,9 +342,9 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
         list.color = i.data(ListColorRole).toString();
         list.kind = static_cast<EntityKind>(i.data(ListKindRole).toInt());
         list.inbox = iconName == QLatin1String("inbox-list");
-        ListAppearance::paint(p, list, iconRect, iconColor);
+        ListAppearance::paint(p, list, layout.icon, iconColor);
     } else {
-        AppIcons::paint(p, static_cast<IconId>(i.data(IconRole).toInt()), iconRect, iconColor);
+        AppIcons::paint(p, static_cast<IconId>(i.data(IconRole).toInt()), layout.icon, iconColor);
     }
 
     QFont labelFont = AppStyle::font(folderId.isEmpty() ? AppStyle::Font::Body
@@ -314,29 +352,44 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     if (selected || !folderId.isEmpty()) labelFont.setWeight(QFont::DemiBold);
     p->setFont(labelFont);
     p->setPen(AppStyle::color(folderId.isEmpty() ? Color::Text : Color::Muted));
-    const QString count = i.data(CountRole).toString();
-    const QFont countFont = AppStyle::font(AppStyle::Font::Small);
-    const int countWidth = QFontMetrics(countFont).horizontalAdvance(count);
-    const QRectF labelRect(iconRect.right() + 8.0, row.top(),
-                           background.right() - iconRect.right() - 20.0 - countWidth - indent,
-                           row.height());
-    p->drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter,
+    p->drawText(layout.label, Qt::AlignLeft | Qt::AlignVCenter,
                 p->fontMetrics().elidedText(i.data().toString(), Qt::ElideRight,
-                                            qMax(0, qRound(labelRect.width()))));
+                                            qMax(0, qRound(layout.label.width()))));
 
-    p->setFont(countFont);
+    p->setFont(AppStyle::font(AppStyle::Font::Small));
     p->setPen(AppStyle::color(selected ? Color::Muted : Color::Faint));
-    p->drawText(QRectF(background.left(), row.top(), background.width() - 12.0, row.height()),
-                Qt::AlignRight | Qt::AlignVCenter, count);
+    p->drawText(QRectF(layout.background.left(), row.top(), layout.background.width() - 12.0,
+                       row.height()), Qt::AlignRight | Qt::AlignVCenter, layout.count);
     if (o.state & QStyle::State_HasFocus) {
         p->setBrush(Qt::NoBrush);
         p->setPen(QPen(AppStyle::color(Color::Accent), 1.0));
-        p->drawRoundedRect(background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+        p->drawRoundedRect(layout.background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
     }
     p->restore();
 }
 
 QSize NavigationDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& i) const {
+    if (i.data(DividerRole).toBool()) return QSize(160, 33);
     return QSize(160, i.data(SectionRole).toBool() ? 30 : AppStyle::metric(Metric::NavRowHeight));
+}
+
+bool NavigationDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
+                                   const QStyleOptionViewItem& option, const QModelIndex& index) {
+    if (!event || !view) return false;
+    QString text;
+    QRect target;
+    if (!index.data(DividerRole).toBool() && !index.data(SectionRole).toBool()) {
+        const NavigationLayout layout = navigationLayout(option, index);
+        if (layout.label.contains(event->pos())) {
+            target = layout.label.toAlignedRect();
+            text = index.data(Qt::ToolTipRole).toString();
+            if (text.isEmpty()
+                && option.fontMetrics.horizontalAdvance(index.data(Qt::DisplayRole).toString())
+                    > layout.label.width()) text = index.data(Qt::DisplayRole).toString();
+        }
+    }
+    if (!text.isEmpty()) AppToolTip::showText(event->globalPos(), text, view->viewport(), target);
+    else AppToolTip::hideText();
+    return true;
 }
 }  // namespace kl

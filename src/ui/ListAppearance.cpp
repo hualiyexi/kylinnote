@@ -11,7 +11,7 @@ namespace ListAppearance {
 QString iconName(const TaskList& list) {
     if (!list.icon.isEmpty()) return list.icon;
     if (list.inbox) return QStringLiteral("inbox-list");
-    return list.kind == EntityKind::Note ? QStringLiteral("note")
+    return list.kind == EntityKind::Note ? QStringLiteral("note-list")
                                          : QStringLiteral("normal-list");
 }
 

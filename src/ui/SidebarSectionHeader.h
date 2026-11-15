@@ -15,6 +15,7 @@ public:
                                   QWidget* parent = nullptr);
     void setAction(IconId icon, const QString& toolTip, const QString& objectName,
                    bool collapseAction = false);
+    void setLeadingIcon(IconId icon);
     void setExpanded(bool expanded);
     bool expanded() const { return m_expanded; }
     QToolButton* actionButton() const { return m_action; }
@@ -32,8 +33,10 @@ private:
     void applyTheme();
     void updateHover(bool hovered);
     QFrame* m_card = nullptr;
+    QLabel* m_leadingIcon = nullptr;
     QLabel* m_title = nullptr;
     QToolButton* m_action = nullptr;
+    IconId m_leadingIconId = IconId::None;
     IconId m_actionIcon = IconId::None;
     bool m_collapseAction = false;
     bool m_expanded = true;

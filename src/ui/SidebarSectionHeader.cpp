@@ -61,6 +61,18 @@ void SidebarSectionHeader::setAction(IconId icon, const QString& toolTip,
     applyTheme();
 }
 
+void SidebarSectionHeader::setLeadingIcon(IconId icon) {
+    m_leadingIconId = icon;
+    if (!m_leadingIcon) {
+        m_leadingIcon = new QLabel(m_card);
+        m_leadingIcon->setFixedSize(20, 20);
+        m_leadingIcon->setAlignment(Qt::AlignCenter);
+        if (auto* layout = qobject_cast<QHBoxLayout*>(m_card->layout()))
+            layout->insertWidget(0, m_leadingIcon);
+    }
+    applyTheme();
+}
+
 void SidebarSectionHeader::setExpanded(bool expanded) {
     if (m_expanded == expanded) return;
     m_expanded = expanded;
@@ -99,6 +111,10 @@ void SidebarSectionHeader::applyTheme() {
         QColor color = theme.color(ds::ColorToken::Shadow);
         color.setAlpha(30);
         shadow->setColor(color);
+    }
+    if (m_leadingIcon) {
+        m_leadingIcon->setPixmap(
+            AppIcons::icon(m_leadingIconId, ds::ColorToken::TextSecondary, 20).pixmap(20, 20));
     }
     if (m_action) {
         m_action->setIcon(AppIcons::icon(m_actionIcon, ds::ColorToken::TextSecondary, 14));

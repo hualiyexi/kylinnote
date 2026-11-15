@@ -1,5 +1,6 @@
 #include "AppStyle.h"
 #include <QApplication>
+#include "AppToolTip.h"
 #include "design/DesignTokens.h"
 #include "design/QssBuilder.h"
 #include "design/ThemeManager.h"
@@ -47,7 +48,7 @@ int metric(Metric role) {
         case Metric::ContentMargin: return 20;
         case Metric::SidebarWidth: return 232;   // 考据组织栏 249px，适配中文略收
         case Metric::ControlHeight: return 36;
-        case Metric::TaskRowHeight: return 44;   // 考据 40px，中文+元信息两行略增
+        case Metric::TaskRowHeight: return 40;
         case Metric::NavRowHeight: return 36;    // 考据 36px
         case Metric::RadiusRow: return 8;        // 考据悬停菜单项 8px
         case Metric::RadiusControl: return 6;
@@ -73,6 +74,7 @@ QFont font(Font role) {
 void apply(QApplication& app) {
     ThemeManager::instance().applyBootstrap(app);
     app.setFont(ds::qfont(ds::FontScene::Base));
+    AppToolTip::install(app);
 }
 
 QString previewCss() {

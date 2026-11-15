@@ -38,7 +38,6 @@
 #include <QTextFragment>
 #include <QTimer>
 #include <QToolButton>
-#include <QToolTip>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QUrl>
@@ -60,6 +59,7 @@
 #include "platform/SystemShadow.h"
 #include "ui/AppStyle.h"
 #include "ui/AppIcons.h"
+#include "ui/AppToolTip.h"
 #include "ui/ActivityLogDialog.h"
 #include "ui/EntityHoverPreview.h"
 #include "ui/EntityPicker.h"
@@ -266,6 +266,19 @@ private slots:
         // 字符串直通：不经过枚举也能点名取图标。
         QVERIFY(AppIcons::hasIcon(QStringLiteral("quick-today")));
         QVERIFY(AppIcons::icon(QStringLiteral("no-such-icon")).isNull());
+        const struct { IconId id; const char* name; } expected[] = {
+            {IconId::All, "all-list"}, {IconId::Inbox, "inbox-list"},
+            {IconId::Tomorrow, "tomorrow-list"}, {IconId::Upcoming, "today-icon-su"},
+            {IconId::Overdue, "custom-smart-list"}, {IconId::Done, "sidebar-completed-list"},
+            {IconId::Abandoned, "wont-do"}, {IconId::Trash, "delete"},
+            {IconId::ArchivedLists, "closed-list"}
+        };
+        for (const auto& entry : expected)
+            QCOMPARE(AppIcons::iconName(entry.id), QString::fromLatin1(entry.name));
+        QCOMPARE(AppIcons::iconName(IconId::Today),
+                 QStringLiteral("today-icon-%1").arg(toAppTime(appNow()).date().day()));
+        TaskList noteList; noteList.kind = EntityKind::Note;
+        QCOMPARE(ListAppearance::iconName(noteList), QStringLiteral("note-list"));
     }
     void iconKeepsSourceAspectRatio() {
         // 3dots 的 viewBox 是 12.542x2.552，不能按正方形拉伸。
@@ -1411,6 +1424,11 @@ private slots:
         }
         QVERIFY(noteRow >= 0 && todayRow >= 0 && allRow >= 0);
         navigation->setCurrentRow(noteRow);
+        QVERIFY(navigation->currentItem());
+        QCOMPARE(navigation->currentItem()->data(Qt::UserRole + 1).toString(), noteList);
+        auto* model = qobject_cast<TaskListModel*>(panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
+        QCOMPARE(model->filter().scope, ViewScope::List);
+        QCOMPARE(model->filter().listId, noteList);
         QVERIFY(quick->placeholderText().contains(QStringLiteral("笔记"))); QVERIFY(!renderer->isEnabled());
         quick->setText(QStringLiteral("默认新建笔记")); QTest::keyClick(quick, Qt::Key_Return);
         QString noteId;
@@ -1430,9 +1448,9 @@ private slots:
         QCOMPARE(detail->findChild<QPushButton*>(QStringLiteral("ConvertKind"))->text(), QStringLiteral("转为任务"));
         navigation->setCurrentRow(todayRow); QVERIFY(renderer->isEnabled());
         renderer->setCurrentIndex(static_cast<int>(ViewRenderer::Time));
-        auto* model = qobject_cast<TaskListModel*>(panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
         QCOMPARE(model->filter().renderer, ViewRenderer::Time);
-        navigation->setCurrentRow(allRow); QVERIFY(!renderer->isEnabled());
+        navigation->setCurrentRow(allRow);
+        QVERIFY(!renderer->isEnabled());
         QCOMPARE(model->filter().renderer, ViewRenderer::List);
         QVERIFY(m_store->setListFolder(noteList, QString()));
         QVERIFY(m_store->setListFolder(noteList, folder)); QVERIFY(m_store->deleteFolder(folder));
@@ -1514,6 +1532,221 @@ private slots:
         QCOMPARE(effectiveDate(m_store->entity(first)), chosen);
         QCOMPARE(m_store->entity(first).body, updated.body);
         QVERIFY(!effectiveDate(m_store->entity(second)).isValid());
+    }
+    void appToolTipCompactAndContextual() {
+        QToolButton probe;
+        probe.setToolTip(QStringLiteral("添加清单"));
+        probe.resize(40, 32); probe.show();
+        AppToolTip::showText(probe.mapToGlobal(QPoint(20, 32)), probe.toolTip(), &probe,
+                             probe.rect(), 0);
+        QTRY_VERIFY(AppToolTip::isVisible());
+        QWidget* bubble = AppToolTip::window();
+        QVERIFY(bubble);
+        QCOMPARE(bubble->objectName(), QStringLiteral("AppToolTip"));
+        QVERIFY(bubble->height() <= 26);
+        QCOMPARE(bubble->layout()->contentsMargins(), QMargins(8, 3, 8, 3));
+        auto* text = bubble->findChild<QLabel*>(QStringLiteral("AppToolTipText"));
+        QVERIFY(text); QCOMPARE(text->font().pixelSize(), 13);
+        QVERIFY(bubble->windowFlags() & Qt::NoDropShadowWindowHint);
+        const QImage image = bubble->grab().toImage();
+        QCOMPARE(qAlpha(image.pixel(0, 0)), 0);
+        QVERIFY(qAlpha(image.pixel(2, image.height() / 2)) > 150);
+        AppToolTip::hideText();
+
+        QPushButton duplicate(QStringLiteral("取消"));
+        duplicate.setToolTip(QStringLiteral("取消"));
+        duplicate.resize(90, 32); duplicate.show();
+        QHelpEvent duplicateEvent(QEvent::ToolTip, QPoint(20, 16),
+                                  duplicate.mapToGlobal(QPoint(20, 16)));
+        QApplication::sendEvent(&duplicate, &duplicateEvent);
+        QVERIFY(!AppToolTip::isVisible());
+        QToolButton iconOnly;
+        iconOnly.setToolButtonStyle(Qt::ToolButtonIconOnly);
+        iconOnly.setText(QStringLiteral("添加清单"));
+        iconOnly.setToolTip(iconOnly.text());
+        iconOnly.resize(40, 32); iconOnly.show();
+        QHelpEvent iconEvent(QEvent::ToolTip, QPoint(20, 16), iconOnly.mapToGlobal(QPoint(20, 16)));
+        QApplication::sendEvent(&iconOnly, &iconEvent);
+        QTRY_VERIFY(AppToolTip::isVisible());
+        AppToolTip::hideText();
+
+        const QString id = m_store->createTask(QStringLiteral("短标题"));
+        TaskListModel model(m_store.get());
+        QListView tasks; tasks.setModel(&model); tasks.resize(560, 100); tasks.show();
+        TaskDelegate taskDelegate;
+        QStyleOptionViewItem option; option.rect = QRect(0, 0, 560, 40);
+        const QPoint titlePos(60, 20);
+        QHelpEvent titleEvent(QEvent::ToolTip, titlePos,
+                              tasks.viewport()->mapToGlobal(titlePos));
+        QVERIFY(taskDelegate.helpEvent(&titleEvent, &tasks, option, model.indexForTask(id)));
+        QVERIFY(!AppToolTip::isVisible());
+        Entity longTask = m_store->entity(id);
+        longTask.title = QStringLiteral("需要省略的完整任务标题").repeated(12);
+        QVERIFY(m_store->saveTask(longTask));
+        QVERIFY(taskDelegate.helpEvent(&titleEvent, &tasks, option, model.indexForTask(id)));
+        QTRY_VERIFY(AppToolTip::isVisible());
+        QCOMPARE(AppToolTip::window()->findChild<QLabel*>(QStringLiteral("AppToolTipText"))->text(),
+                 longTask.title);
+        longTask.title = QStringLiteral("短标题");
+        longTask.allDayDate = toAppTime(appNow()).date().addDays(4);
+        QVERIFY(m_store->saveTask(longTask));
+        AppToolTip::hideText();
+        const QPoint datePos(540, 20);
+        QHelpEvent dateEvent(QEvent::ToolTip, datePos, tasks.viewport()->mapToGlobal(datePos));
+        QVERIFY(taskDelegate.helpEvent(&dateEvent, &tasks, option, model.indexForTask(id)));
+        QTRY_VERIFY(AppToolTip::isVisible());
+        const QString fullDate = model.data(model.indexForTask(id), TaskListModel::ScheduleTooltipRole).toString();
+        QCOMPARE(AppToolTip::window()->findChild<QLabel*>(QStringLiteral("AppToolTipText"))->text(),
+                 fullDate);
+        QVERIFY(fullDate.contains(QStringLiteral("周")));
+        AppToolTip::hideText();
+
+        QListWidget navigation;
+        QListWidgetItem shortItem(QStringLiteral("今天")); navigation.addItem(&shortItem);
+        NavigationDelegate navigationDelegate;
+        QStyleOptionViewItem navOption; navOption.rect = QRect(0, 0, 220, 36);
+        const QPoint navPos(60, 18);
+        QHelpEvent navEvent(QEvent::ToolTip, navPos, navigation.viewport()->mapToGlobal(navPos));
+        QVERIFY(navigationDelegate.helpEvent(&navEvent, &navigation, navOption,
+                                             navigation.model()->index(navigation.row(&shortItem), 0)));
+        QVERIFY(!AppToolTip::isVisible());
+        QListWidgetItem longItem(QStringLiteral("很长的清单名称").repeated(15)); navigation.addItem(&longItem);
+        QVERIFY(navigationDelegate.helpEvent(&navEvent, &navigation, navOption,
+                                             navigation.model()->index(navigation.row(&longItem), 0)));
+        QTRY_VERIFY(AppToolTip::isVisible());
+        AppToolTip::hideText();
+
+        EntityHoverPreview preview(m_store.get());
+        preview.showEntity(id, QPoint(200, 200));
+        QTRY_VERIFY(preview.isVisible());
+        QVERIFY(preview.testAttribute(Qt::WA_TranslucentBackground));
+        QVERIFY(preview.styleSheet().contains(QStringLiteral("border-radius:6px")));
+        QVERIFY(preview.findChild<QLabel*>(QStringLiteral("HoverSummary"))->isHidden());
+        preview.cancel();
+    }
+    void datePickerQuickActionsAndDateOnlyModes() {
+        QCOMPARE(DatePickerPopup::quickDate(3, QDate(2026, 1, 31)), QDate(2026, 2, 28));
+        QCOMPARE(DatePickerPopup::quickDate(3, QDate(2028, 1, 31)), QDate(2028, 2, 29));
+        QCOMPARE(DatePickerPopup::quickDate(3, QDate(2026, 3, 31)), QDate(2026, 4, 30));
+        QCOMPARE(DatePickerPopup::quickDate(3, QDate(2026, 12, 31)), QDate(2027, 1, 31));
+        QVERIFY(!DatePickerPopup::quickDate(-1, QDate(2026, 1, 31)).isValid());
+
+        DatePickerPopup picker; picker.show();
+        QToolButton* quick[4] = {nullptr, nullptr, nullptr, nullptr};
+        for (auto* button : picker.findChildren<QToolButton*>(QStringLiteral("DatePickerQuick")))
+            quick[button->property("quickIndex").toInt()] = button;
+        for (auto* button : quick) QVERIFY(button);
+        const QDate today = toAppTime(appNow()).date();
+        const QDate expected[] = {today, today.addDays(1), today.addDays(7), today.addMonths(1)};
+        for (int index = 0; index < 4; ++index) {
+            QTest::mouseClick(quick[index], Qt::LeftButton);
+            QVERIFY(picker.hasDate()); QVERIFY(!picker.hasTime());
+            QCOMPARE(picker.allDayDate(), expected[index]);
+            QVERIFY(!picker.dateTime().isValid());
+            QCOMPARE(picker.result(), static_cast<int>(QDialog::Rejected));
+        }
+        QTest::mouseClick(quick[3], Qt::LeftButton);
+        QCOMPARE(picker.allDayDate(), today.addMonths(1)); // 仍以今天为基准，不累计月份
+
+        picker.setDateTime(fromAppTime(QDateTime(today.addDays(-2), QTime(9, 45))));
+        QTest::mouseClick(quick[1], Qt::LeftButton);
+        QVERIFY(picker.hasTime());
+        QCOMPARE(toAppTime(picker.dateTime()).date(), today.addDays(1));
+        QCOMPARE(toAppTime(picker.dateTime()).time(), QTime(9, 45));
+        QPushButton* timeEntry = nullptr;
+        for (auto* button : picker.findChildren<QPushButton*>(QStringLiteral("DatePickerEntry")))
+            if (button->accessibleName() == QStringLiteral("时间")) timeEntry = button;
+        QVERIFY(timeEntry); QTest::mouseClick(timeEntry, Qt::LeftButton);
+        auto* noTime = picker.findChild<QPushButton*>(QStringLiteral("DatePickerNoTime"));
+        QVERIFY(noTime); QTRY_VERIFY(noTime->isVisible());
+        QTest::mouseClick(noTime, Qt::LeftButton);
+        QVERIFY(!picker.hasTime());
+        QCOMPARE(picker.allDayDate(), today.addDays(1));
+        picker.reject();
+    }
+    void dateControllerStoresDateOnlyAndExplicitMidnight() {
+        const QString id = m_store->createTask(QStringLiteral("日期模式"));
+        QWidget owner; owner.resize(400, 250); owner.show();
+        TaskDateController controller(m_store.get(), &owner);
+        QSignalSpy saved(&controller, &TaskDateController::saved);
+        const QDate today = toAppTime(appNow()).date();
+        controller.open(id, QRect(owner.mapToGlobal(QPoint(30, 30)), QSize(80, 30)));
+        QPointer<DatePickerPopup> picker = owner.findChild<DatePickerPopup*>();
+        QVERIFY(picker); QTRY_VERIFY(picker->isVisible());
+        QToolButton* todayButton = nullptr;
+        for (auto* button : picker->findChildren<QToolButton*>(QStringLiteral("DatePickerQuick")))
+            if (button->property("quickIndex").toInt() == 0) todayButton = button;
+        QVERIFY(todayButton); QTest::mouseClick(todayButton, Qt::LeftButton);
+        picker->accept();
+        QTRY_COMPARE(saved.count(), 1);
+        QCOMPARE(m_store->entity(id).allDayDate, today);
+        QVERIFY(!m_store->entity(id).dueAt.isValid());
+        QVERIFY(!m_store->entity(id).startAt.isValid());
+        TaskDetailWidget dateOnlyDetail(m_store.get()); QVERIFY(dateOnlyDetail.setTask(id));
+        QVERIFY(!dateOnlyDetail.findChild<QPushButton*>(QStringLiteral("DateChip"))->text()
+                     .contains(QStringLiteral("00:00")));
+        QTRY_VERIFY(!picker);
+
+        controller.open(id, QRect(owner.mapToGlobal(QPoint(30, 30)), QSize(80, 30)));
+        picker = owner.findChild<DatePickerPopup*>();
+        QVERIFY(picker); QTRY_VERIFY(picker->isVisible());
+        QVERIFY(!picker->hasTime()); QCOMPARE(picker->allDayDate(), today);
+        QPushButton* timeEntry = nullptr;
+        for (auto* button : picker->findChildren<QPushButton*>(QStringLiteral("DatePickerEntry")))
+            if (button->accessibleName() == QStringLiteral("时间")) timeEntry = button;
+        QVERIFY(timeEntry); QTest::mouseClick(timeEntry, Qt::LeftButton);
+        auto* timePage = picker->findChild<QWidget*>(QStringLiteral("DatePickerTimePage"));
+        auto* times = timePage->findChild<QListWidget*>(QStringLiteral("DatePickerList"));
+        QVERIFY(times); QTRY_VERIFY(times->isVisible());
+        QTest::mouseClick(times->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          times->visualItemRect(times->item(0)).center());
+        QTRY_VERIFY(picker->hasTime());
+        QCOMPARE(toAppTime(picker->dateTime()).time(), QTime(0, 0));
+        picker->accept();
+        QTRY_COMPARE(saved.count(), 2);
+        QVERIFY(m_store->entity(id).dueAt.isValid());
+        QVERIFY(!m_store->entity(id).allDayDate.isValid());
+        QCOMPARE(toAppTime(m_store->entity(id).dueAt).time(), QTime(0, 0));
+        TaskDetailWidget midnightDetail(m_store.get()); QVERIFY(midnightDetail.setTask(id));
+        QVERIFY(midnightDetail.findChild<QPushButton*>(QStringLiteral("DateChip"))->text()
+                    .contains(QStringLiteral("00:00")));
+        QTRY_VERIFY(!picker);
+
+        controller.open(id, QRect(owner.mapToGlobal(QPoint(30, 30)), QSize(80, 30)));
+        picker = owner.findChild<DatePickerPopup*>();
+        QVERIFY(picker); QTRY_VERIFY(picker->isVisible());
+        QVERIFY(picker->hasTime());
+        for (auto* button : picker->findChildren<QToolButton*>(QStringLiteral("DatePickerQuick")))
+            if (button->property("quickIndex").toInt() == 1) button->click();
+        QCOMPARE(toAppTime(picker->dateTime()).date(), today.addDays(1));
+        QCOMPARE(toAppTime(picker->dateTime()).time(), QTime(0, 0));
+        timeEntry = nullptr;
+        for (auto* button : picker->findChildren<QPushButton*>(QStringLiteral("DatePickerEntry")))
+            if (button->accessibleName() == QStringLiteral("时间")) timeEntry = button;
+        QVERIFY(timeEntry); QTest::mouseClick(timeEntry, Qt::LeftButton);
+        auto* noTime = picker->findChild<QPushButton*>(QStringLiteral("DatePickerNoTime"));
+        QVERIFY(noTime); QTRY_VERIFY(noTime->isVisible()); QTest::mouseClick(noTime, Qt::LeftButton);
+        QVERIFY(!picker->hasTime()); QCOMPARE(picker->allDayDate(), today.addDays(1));
+        picker->accept();
+        QTRY_COMPARE(saved.count(), 3);
+        QVERIFY(!m_store->entity(id).dueAt.isValid());
+        QCOMPARE(m_store->entity(id).allDayDate, today.addDays(1));
+        QTRY_VERIFY(!picker);
+
+        controller.open(id, QRect(owner.mapToGlobal(QPoint(30, 30)), QSize(80, 30)));
+        picker = owner.findChild<DatePickerPopup*>();
+        QVERIFY(picker); QTRY_VERIFY(picker->isVisible());
+        for (auto* button : picker->findChildren<QToolButton*>(QStringLiteral("DatePickerQuick")))
+            if (button->property("quickIndex").toInt() == 2) button->click();
+        picker->reject();
+        QTRY_VERIFY(!picker);
+        QCOMPARE(saved.count(), 3);
+        QCOMPARE(m_store->entity(id).allDayDate, today.addDays(1));
+
+        TaskStore reloaded(Database::instance().connection());
+        QString error; QVERIFY(reloaded.load(&error));
+        QCOMPARE(reloaded.entity(id).allDayDate, today.addDays(1));
+        QVERIFY(!reloaded.entity(id).dueAt.isValid());
     }
     void dirtyDesktopNoteSurvivesListArchiveAndDeletion() {
         const QString list = m_store->createList(QStringLiteral("待归档清单"));
@@ -1645,6 +1878,70 @@ private slots:
         QVERIFY(m_store->setListArchived(list, false));
         QTRY_VERIFY(rowForList(list) >= 0);
         QVERIFY(!navigation->item(rowForList(list))->isHidden());
+    }
+    void navigationDividersAndContinuousListColors() {
+        const QString red = m_store->createList(QStringLiteral("红色清单"), QString(),
+            EntityKind::Task, QString(), QStringLiteral("#EF6161"));
+        const QString blue = m_store->createList(QStringLiteral("蓝色清单"), QString(),
+            EntityKind::Task, QString(), QStringLiteral("#4CA1FF"));
+        const QString first = m_store->createTask(QStringLiteral("第一项"), red);
+        const QString second = m_store->createTask(QStringLiteral("第二项"), blue);
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        QVERIFY(navigation);
+        QStringList topLabels;
+        int dividerCount = 0, overdueRow = -1, completedRow = -1;
+        for (int row = 0; row < navigation->count(); ++row) {
+            const auto* item = navigation->item(row);
+            QVERIFY(item->data(Qt::DisplayRole).toString() != QStringLiteral("智能清单"));
+            QVERIFY(item->data(Qt::DisplayRole).toString() != QStringLiteral("历史"));
+            if (item->data(NavigationDelegate::DividerRole).toBool()) {
+                ++dividerCount;
+                QVERIFY(item->data(Qt::DisplayRole).toString().isEmpty());
+                QCOMPARE(item->data(Qt::UserRole).toInt(), -1);
+                QCOMPARE(item->sizeHint().height(), 33);
+                continue;
+            }
+            if (item->data(NavigationDelegate::SectionRole).toBool()) continue;
+            if (topLabels.size() < 5) topLabels.append(item->text());
+            if (item->data(Qt::UserRole).toInt() == static_cast<int>(ViewScope::Overdue)) overdueRow = row;
+            if (item->data(Qt::UserRole).toInt() == static_cast<int>(ViewScope::Completed)) completedRow = row;
+        }
+        QCOMPARE(topLabels, QStringList({QStringLiteral("所有"), QStringLiteral("今天"),
+            QStringLiteral("明天"), QStringLiteral("最近7天"), QStringLiteral("收集箱")}));
+        QCOMPARE(dividerCount, 3);
+        QVERIFY(overdueRow >= 0 && completedRow > overdueRow);
+
+        auto* model = qobject_cast<TaskListModel*>(
+            panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
+        QVERIFY(model);
+        TaskDelegate delegate;
+        QImage rows(400, 80, QImage::Format_ARGB32);
+        rows.fill(Qt::white);
+        QPainter painter(&rows);
+        const QModelIndex indexes[] = {model->indexForTask(first), model->indexForTask(second)};
+        const QColor colors[] = {QColor(QStringLiteral("#EF6161")), QColor(QStringLiteral("#4CA1FF"))};
+        for (int row = 0; row < 2; ++row) {
+            QVERIFY(indexes[row].isValid());
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, row * 40, 400, 40);
+            option.state = QStyle::State_Enabled | (row == 0 ? QStyle::State_Selected : QStyle::State_None);
+            delegate.paint(&painter, option, indexes[row]);
+            QCOMPARE(delegate.sizeHint(option, indexes[row]).height(), 40);
+        }
+        painter.end();
+        for (int y = 0; y < 80; ++y) {
+            const QColor expected = colors[y < 40 ? 0 : 1];
+            for (int x = 0; x < 3; ++x)
+                QCOMPARE(QColor::fromRgba(rows.pixel(x, y)), expected);
+        }
+        const QString screenshotDir = qEnvironmentVariable("KYLINLIST_SCREENSHOT_DIR");
+        if (!screenshotDir.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDir));
+            QVERIFY(navigation->grab().save(screenshotDir + QStringLiteral("/navigation-dividers.png")));
+            QVERIFY(panel.findChild<QListView*>(QStringLiteral("TaskList"))->grab().save(
+                screenshotDir + QStringLiteral("/task-list-colors.png")));
+        }
     }
     void taskRowDelegateMetaActions() {
         const QString list = m_store->createList(QStringLiteral("工作"), QString(), EntityKind::Task,
@@ -2752,6 +3049,14 @@ private slots:
             QVERIFY(calendarGrid.scaled(calendarBounds.width() * 3, calendarBounds.height() * 3,
                                         Qt::KeepAspectRatio, Qt::SmoothTransformation)
                         .save(dir + QStringLiteral("/detail-date-grid.png")));
+            QPushButton* timeEntry = nullptr;
+            for (auto* button : datePopup->findChildren<QPushButton*>(QStringLiteral("DatePickerEntry")))
+                if (button->accessibleName() == QStringLiteral("时间")) timeEntry = button;
+            QVERIFY(timeEntry); QTest::mouseClick(timeEntry, Qt::LeftButton);
+            auto* noTime = datePopup->findChild<QPushButton*>(QStringLiteral("DatePickerNoTime"));
+            QVERIFY(noTime); QTRY_VERIFY(noTime->isVisible());
+            QVERIFY(savePopupPreview(detail, datePopup, dir + QStringLiteral("/detail-time-light.png"),
+                                     QColor(QStringLiteral("#E9E9E9"))));
             datePopup->reject();
 
             Entity reminderTask = m_store->entity(id);
@@ -2854,20 +3159,13 @@ private slots:
             QToolButton tooltipProbe;
             tooltipProbe.setToolTip(QStringLiteral("添加清单"));
             tooltipProbe.show(); tooltipProbe.activateWindow(); QTest::qWait(30);
-            QToolTip::showText(tooltipProbe.mapToGlobal(QPoint(0, tooltipProbe.height())),
-                               tooltipProbe.toolTip(), &tooltipProbe);
-            QTRY_VERIFY(QToolTip::isVisible());
-            QWidget* tooltip = nullptr;
-            QTRY_VERIFY(([&tooltip]() {
-                for (QWidget* candidate : QApplication::topLevelWidgets())
-                    if (candidate->isVisible() && candidate->inherits("QTipLabel")) {
-                        tooltip = candidate;
-                        return true;
-                    }
-                return false;
-            })());
+            AppToolTip::showText(tooltipProbe.mapToGlobal(QPoint(0, tooltipProbe.height())),
+                                 tooltipProbe.toolTip(), &tooltipProbe, tooltipProbe.rect(), 0);
+            QTRY_VERIFY(AppToolTip::isVisible());
+            QWidget* tooltip = AppToolTip::window();
+            QVERIFY(tooltip);
             QVERIFY(tooltip->grab().save(dir + QStringLiteral("/tooltip.png")));
-            QToolTip::hideText(); tooltipProbe.hide();
+            AppToolTip::hideText(); tooltipProbe.hide();
 
             TaskDetailWidget narrow(m_store.get()); narrow.resize(360, 700); QVERIFY(narrow.setTask(id)); narrow.show();
             auto* narrowTitle = narrow.findChild<QLineEdit*>(QStringLiteral("TaskTitle")); QVERIFY(narrowTitle);

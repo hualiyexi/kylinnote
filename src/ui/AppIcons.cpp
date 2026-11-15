@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QSvgRenderer>
 #include <cstring>
+#include "../Common.h"
 #include "design/ThemeManager.h"
 #include "ui/icons/IconData.gen.h"
 
@@ -12,30 +13,26 @@ namespace kl {
 namespace AppIcons {
 namespace {
 
-// 填充型图标画满 viewBox（描边型以前只占中间一段），统一内缩一档才视觉等重。
-constexpr qreal kGlyphInset = 0.06;
-
-// 目标矩形过小时不再内缩，避免图标被缩没。
-constexpr qreal kMinInsetPx = 0.5;
-
 // 语义枚举 -> 图标名。换图标只动这张表。
-const char* iconNameFor(IconId id) {
+QString iconNameFor(IconId id) {
     switch (id) {
         case IconId::All: return "all-list";
         case IconId::Inbox: return "inbox-list";
-        case IconId::Today: return "today-list";
+        case IconId::Today:
+            return QStringLiteral("today-icon-%1").arg(toAppTime(appNow()).date().day());
         case IconId::Tomorrow: return "tomorrow-list";
-        case IconId::Upcoming: return "ndays-later";
-        case IconId::Overdue: return "overdue";
-        case IconId::Done: return "completed";
+        case IconId::Upcoming: return "today-icon-su";
+        case IconId::Overdue: return "custom-smart-list";
+        case IconId::Done: return "sidebar-completed-list";
         case IconId::Abandoned: return "wont-do";
-        case IconId::Trash: return "clear-trash";
+        case IconId::Trash: return "delete";
         case IconId::Folder: return "folder";
         case IconId::Note: return "note";
         case IconId::TaskList: return "normal-list";
         case IconId::Pin: return "pin-task";
         case IconId::Archive: return "archive";
         case IconId::Unarchive: return "unarchive";
+        case IconId::ArchivedLists: return "closed-list";
         case IconId::SmartSettings: return "setting-smart";
 
         case IconId::Search: return "search";
@@ -92,7 +89,7 @@ const char* iconNameFor(IconId id) {
         case IconId::Count:
             break;
     }
-    return nullptr;
+    return QString();
 }
 
 // 把一条图标记录拼成完整 SVG 文档。单色图标注入主题色，多色图标保留原始根属性。
@@ -137,17 +134,14 @@ QSvgRenderer* renderer(const icons::IconEntry& entry, const QColor& color) {
     return svg;
 }
 
-// 按 viewBox 宽高比居中放进目标矩形，再内缩；非方形图标不会被拉扁。
+// 按 viewBox 宽高比居中放进目标矩形；非方形图标不会被拉扁。
 QRectF fitRect(const QRectF& target, const QRectF& viewBox) {
-    const qreal inset = qMin(target.width(), target.height()) * kGlyphInset;
-    const qreal pad = inset < kMinInsetPx ? 0.0 : inset;
-    const QRectF box = target.adjusted(pad, pad, -pad, -pad);
-    if (viewBox.width() <= 0.0 || viewBox.height() <= 0.0) return box;
+    if (viewBox.width() <= 0.0 || viewBox.height() <= 0.0) return target;
     const qreal scale =
-        qMin(box.width() / viewBox.width(), box.height() / viewBox.height());
-    if (scale <= 0.0) return box;
+        qMin(target.width() / viewBox.width(), target.height() / viewBox.height());
+    if (scale <= 0.0) return target;
     const QSizeF size(viewBox.width() * scale, viewBox.height() * scale);
-    return QRectF(box.center() - QPointF(size.width() / 2.0, size.height() / 2.0), size);
+    return QRectF(target.center() - QPointF(size.width() / 2.0, size.height() / 2.0), size);
 }
 
 QPixmap renderPixmap(const icons::IconEntry& entry, const QColor& color, int size,
@@ -182,8 +176,8 @@ void paintEntry(QPainter* painter, const icons::IconEntry* entry, const QRectF& 
 }
 
 const icons::IconEntry* lookup(IconId id) {
-    const char* name = iconNameFor(id);
-    return name ? icons::find(name) : nullptr;
+    const QString name = iconNameFor(id);
+    return name.isEmpty() ? nullptr : icons::find(name.toUtf8().constData());
 }
 
 const icons::IconEntry* lookup(const QString& name) {
@@ -226,8 +220,7 @@ bool hasIcon(const QString& name) {
 }
 
 QString iconName(IconId id) {
-    const char* name = iconNameFor(id);
-    return name ? QString::fromLatin1(name) : QString();
+    return iconNameFor(id);
 }
 
 QString accessibleName(IconId id) {
@@ -247,6 +240,7 @@ QString accessibleName(IconId id) {
         case IconId::Pin: return QStringLiteral("置顶");
         case IconId::Archive: return QStringLiteral("归档清单");
         case IconId::Unarchive: return QStringLiteral("取消归档");
+        case IconId::ArchivedLists: return QStringLiteral("已归档的清单");
         case IconId::SmartSettings: return QStringLiteral("智能清单设置");
         case IconId::Search: return QStringLiteral("搜索");
         case IconId::More: return QStringLiteral("更多");
