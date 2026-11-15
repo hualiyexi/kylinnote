@@ -329,6 +329,9 @@ private slots:
     void taskDropSectionRules();
     void taskDropShiftsDatesAcrossSections();
     void taskDropReorderPinnedAndParentDetach();
+    void taskDropSiblingReorderPreservesPinnedAt_data();
+    void taskDropSiblingReorderPreservesPinnedAt();
+    void taskDropListSectionValidatesMembership();
     void taskDropAtomicFailuresAndIdempotence();
     void createSubtaskInheritsDatesOnly();
     void backupRoundTripAndLegacyRejection();
@@ -3075,6 +3078,131 @@ void TaskTests::taskDropReorderPinnedAndParentDetach()
              qPrintable(store.lastError()));
     QVERIFY(!store.entity(child).pinnedAt.isValid());
     QCOMPARE(queryRows(rowsSql.arg(child)), beforeUnpin);
+
+    // 子任务拖到原父级前：父级既要记录孩子关系变化，也要更新顺序，同一批只能保存一次。
+    const QString beforeParent = store.createSubtask(QStringLiteral("拖到父级前"), parent);
+    QVERIFY2(store.moveEntityForDrop(beforeParent, QStringList{beforeParent, parent},
+                                     QStringLiteral("today"), today, false, true),
+             qPrintable(store.lastError()));
+    QVERIFY(store.entity(beforeParent).parentId.isEmpty());
+    QCOMPARE(store.entity(beforeParent).sortOrder, 0);
+    QCOMPARE(store.entity(parent).sortOrder, 1);
+    QCOMPARE(store.entity(beforeParent).allDayDate, today);
+    QVERIFY(store.load());
+    QVERIFY(store.entity(beforeParent).parentId.isEmpty());
+    QCOMPARE(store.entity(parent).sortOrder, 1);
+}
+
+// 同父同显示段排序：显示在置顶父任务下的子任务保留实际 pinnedAt，不由目标段推断。
+void TaskTests::taskDropSiblingReorderPreservesPinnedAt_data()
+{
+    QTest::addColumn<bool>("sourcePinned");
+    QTest::addColumn<bool>("requestedPinned");
+    QTest::newRow("unpinned-child-pinned-target") << false << true;
+    QTest::newRow("unpinned-child-unpinned-target") << false << false;
+    QTest::newRow("pinned-child-pinned-target") << true << true;
+    QTest::newRow("pinned-child-unpinned-target") << true << false;
+}
+void TaskTests::taskDropSiblingReorderPreservesPinnedAt()
+{
+    QFETCH(bool, sourcePinned);
+    QFETCH(bool, requestedPinned);
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today = toAppTime(appNow()).date();
+    const QString list = store.createList(QStringLiteral("置顶父任务清单"));
+    const QString parent = store.createTask(QStringLiteral("置顶父任务"), list);
+    Entity value = store.entity(parent); value.allDayDate = today; QVERIFY(store.saveTask(value));
+    const QDateTime parentPin = utc(2026, 1, 1, 8);
+    QVERIFY(store.setPinnedAt(parent, parentPin));
+    const QString source = store.createSubtask(QStringLiteral("待排序子任务"), parent);
+    const QString sibling = store.createSubtask(QStringLiteral("兄弟任务"), parent);
+    QVERIFY(isUuid(source) && isUuid(sibling));
+    const QDateTime sourcePin = sourcePinned ? utc(2026, 1, 2, 9) : QDateTime();
+    if (sourcePinned) QVERIFY(store.setPinnedAt(source, sourcePin));
+    QCOMPARE(store.entity(source).sortOrder, 0);
+    QCOMPARE(store.entity(sibling).sortOrder, 1);
+
+    const QStringList ordered{parent, sibling, source};
+    QVERIFY2(store.moveEntityForDrop(source, ordered, QStringLiteral("pinned"), QDate(),
+                                     requestedPinned, false, false, false), qPrintable(store.lastError()));
+    QCOMPARE(store.entity(source).sortOrder, 2);
+    QCOMPARE(store.entity(sibling).sortOrder, 1);
+    QCOMPARE(store.entity(source).pinnedAt, sourcePin);
+    QCOMPARE(store.entity(parent).pinnedAt, parentPin);
+    QVERIFY(!store.entity(sibling).pinnedAt.isValid());
+    QCOMPARE(store.entity(source).parentId, parent);
+    QCOMPARE(store.entity(sibling).parentId, parent);
+    QCOMPARE(store.entity(source).allDayDate, today);
+
+    // 无位移再排序不产生 revision、时间戳或日志写入。
+    const QString entitiesSql = QStringLiteral("SELECT * FROM entities ORDER BY id");
+    const QString eventsSql = QStringLiteral("SELECT * FROM entity_events ORDER BY id");
+    const auto entitiesBefore = queryRows(entitiesSql), eventsBefore = queryRows(eventsSql);
+    QVERIFY(store.moveEntityForDrop(source, ordered, QStringLiteral("pinned"), QDate(),
+                                    requestedPinned, false, false, false));
+    QCOMPARE(queryRows(entitiesSql), entitiesBefore);
+    QCOMPARE(queryRows(eventsSql), eventsBefore);
+    QVERIFY(store.load());
+    QCOMPARE(store.entity(source).pinnedAt, sourcePin);
+    QCOMPARE(store.entity(source).parentId, parent);
+    QCOMPARE(store.entity(source).sortOrder, 2);
+}
+
+// list:<id> 只允许该未归档清单内重排：非法目标/跨清单成员必须在写入前整批拒绝。
+void TaskTests::taskDropListSectionValidatesMembership()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString folder = store.createFolder(QStringLiteral("拖动文件夹"));
+    const QString firstList = store.createList(QStringLiteral("来源清单"), folder);
+    const QString secondList = store.createList(QStringLiteral("其他清单"), folder);
+    const QString archivedList = store.createList(QStringLiteral("归档清单"), folder);
+    const QString source = store.createTask(QStringLiteral("置顶来源"), firstList);
+    const QString anchor = store.createNote(QStringLiteral("同清单笔记"), firstList);
+    const QString foreign = store.createTask(QStringLiteral("其他清单任务"), secondList);
+    const QString archived = store.createTask(QStringLiteral("归档任务"), archivedList);
+    QVERIFY(isUuid(source) && isUuid(anchor) && isUuid(foreign) && isUuid(archived));
+    Entity value = store.entity(source); value.sortOrder = 7; QVERIFY(store.saveTask(value));
+    QVERIFY(store.setPinnedAt(source, utc(2026, 1, 1, 8)));
+    QVERIFY(store.setListArchived(archivedList, true));
+    const QString firstSection = QStringLiteral("list:") + firstList;
+    struct RejectedDrop {
+        QString sourceId;
+        QStringList orderedIds;
+        QString targetSection;
+    };
+    const QVector<RejectedDrop> rejected{
+        {source, {foreign, source}, QStringLiteral("list:") + secondList}, // source 不属于目标
+        {source, {anchor, source, foreign}, firstSection},               // 其他段内成员跨清单
+        {source, {anchor, source}, QStringLiteral("list:") + newUuid()}, // 目标清单不存在
+        {source, {anchor, source}, QStringLiteral("list:")},            // 空清单 ID
+        {archived, {archived}, QStringLiteral("list:") + archivedList}  // 同清单但目标已归档
+    };
+    const QString entitiesSql = QStringLiteral("SELECT * FROM entities ORDER BY id");
+    const QString listsSql = QStringLiteral("SELECT * FROM lists ORDER BY id");
+    const QString eventsSql = QStringLiteral("SELECT * FROM entity_events ORDER BY id");
+    const auto entitiesBefore = queryRows(entitiesSql), listsBefore = queryRows(listsSql);
+    const auto eventsBefore = queryRows(eventsSql);
+    for (const RejectedDrop &drop : rejected) {
+        QVERIFY2(!store.moveEntityForDrop(drop.sourceId, drop.orderedIds, drop.targetSection,
+                                          QDate(), false, false, false), qPrintable(drop.targetSection));
+        QVERIFY(!store.lastError().isEmpty());
+        QCOMPARE(queryRows(entitiesSql), entitiesBefore);                // 包含 revision、置顶、顺序
+        QCOMPARE(queryRows(listsSql), listsBefore);
+        QCOMPARE(queryRows(eventsSql), eventsBefore);
+    }
+
+    // 合法投放仍按默认 adjustPinned=true 取消置顶，允许同清单的任务与笔记一起排序。
+    QVERIFY2(store.moveEntityForDrop(source, QStringList{source, anchor}, firstSection,
+                                     QDate(), false, false, false), qPrintable(store.lastError()));
+    QCOMPARE(store.entity(source).sortOrder, 0);
+    QCOMPARE(store.entity(anchor).sortOrder, 1);
+    QVERIFY(!store.entity(source).pinnedAt.isValid());
+    QCOMPARE(store.entity(source).listId, firstList);
+    QCOMPARE(store.entity(anchor).listId, firstList);
+    QVERIFY(store.load());
+    QCOMPARE(store.entity(source).sortOrder, 0);
+    QCOMPARE(store.entity(anchor).sortOrder, 1);
+    QVERIFY(!store.entity(source).pinnedAt.isValid());
 }
 
 // 原子失败：非法 ID、重复、缺 source、错误目标日期、矛盾置顶、无日期入时间分区、陈旧 revision 全部零写入。

@@ -321,6 +321,15 @@ bool TaskStore::commit(EntityChanges *changes, bool reset)
     }
     QSet<QString> removedTasks;
     for (const StoredEntity &row : changes->removals) removedTasks.insert(row.entity.id);
+    // 同一批里完整保存的实体不再重复 touch；多个孩子变更也只 touch 父级一次。
+    // 否则先推进父级 revision，随后按旧 revision 保存父级会让正常拖放 CAS 失败。
+    QSet<QString> savedIds, touchedIds;
+    for (const StoredEntity &row : changes->saves) savedIds.insert(row.entity.id);
+    for (int index = changes->touches.size() - 1; index >= 0; --index) {
+        const QString id = changes->touches.at(index).entity.id;
+        if (savedIds.contains(id) || touchedIds.contains(id)) changes->touches.remove(index);
+        else touchedIds.insert(id);
+    }
     // 父任务永久删除会级联真正子任务，文件清理必须覆盖整个子树。
     bool grew = true;
     while (grew) {
@@ -1215,16 +1224,25 @@ bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
 }
 bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
                                   const QString &targetSection, const QDate &targetDate,
-                                  bool pinned, bool detachParent, bool adjustDate)
+                                  bool pinned, bool detachParent, bool adjustDate, bool adjustPinned)
 {
     if (!ensureLoaded()) return false;
     // orderedIds 逐 ID 从当前快照重读：不存在、重复或缺 source 整批拒绝，不落任何写入。
     if (sourceId.isEmpty() || orderedIds.isEmpty()) return fail(QStringLiteral("目标段顺序不能为空"));
+    const TaskList *targetList = nullptr;
+    if (targetSection.startsWith(QStringLiteral("list:"))) {
+        targetList = findList(targetSection.mid(5));
+        if (!targetList) return fail(QStringLiteral("目标清单不存在"));
+        if (targetList->archivedAtUtcMs > 0) return fail(QStringLiteral("目标清单已归档"));
+    }
     QSet<QString> seen;
     bool hasSource = false;
     for (const QString &id : orderedIds) {
-        if (id.isEmpty() || !find(id)) return fail(QStringLiteral("目标段任务不存在"));
+        const StoredEntity *stored = id.isEmpty() ? nullptr : find(id);
+        if (!stored) return fail(QStringLiteral("目标段任务不存在"));
         if (seen.contains(id)) return fail(QStringLiteral("目标段任务重复"));
+        if (targetList && stored->entity.listId != targetList->id)
+            return fail(QStringLiteral("目标段任务必须属于目标清单"));
         seen.insert(id);
         if (id == sourceId) hasSource = true;
     }
@@ -1239,7 +1257,7 @@ bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &or
     } else if (targetDate.isValid()) {
         return fail(QStringLiteral("非改期拖动不能指定目标日期"));
     }
-    if (targetSection == QStringLiteral("pinned") && !pinned)
+    if (adjustPinned && targetSection == QStringLiteral("pinned") && !pinned)
         return fail(QStringLiteral("置顶分区的目标必须保持置顶"));
 
     const QDateTime now = utcNow();
@@ -1251,8 +1269,10 @@ bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &or
         Entity value = stored->entity;                          // 快照 StoredEntity，非陈旧草稿
         bool rowChanged = value.sortOrder != i;
         if (id == sourceId) {
-            if (pinned && !value.pinnedAt.isValid()) value.pinnedAt = now;   // 新置顶取当前时刻
-            else if (!pinned && value.pinnedAt.isValid()) value.pinnedAt = QDateTime();   // 已置顶保持原值
+            if (adjustPinned) {
+                if (pinned && !value.pinnedAt.isValid()) value.pinnedAt = now;   // 新置顶取当前时刻
+                else if (!pinned && value.pinnedAt.isValid()) value.pinnedAt = QDateTime();   // 离开置顶分区
+            }
             if (detachParent && !value.parentId.isEmpty()) value.parentId.clear();
             if (timeSection && adjustDate) {
                 const QDate from = effectiveDate(value);

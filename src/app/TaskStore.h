@@ -97,18 +97,23 @@ public:
     // 拖放落点的原子命令：把 sourceId 放进 targetSection 的 orderedIds 顺序。
     // orderedIds 是目标段当前显示顺序（已含 source 在目标位置）；store 逐 ID 从当前
     // 快照重读并校验存在、无重复、必含 source，禁止用公开 Entity 的陈旧草稿。
+    // targetSection="list:<id>" 时，目标清单必须存在且未归档，source 与 orderedIds
+    // 中所有实体必须属于该清单；跨清单投放整批拒绝。
     // 一次 EntityChanges + commit 把 orderedIds 的 sortOrder 规范为 0..n-1，只保存
-    // 实际变化的行；source 额外按参量更新：pinned 置位时未置顶取当前时刻、已置顶
-    // 保持原值，清除时清空 pinnedAt；detachParent 清 parentId。
+    // 实际变化的行；adjustPinned=true 时才修改 source 的 pinnedAt：pinned 置位时
+    // 未置顶取当前时刻、已置顶保持原值，清除时清空 pinnedAt；detachParent 清 parentId。
     // 时间分区（TaskDrop::isTimeSection）要求 targetDate 与 TaskDrop::dateForSection
     // 的映射一致，并按 source effectiveDate 到 targetDate 平移 allDayDate/startAt/dueAt
     // （应用时区下保留时刻与跨度，提醒/重复不动）；无有效原日期的时间分区拖入拒绝。
-    // 非时间分区要求 targetDate 无效，不暗改日期。targetSection="pinned" 时 pinned
-    // 必须为 true（明显矛盾拒绝）。adjustDate=false 用于同段手动排序：targetDate 必须无效，
-    // 保留“最近7天”段内原有的后天以后日期。失败整批无部分成功；幂等返回 true。
+    // 非时间分区要求 targetDate 无效，不暗改日期。adjustPinned=true 且
+    // targetSection="pinned" 时 pinned 必须为 true（明显矛盾拒绝）。adjustDate=false
+    // 用于同段手动排序：targetDate 必须无效，保留“最近7天”段内原有的后天以后日期。
+    // adjustPinned=false 用于同父、同显示分区排序，保留实际 pinnedAt（含未置顶子任务）。
+    // 失败整批无部分成功；幂等返回 true。
     bool moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
                            const QString &targetSection, const QDate &targetDate,
-                           bool pinned, bool detachParent, bool adjustDate = true);
+                           bool pinned, bool detachParent, bool adjustDate = true,
+                           bool adjustPinned = true);
     QString createSection(const QString &listId, const QString &name);
     bool renameSection(const QString &id, const QString &name);
     bool deleteSection(const QString &id);
