@@ -48,6 +48,7 @@
 #include "ListAppearance.h"
 #include "ListEditorDialog.h"
 #include "ModalDialog.h"
+#include "NavigationGeometry.h"
 #include "NavigationListWidget.h"
 #include "PopupMenu.h"
 #include "SettingsDialog.h"
@@ -867,7 +868,8 @@ void TaskPanel::rebuildNavigation() {
         folder(*container.folder);
         for (const TaskList& list : lists) {
             if (list.inbox || list.archivedAtUtcMs > 0 || list.folderId != container.folder->id) continue;
-            auto* item = add(list.name, ViewScope::List, list.id, &list, QString(), 12);
+            auto* item = add(list.name, ViewScope::List, list.id, &list, QString(),
+                             NavigationGeometry::FolderChildIndent);
             if (item) item->setHidden(m_collapsedFolders.contains(container.folder->id));
         }
     }
@@ -892,8 +894,6 @@ void TaskPanel::rebuildNavigation() {
     }
 
     divider()->setData(NavigationDelegate::OrganizationEndRole, true);
-    add(QStringLiteral("已过期"), ViewScope::Overdue, QString(), nullptr,
-        QStringLiteral("overdue"));
     divider();
     add(QStringLiteral("已完成"), ViewScope::Completed, QString(), nullptr,
         QStringLiteral("completed"));

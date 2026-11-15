@@ -10,6 +10,7 @@
 #include "AppStyle.h"
 #include "AppToolTip.h"
 #include "ListAppearance.h"
+#include "NavigationGeometry.h"
 #include "TaskListModel.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
@@ -37,8 +38,7 @@ void paintTriangle(QPainter* p, const QRectF& rect, bool expanded, const QColor&
     if (!expanded) p->rotate(-90.0);
     AppIcons::paint(p, QStringLiteral("thin-triangle-down"),
                     QRectF(-rect.width() / 2.0, -rect.height() / 2.0,
-                           rect.width(), rect.height()),
-                    color);
+                           rect.width(), rect.height()), color);
     p->restore();
 }
 
@@ -117,15 +117,19 @@ struct NavigationLayout {
 NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
     const QRectF row = option.rect;
     NavigationLayout layout;
-    layout.background = row.adjusted(10.0, 1.0, -10.0, -1.0);
+    layout.background = row.adjusted(NavigationGeometry::RowHorizontalInset, 1.0,
+                                     -NavigationGeometry::RowHorizontalInset, -1.0);
     const int indent = index.data(NavigationDelegate::IndentRole).toInt();
     const bool folder = !index.data(NavigationDelegate::FolderIdRole).toString().isEmpty();
-    // 滴答文件夹行：箭头占行首 16px，图标盒 20px（12px 起），再空 6px 到文字。
+    // 文件夹箭头独立占位；图标与分区标题对齐，子清单图标盒再对齐文件夹文字。
     if (folder)
         layout.disclosure = QRectF(layout.background.left(),
-                                   layout.background.center().y() - 8.0, 16.0, 16.0);
-    layout.icon = QRectF(layout.background.left() + (folder ? 14.0 : 12.0) + indent,
-                         layout.background.center().y() - 10.0, 20.0, 20.0);
+                                   layout.background.center().y() - 8.0,
+                                   NavigationGeometry::FolderDisclosureWidth, 16.0);
+    layout.icon = QRectF(layout.background.left()
+                             + NavigationGeometry::ListIconOffset + indent,
+                         layout.background.center().y() - NavigationGeometry::IconBoxSize / 2.0,
+                         NavigationGeometry::IconBoxSize, NavigationGeometry::IconBoxSize);
     layout.count = index.data(NavigationDelegate::CountRole).toString();
     const QFont countFont = AppStyle::font(AppStyle::Font::Small);
     const int countWidth = QFontMetrics(countFont).horizontalAdvance(layout.count);
@@ -135,8 +139,9 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
     if (colorDot)
         layout.dot = QRectF(right - 12.0, layout.background.center().y() - 3.0, 8.0, 8.0);
     const qreal labelRight = colorDot ? right - 12.0 : right;
-    layout.label = QRectF(layout.icon.right() + 6.0, row.top(),
-                          qMax(0.0, labelRight - layout.icon.right() - 6.0), row.height());
+    layout.label = QRectF(layout.icon.right() + NavigationGeometry::IconLabelGap, row.top(),
+                          qMax(0.0, labelRight - layout.icon.right()
+                               - NavigationGeometry::IconLabelGap), row.height());
     return layout;
 }
 
@@ -400,22 +405,29 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     }
     const QColor iconColor = AppStyle::color(Color::Muted);
     const QString iconName = i.data(IconNameRole).toString();
+    QRectF iconGlyph = layout.icon;
+    if (!i.data(ParentFolderRole).toString().isEmpty()) {
+        // 20px 布局盒内画 16px 图形，并下移 1px 对齐中文视觉中线。
+        iconGlyph = QRectF(layout.icon.left() + NavigationGeometry::ChildIconGlyphInset,
+                           layout.icon.top() + NavigationGeometry::ChildIconGlyphInset
+                               + NavigationGeometry::ChildIconGlyphVerticalOffset,
+                           NavigationGeometry::ChildIconGlyphSize,
+                           NavigationGeometry::ChildIconGlyphSize);
+    }
     if (!iconName.isEmpty()) {
         TaskList list;
         list.icon = iconName;
         list.color = i.data(ListColorRole).toString();
         list.kind = static_cast<EntityKind>(i.data(ListKindRole).toInt());
         list.inbox = iconName == QLatin1String("inbox-list");
-        ListAppearance::paint(p, list, layout.icon, iconColor);
+        ListAppearance::paint(p, list, iconGlyph, iconColor);
     } else {
-        AppIcons::paint(p, static_cast<IconId>(i.data(IconRole).toInt()), layout.icon, iconColor);
+        AppIcons::paint(p, static_cast<IconId>(i.data(IconRole).toInt()), iconGlyph, iconColor);
     }
 
-    QFont labelFont = AppStyle::font(folderId.isEmpty() ? AppStyle::Font::Body
-                                                        : AppStyle::Font::Small);
-    if (!folderId.isEmpty()) labelFont.setWeight(QFont::DemiBold);
-    p->setFont(labelFont);
-    p->setPen(AppStyle::color(folderId.isEmpty() ? Color::Text : Color::Muted));
+    // 滴答文件夹与普通清单均为 14px 常规字重，不额外加粗或缩小。
+    p->setFont(AppStyle::font(AppStyle::Font::Body));
+    p->setPen(AppStyle::color(Color::Text));
     p->drawText(layout.label, Qt::AlignLeft | Qt::AlignVCenter,
                 p->fontMetrics().elidedText(i.data().toString(), Qt::ElideRight,
                                             qMax(0, qRound(layout.label.width()))));
@@ -431,8 +443,9 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
         p->drawEllipse(layout.dot);
     }
     if (!folderId.isEmpty()) {
-        paintTriangle(p, layout.disclosure.adjusted(2.0, 2.0, -2.0, -2.0),
-                      i.data(FolderExpandedRole).toBool(),
+        const QRectF arrow(layout.background.left(), layout.background.center().y() - 5.0,
+                           10.0, 10.0);
+        paintTriangle(p, arrow, i.data(FolderExpandedRole).toBool(),
                       AppStyle::color(hovered ? Color::Muted : Color::Faint));
     }
     if (!i.data(DropTargetRole).toString().isEmpty()) {

@@ -54,13 +54,15 @@ design/QssBuilder.cpp   元素层：QSS 由生成器产出（Qt 无 CSS 变量�
 
 ### 字体系统与内置字体
 
-字体族通过 `design/TypeSystem.cpp` 的 `fontFamilies()` 统一回退链解析：Windows 中文 → Linux/麒麟常见中文 → 通用无衬线。业务代码只走 `ds::qfont(FontScene)`，不裸构造 `QFont`。
+字体族通过 `design/TypeSystem.cpp` 的 `fontFamilies()` 统一回退链解析：系统无衬线 → 中文无衬线 → 通用字体。Windows 首选 Segoe UI，Linux/麒麟继续回退 Noto Sans CJK SC 等中文字体。业务代码只走 `ds::qfont(FontScene)`，不裸构造 `QFont`。
 
 **可选内置字体**：若发布包在可执行文件同目录放置 `fonts/*.ttf` 或 `fonts/*.otf`，`TypeSystem` 启动时会用 `QFontDatabase::addApplicationFont()` 自动注册，随后按同一回退链解析。未放置该目录时完全走系统字体，不产生额外依赖、不增大安装包。这用于「目标机缺中文字体」的离线兜底与跨设备字形一致性。
 
 - 授权边界：内置字体**必须**是 OFL / SIL Open Font License 等允许再分发的开源字体，并把许可证全文放进 `THIRD_PARTY.md` 与发布包。**不得**把微软雅黑等专有系统字体复制进仓库或安装包。
 - 候选（OFL / 开源，本机已有但未纳入仓库）：Noto Sans CJK SC、Source Han Sans SC、文泉驿微米黑。兄弟项目 `CaseLawLibrary` / `public-interest-litigation-fund` 的 `frontend/src/assets/fonts/` 提供的是 woff2 子集（Web 用），Qt 5.12 需要 TTF/OTF 源文件。
 - 是否真正内置、内置哪一款，由用户按目标麒麟镜像的实际字体清单决定；当前实现只提供机制，仓库内不附带字体文件。
+
+**内置 Emoji 字体**：`src/resources/fonts/NotoEmoji-Regular.ttf` 是 OFL 许可的 Noto Emoji 静态 Regular 400 子集，随应用安装到可执行文件旁的 `fonts/`（普通 Linux 安装使用字体搜索路径）。`TypeSystem` 注册实际字体族后优先使用单色字形，避免老旧系统没有 Emoji 字体时显示空白或方框。现有 Emoji 字符串与自定义选择器不变；超出内置字符表的序列不保证支持，麒麟真机表现仍需用户验收。字体许可证随包提供。
 
 **offscreen 测试的环境问题**：Windows 的 Qt offscreen 平台插件不读系统字体目录，会报 `Cannot find font directory ...` 并退化成无字形截图。`CMakeLists.txt` 已为 Windows 测试自动设置 `QT_QPA_FONTDIR=$WINDIR/Fonts`，CTest 与 `visualPreview()` 截图不再缺字。真实 Windows 桌面与麒麟目标机不走 offscreen，不受影响。
 
@@ -69,8 +71,9 @@ design/QssBuilder.cpp   元素层：QSS 由生成器产出（Qt 无 CSS 变量�
 | 场景 | 字号 | 用途 |
 |---|---|---|
 | Caption | 8.5pt | 辅助/计数 |
-| Body | 9.5pt | 正文/列表 |
-| Subtitle | 10.5pt | 次级标题/菜单 |
+| Body | 10.5pt | 正文/列表（96 DPI 下为 14px，常规字重） |
+| Menu | 9.75pt | 菜单（96 DPI 下为 13px） |
+| Subtitle | 10.5pt | 次级标题 |
 | Title | 20pt | 面板标题 |
 | Display | 24pt | 大标题 |
 | DetailTitle | 14pt / Bold | 正文流中的实体标题 |

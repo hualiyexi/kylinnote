@@ -13,8 +13,9 @@ namespace ds {
 // 字号阶梯（pt）。考据主体 14px≈10.5pt、菜单 13px≈9.75pt、详情标题 20pt。
 enum class TypeScale : int {
     Caption = 0,  // 辅助/计数
-    Body,         // 正文/列表
-    Subtitle,     // 次级标题/菜单
+    Body,         // 正文/列表（滴答计算值 14px，96 DPI 下 10.5pt）
+    Menu,         // 菜单（13px，96 DPI 下 9.75pt）
+    Subtitle,     // 次级标题
     Title,        // 面板标题
     Display,      // 大标题
     DetailTitle,  // 文档内的实体标题
@@ -37,10 +38,12 @@ enum class FontScene : int {
 
 // 集中导出：业务唯一取字体入口。
 QFont qfont(FontScene scene);
-// 字体族回退链（Microsoft YaHei UI → … → 系统默认）。
+// 字体族回退链（Segoe UI → 中文无衬线 → 系统默认）。
 QStringList fontFamilies();
-// 清单与文件夹的彩色字形共用字体；调用方按实际绘制框设置 pixelSize。
+// 随包单色字形覆盖常用 Emoji；运行时不依赖系统彩色 Emoji 字体。
 QFont emojiFont();
+// 返回随包字体实际注册的族名，供加载与打包验证；缺失时为空。
+QString bundledEmojiFamilyName();
 
 }  // namespace ds
 }  // namespace kl

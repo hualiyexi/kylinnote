@@ -30,7 +30,6 @@ SmartListSettingsWidget::SmartListSettingsWidget(QWidget* parent) : QWidget(pare
         {QStringLiteral("inbox"), QStringLiteral("收集箱"), IconId::Inbox},
     }));
     root->addWidget(buildSection({
-        {QStringLiteral("overdue"), QStringLiteral("已过期"), IconId::Overdue},
         {QStringLiteral("completed"), QStringLiteral("已完成"), IconId::Done},
         {QStringLiteral("abandoned"), QStringLiteral("已放弃"), IconId::Abandoned},
         {QStringLiteral("trash"), QStringLiteral("垃圾桶"), IconId::Trash},

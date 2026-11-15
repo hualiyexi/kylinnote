@@ -43,7 +43,11 @@ QString buildStyleSheet(Theme theme) {
     const QString tooltipBg = rgba(ColorToken::TooltipBg, theme);
     const QString tooltipText = hex(ColorToken::TooltipText, theme);
 
+    const QString menuFontSize = QStringLiteral("%1pt")
+        .arg(QString::number(pointSize(TypeScale::Menu), 'f', 2));
+
     return QStringLiteral(
+        "QMenu{font-size:%27;}"
         "QToolTip{color:%26;background:%2;border:0;padding:3px 8px;border-radius:6px;font-size:13px;}"
         "QLabel[muted=\"true\"]{color:%4;}"
         "QLabel[section=\"true\"]{color:%5;font-weight:600;padding-top:10px;}"
@@ -143,6 +147,7 @@ QString buildStyleSheet(Theme theme) {
         .arg(scrollbar)     // %24
         .arg(scrollbarHover)// %25
         .arg(tooltipText)   // %26
+        .arg(menuFontSize)  // %27
         + QStringLiteral(
             "QWidget#TaskDetailHost,QWidget#TaskDetailForm,QScrollArea#DetailScroll,"
             "QScrollArea#DetailScroll>QWidget{background:%1;}"

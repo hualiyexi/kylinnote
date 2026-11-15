@@ -12,8 +12,8 @@
 | 智能日期范围 | 今天含全部逾期（有效日期 ≤ 今天）；明天仅明天；最近7天含全部逾期及今天至今天+6；计数与列表共用筛选，活动聚合排除归档清单 | `ViewSpec`、`TaskListModel`、`TaskPanel` |
 | 过期顺延 | 仅聚合智能范围的过期分组提供，普通清单及收集箱无顺延入口；每个任务按自身有效日期平移至今天，保留起止时刻、跨日跨度及原提醒，整批事务提交 | `TaskDelegate`、`TaskListModel`、`TaskStore::postponeOverdueTasks()` |
 | 日期编辑入口 | 行内日期与详情共用 `TaskDateController`；打开时固定实体 ID，提交前读取该实体最新状态。四个快捷项为今天、明天、今天+7、下个月同日；纯日期只写 `allDayDate`，明确时刻（含 00:00）只写 `dueAt`，时间页可移除时刻而保留日期 | `TaskDateController`、`DatePickerPopup`、`TaskDetailWidget`、`TaskPanel` |
-| 侧栏组织 | 智能入口与历史入口不显示分组标题；“清单”标题 hover 显示加号（键盘聚焦亦可见）。区域间为 1px 横线及上下 16px 留白，非导航分隔项使用无效 scope，不能冒充“所有”。归档清单位于可展开组，现有“已过期”独立收纳，不新增过滤器模块 | `SidebarSectionHeader`、`NavigationDelegate`、`TaskPanel` |
-| 智能入口设置 | 功能栏设置按钮打开独立 `SettingsDialog`；所有、今天、明天、最近7天、已过期、收集箱、已完成、已放弃、垃圾桶均支持显示／有实体时显示／隐藏（界面第二项称“有内容时显示”）；本机保存，不随业务备份，隐藏不阻断显式实体导航 | `SettingsDialog`、`SmartListSettingsWidget`、`Settings`、`TaskPanel` |
+| 侧栏组织 | 智能入口与历史入口不显示分组标题；“清单”标题 hover 显示加号（键盘聚焦亦可见）。区域间为 1px 横线及上下 16px 留白，非导航分隔项使用无效 scope，不能冒充“所有”。归档清单位于可展开组；不提供独立的“已过期”筛选入口，第三列列表内逾期分组与顺延能力保留 | `SidebarSectionHeader`、`NavigationDelegate`、`TaskPanel` |
+| 智能入口设置 | 功能栏设置按钮打开独立 `SettingsDialog`；所有、今天、明天、最近7天、收集箱、已完成、已放弃、垃圾桶均支持显示／有实体时显示／隐藏（界面第二项称“有内容时显示”）；本机保存，不随业务备份，隐藏不阻断显式实体导航 | `SettingsDialog`、`SmartListSettingsWidget`、`Settings`、`TaskPanel` |
 | 清单归档与删除 | 归档只改清单资格，保留实体状态、日期、提醒与附件；活动聚合、提醒和活动桌面便签排除归档清单，直接清单与历史仍可见。删清单将全部实体移至收集箱并进入垃圾桶，保留 `status`、提醒与原已删时间，恢复后留在收集箱 | `TaskStore`、`TaskRepository`、`NoteManager`、`TaskPanel` |
 | 新建／编辑清单 | 表单只有名称、图标、颜色、文件夹；新建或改名时名称 trim 后 1–64 个 UTF-16 码元，历史长名称未改动时完整保留；外观与文件夹随保存一次提交。图标与名称共用完整输入框边界及焦点状态，色块选中环位于按钮绘制范围内 | `ListEditorDialog`、`EmojiPickerPopup`、`ColorPickerPopup`、`MenuComboBox` |
 | 模态、菜单与提示 | `ModalDialog` 使用透明窗口、圆角卡片与应用阴影；`PopupMenu` 对整张圆角 alpha 图做高斯模糊。`AppToolTip` 统一使用透明圆角气泡：13px 正文、18px 行高、3px 8px 内边距、6px 圆角和深灰底白字；完整可见的同名文字不重复提示，省略文本、完整日期及操作说明保留 | `ModalDialog`、`PopupMenu`、`AppToolTip`、`EntityHoverPreview`、`QssBuilder`、`DesignTokens` |

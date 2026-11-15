@@ -10,6 +10,8 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QElapsedTimer>
+#include <QFileInfo>
+#include <QFontDatabase>
 #include <QFrame>
 #include <QHostAddress>
 #include <QImage>
@@ -78,6 +80,7 @@
 #include "ui/ListEditorDialog.h"
 #include "ui/ModalDialog.h"
 #include "ui/MenuComboBox.h"
+#include "ui/NavigationGeometry.h"
 #include "ui/NavigationListWidget.h"
 #include "ui/PopupMenu.h"
 #include "ui/TaskDateController.h"
@@ -98,6 +101,7 @@
 #include "ui/ToastIsland.h"
 #include "ui/UpdateDialog.h"
 #include "ui/WindowChrome.h"
+#include "ui/design/QssBuilder.h"
 #include "ui/design/ThemeManager.h"
 #include "ui/design/TypeSystem.h"
 using namespace kl;
@@ -236,7 +240,7 @@ private slots:
             QSettings::IniFormat, QSettings::UserScope, m_dir->path() + QStringLiteral("/settings"));
         for (const QString& key : {QStringLiteral("all"), QStringLiteral("today"),
                                    QStringLiteral("tomorrow"), QStringLiteral("next7days"),
-                                   QStringLiteral("overdue"), QStringLiteral("inbox"),
+                                   QStringLiteral("inbox"),
                                    QStringLiteral("completed"), QStringLiteral("abandoned"),
                                    QStringLiteral("trash")})
             Settings::instance().setSmartListVisibility(key, Settings::SmartListVisibility::Show);
@@ -2070,9 +2074,10 @@ private slots:
         QVERIFY(rowFor(ViewScope::AllLists) >= 0);
         QVERIFY(rowFor(ViewScope::Tomorrow) >= 0);
         QVERIFY(rowFor(ViewScope::Next7Days) >= 0);
-        QVERIFY(rowFor(ViewScope::Overdue) >= 0);
+        QCOMPARE(rowFor(ViewScope::Overdue), -1);
 
         SettingsDialog settingsDialog;
+        QVERIFY(!settingsDialog.findChild<QComboBox*>(QStringLiteral("SmartVisibility_overdue")));
         QSignalSpy changed(&settingsDialog, &SettingsDialog::smartListVisibilityChanged);
         auto* todayCombo = settingsDialog.findChild<QComboBox*>(QStringLiteral("SmartVisibility_today"));
         QVERIFY(todayCombo);
@@ -2158,6 +2163,34 @@ private slots:
             for (int x = 22; x < 42 && !different; ++x)
                 different = withGlyph.pixel(x, y) != withoutGlyph.pixel(x, y);
         QVERIFY(different);
+    }
+    void bundledEmojiFontLoadsWithoutSystemEmoji() {
+        const QString fontPath = QFileInfo(QStringLiteral(KYLINLIST_SOURCE_DIR)
+            + QStringLiteral("/src/resources/fonts/NotoEmoji-Regular.ttf")).absoluteFilePath();
+        QVERIFY2(QFileInfo::exists(fontPath), qPrintable(fontPath));
+        qputenv("KYLINLIST_EMOJI_FONT", fontPath.toUtf8());
+        const QString family = ds::bundledEmojiFamilyName();
+        QVERIFY2(!family.isEmpty(), "Qt 5.12 未能注册随包静态 Emoji 字体");
+        QCOMPARE(ds::emojiFont().family(), family);
+        QRawFont raw = QRawFont::fromFont(ds::emojiFont());
+        QVERIFY(raw.isValid());
+        for (const uint codepoint : {0x1f3dbu, 0x1f6e1u, 0x1f522u, 0x1f600u})
+            QVERIFY2(raw.supportsCharacter(codepoint),
+                     qPrintable(QStringLiteral("随包字体缺少 U+%1").arg(codepoint, 0, 16)));
+        TaskList appearance;
+        appearance.icon = QStringLiteral("🏛️");
+        QImage image(20, 20, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setPen(QColor(QStringLiteral("#526575")));
+        ListAppearance::paint(&painter, appearance, QRectF(0, 0, 20, 20),
+                              QColor(QStringLiteral("#526575")));
+        painter.end();
+        int ink = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (qAlpha(image.pixel(x, y)) > 0) ++ink;
+        QVERIFY(ink > 4);
     }
     void pinnedSectionHeaderShowsPinIcon() {
         const QString id = m_store->createTask(QStringLiteral("置顶任务"));
@@ -2362,6 +2395,113 @@ private slots:
                           QPoint(collapsedRect.left() + 18, collapsedRect.center().y()));
         QTRY_VERIFY((listItem = itemFor(QString(), list)) != nullptr);
         QTRY_VERIFY(!listItem->isHidden());
+    }
+    void navigationGeometryAndFolderTypography() {
+        NavigationDelegate delegate;
+        QListWidget navigation;
+        auto* top = new QListWidgetItem(&navigation);
+        top->setData(NavigationDelegate::IconRole, static_cast<int>(IconId::Folder));
+        auto* folder = new QListWidgetItem(&navigation);
+        folder->setData(NavigationDelegate::FolderIdRole, QStringLiteral("folder"));
+        folder->setData(NavigationDelegate::FolderExpandedRole, true);
+        folder->setData(NavigationDelegate::IconRole, static_cast<int>(IconId::Folder));
+        auto* child = new QListWidgetItem(&navigation);
+        child->setData(NavigationDelegate::ParentFolderRole, QStringLiteral("folder"));
+        child->setData(NavigationDelegate::IndentRole, NavigationGeometry::FolderChildIndent);
+        child->setData(NavigationDelegate::IconRole, static_cast<int>(IconId::Folder));
+        const auto render = [&navigation, &delegate](QListWidgetItem* item) {
+            QImage image(220, 36, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, 0, 220, 36);
+            option.state = QStyle::State_Enabled;
+            delegate.paint(&painter, option, navigation.model()->index(navigation.row(item), 0));
+            painter.end();
+            return image;
+        };
+        const int iconLeft = NavigationGeometry::RowHorizontalInset
+            + NavigationGeometry::ListIconOffset;
+        // 普通行与文件夹行使用同一个 20px 图标盒，箭头不影响这条左轴。
+        const QImage topIcon = render(top);
+        const QImage folderIcon = render(folder);
+        QCOMPARE(NavigationGeometry::FolderIconOffset, NavigationGeometry::ListIconOffset);
+        QCOMPARE(iconLeft, NavigationGeometry::TitleLeft);
+        QCOMPARE(NavigationGeometry::FolderDisclosureWidth, 16);
+        // 命中区仍覆盖原来的 x+17 点击点；三角形独立于图标绘制。
+        int arrowInk = 0;
+        for (int y = 12; y < 25; ++y)
+            for (int x = 10; x < 14; ++x)
+                if (folderIcon.pixelColor(x, y).alpha() > 0) ++arrowInk;
+        QVERIFY(arrowInk > 0);
+        QVERIFY(QRectF(10, 10, 16, 16).contains(QPointF(17, 18)));
+
+        // 子清单图标盒对齐文件夹文字，20px 盒内的实际图形为 16px 并下移 1px。
+        QImage expectedChild(220, 36, QImage::Format_ARGB32_Premultiplied);
+        expectedChild.fill(Qt::transparent);
+        QPainter childPainter(&expectedChild);
+        childPainter.setRenderHint(QPainter::Antialiasing, true);
+        const qreal childGlyphLeft = iconLeft + NavigationGeometry::FolderChildIndent
+            + NavigationGeometry::ChildIconGlyphInset;
+        const qreal childGlyphTop = 18.0 - NavigationGeometry::IconBoxSize / 2.0
+            + NavigationGeometry::ChildIconGlyphInset
+            + NavigationGeometry::ChildIconGlyphVerticalOffset;
+        AppIcons::paint(&childPainter, IconId::Folder,
+                        QRectF(childGlyphLeft, childGlyphTop,
+                               NavigationGeometry::ChildIconGlyphSize,
+                               NavigationGeometry::ChildIconGlyphSize),
+                        AppStyle::color(AppStyle::Color::Muted));
+        childPainter.end();
+        QVERIFY(render(child) == expectedChild);
+
+        // 文件夹与清单一样使用 14px 常规字重，不再使用小号 DemiBold。
+        folder->setData(NavigationDelegate::IconRole, static_cast<int>(IconId::None));
+        folder->setText(QStringLiteral("市人民检察院"));
+        const QImage actualFolder = render(folder);
+        QImage expectedFolder(220, 36, QImage::Format_ARGB32_Premultiplied);
+        expectedFolder.fill(Qt::transparent);
+        QPainter folderPainter(&expectedFolder);
+        folderPainter.setFont(AppStyle::font(AppStyle::Font::Body));
+        folderPainter.setPen(AppStyle::color(AppStyle::Color::Text));
+        const int folderLabelLeft = NavigationGeometry::RowHorizontalInset
+            + NavigationGeometry::FolderIconOffset + NavigationGeometry::IconBoxSize
+            + NavigationGeometry::IconLabelGap;
+        folderPainter.drawText(QRectF(folderLabelLeft, 0, 130, 36),
+                               Qt::AlignLeft | Qt::AlignVCenter, folder->text());
+        folderPainter.end();
+        QVERIFY(actualFolder.copy(folderLabelLeft, 0, 130, 36)
+                == expectedFolder.copy(folderLabelLeft, 0, 130, 36));
+        QCOMPARE(folderLabelLeft, iconLeft + NavigationGeometry::FolderChildIndent);
+
+        QCOMPARE(ds::pointSize(ds::TypeScale::Body), 10.5);
+        QCOMPARE(ds::pointSize(ds::TypeScale::Menu), 9.75);
+        QCOMPARE(ds::qfont(ds::FontScene::Body).weight(), static_cast<int>(QFont::Normal));
+        QVERIFY(ds::buildStyleSheet(ds::Theme::Light).contains(
+            QStringLiteral("QMenu{font-size:9.75pt;}")));
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigationView = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* header = panel.findChild<QFrame*>(QStringLiteral("ListSectionHeader"));
+        QVERIFY(navigationView && header);
+        const auto labels = header->findChildren<QLabel*>();
+        QCOMPARE(labels.size(), 1);
+        QCOMPARE(labels.first()->mapTo(navigationView->viewport(), QPoint()).x(), iconLeft);
+    }
+    void sidebarSectionHeaderUsesOrdinaryRowHover() {
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* header = panel.findChild<QFrame*>(QStringLiteral("ListSectionHeader"));
+        QVERIFY(header);
+        auto* card = header->findChild<QFrame*>(QStringLiteral("SidebarSectionCard"));
+        QVERIFY(card);
+        QVERIFY(!card->graphicsEffect());
+        QEvent enter(QEvent::Enter);
+        QApplication::sendEvent(header, &enter);
+        QApplication::processEvents();
+        QVERIFY(card->property("hovered").toBool());
+        const QImage hovered = card->grab().toImage();
+        QCOMPARE(hovered.pixelColor(3, hovered.height() / 2),
+                 ThemeManager::instance().color(ds::ColorToken::RowHover));
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(header, &leave);
     }
     void rowStatesUseSoftBackgroundsWithoutBorders() {
         const QString list = m_store->createList(QStringLiteral("状态样式"), QString(),
@@ -2640,8 +2780,9 @@ private slots:
         }
         QCOMPARE(topLabels, QStringList({QStringLiteral("所有"), QStringLiteral("今天"),
             QStringLiteral("明天"), QStringLiteral("最近7天"), QStringLiteral("收集箱")}));
-        QCOMPARE(dividerCount, 3);
-        QVERIFY(overdueRow >= 0 && completedRow > overdueRow);
+        QCOMPARE(dividerCount, 2);
+        QCOMPARE(overdueRow, -1);  // 独立“已过期”筛选入口已移除，列表内逾期分组保留。
+        QVERIFY(completedRow >= 0);
 
         auto* model = qobject_cast<TaskListModel*>(
             panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());

@@ -1,11 +1,11 @@
 #include "SidebarSectionHeader.h"
 
-#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QStyle>
 #include <QToolButton>
+#include "NavigationGeometry.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
 
@@ -17,22 +17,19 @@ SidebarSectionHeader::SidebarSectionHeader(const QString& title, const QString& 
     setObjectName(objectName);
     setFixedHeight(36);
     auto* outer = new QHBoxLayout(this);
-    outer->setContentsMargins(6, 3, 6, 3);
+    outer->setContentsMargins(NavigationGeometry::SectionHorizontalInset, 3,
+                              NavigationGeometry::SectionHorizontalInset, 3);
     outer->setSpacing(0);
     m_card = new QFrame(this);
     m_card->setObjectName(QStringLiteral("SidebarSectionCard"));
     auto* layout = new QHBoxLayout(m_card);
-    layout->setContentsMargins(8, 0, 4, 0);
+    layout->setContentsMargins(NavigationGeometry::SectionTitleInset, 0, 4, 0);
     layout->setSpacing(4);
     m_title = new QLabel(title, m_card);
     m_title->setFont(ds::qfont(ds::FontScene::Caption));
     layout->addWidget(m_title, 1);
     outer->addWidget(m_card);
 
-    auto* shadow = new QGraphicsDropShadowEffect(m_card);
-    shadow->setBlurRadius(16);
-    shadow->setOffset(0, 2);
-    m_card->setGraphicsEffect(shadow);
     updateHover(false);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &SidebarSectionHeader::applyTheme);
@@ -106,12 +103,7 @@ void SidebarSectionHeader::applyTheme() {
     m_card->setStyleSheet(QStringLiteral(
         "QFrame#SidebarSectionCard{background:transparent;border:0;border-radius:6px;}"
         "QFrame#SidebarSectionCard[hovered=\"true\"]{background:%1;}")
-        .arg(theme.color(ds::ColorToken::Surface).name()));
-    if (auto* shadow = qobject_cast<QGraphicsDropShadowEffect*>(m_card->graphicsEffect())) {
-        QColor color = theme.color(ds::ColorToken::Shadow);
-        color.setAlpha(30);
-        shadow->setColor(color);
-    }
+        .arg(theme.color(ds::ColorToken::RowHover).name()));
     if (m_leadingIcon) {
         m_leadingIcon->setPixmap(
             AppIcons::icon(m_leadingIconId, ds::ColorToken::TextSecondary, 20).pixmap(20, 20));
@@ -132,7 +124,6 @@ void SidebarSectionHeader::updateHover(bool hovered) {
     m_card->setProperty("hovered", hovered);
     m_card->style()->unpolish(m_card);
     m_card->style()->polish(m_card);
-    if (m_card->graphicsEffect()) m_card->graphicsEffect()->setEnabled(hovered);
     applyTheme();
 }
 

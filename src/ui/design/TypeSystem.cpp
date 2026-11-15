@@ -22,26 +22,48 @@ int loadBundledFonts() {
     return loaded;
 }
 
+// 随包注册的 OFL 字体优先于系统字体，确保目标机没有 Emoji 字体也能绘制。
+QString bundledEmojiFamily() {
+    static const QString family = [] {
+        QStringList candidates;
+        const QString override = qEnvironmentVariable("KYLINLIST_EMOJI_FONT");
+        if (!override.isEmpty()) candidates.append(QFileInfo(override).absoluteFilePath());
+        candidates.append(QCoreApplication::applicationDirPath()
+                          + QStringLiteral("/fonts/NotoEmoji-Regular.ttf"));
+#ifdef Q_OS_LINUX
+        candidates.append(QStringLiteral("/usr/share/kylinlist/fonts/NotoEmoji-Regular.ttf"));
+        candidates.append(QStringLiteral("/usr/local/share/kylinlist/fonts/NotoEmoji-Regular.ttf"));
+#endif
+        for (const QString& path : candidates) {
+            const int id = QFontDatabase::addApplicationFont(path);
+            if (id >= 0) return QFontDatabase::applicationFontFamilies(id).value(0);
+        }
+        return QString();
+    }();
+    return family;
+}
+
 }  // namespace
 
 qreal pointSize(TypeScale scale) {
     switch (scale) {
         case TypeScale::Caption: return 8.5;
-        case TypeScale::Body: return 9.5;
+        case TypeScale::Body: return 10.5;
+        case TypeScale::Menu: return 9.75;
         case TypeScale::Subtitle: return 10.5;
         case TypeScale::Title: return 20.0;
         case TypeScale::Display: return 24.0;
         case TypeScale::DetailTitle: return 14.0;
         case TypeScale::Count: break;
     }
-    return 9.5;
+    return pointSize(TypeScale::Body);
 }
 
 QStringList fontFamilies() {
-    // 统一回退链：Windows 中文 → Linux/麒麟常见中文 → 通用无衬线。
+    // 与滴答一致使用系统无衬线主字体，再回退中文与通用字体。
     // 内置字体（若发布包提供）注册后会以这些族名之一出现在 QFontDatabase 中。
-    return {QStringLiteral("Microsoft YaHei UI"), QStringLiteral("Microsoft YaHei"),
-            QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Noto Sans SC"),
+    return {QStringLiteral("Segoe UI"), QStringLiteral("Noto Sans CJK SC"),
+            QStringLiteral("Microsoft YaHei UI"), QStringLiteral("Microsoft YaHei"),
             QStringLiteral("Source Han Sans SC"), QStringLiteral("Source Han Sans CN"),
             QStringLiteral("WenQuanYi Micro Hei"), QStringLiteral("PingFang SC"),
             QStringLiteral("Hiragino Sans GB"), QStringLiteral("sans-serif")};
@@ -99,8 +121,16 @@ QFont qfont(FontScene scene) {
     return f;
 }
 
+QString bundledEmojiFamilyName() { return bundledEmojiFamily(); }
+
 QFont emojiFont() {
     QFont font = qfont(FontScene::Body);
+    const QString bundled = bundledEmojiFamily();
+    if (!bundled.isEmpty()) {
+        font.setFamily(bundled);
+        font.setStyleStrategy(QFont::NoFontMerging);
+        return font;
+    }
     const QStringList available = QFontDatabase().families();
     for (const QString& family : {QStringLiteral("Segoe UI Emoji"),
                                   QStringLiteral("Noto Color Emoji"),

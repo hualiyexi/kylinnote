@@ -5,7 +5,7 @@ namespace {
 bool isSmartListKey(const QString& key) {
     static const QStringList allowed = {
         QStringLiteral("all"), QStringLiteral("today"), QStringLiteral("tomorrow"),
-        QStringLiteral("next7days"), QStringLiteral("overdue"), QStringLiteral("inbox"),
+        QStringLiteral("next7days"), QStringLiteral("inbox"),
         QStringLiteral("completed"), QStringLiteral("abandoned"), QStringLiteral("trash")};
     return allowed.contains(key);
 }

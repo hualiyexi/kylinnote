@@ -3,6 +3,7 @@
 // 模板用 %TOKEN% 占位符，运行时按当前主题替换为语义色字面量。
 #include <QString>
 #include "DesignTokens.h"
+#include "TypeSystem.h"
 
 namespace kl {
 namespace ds {

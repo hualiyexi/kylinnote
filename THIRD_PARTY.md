@@ -16,6 +16,15 @@
 - License: proprietary asset of the upstream product. Generated data is kept in this repository solely so that a clean checkout can build, and the application is not distributed. Brand marks (`logo`, `connect-logo`) are excluded.
 - Purpose: single icon language across the UI on Qt 5.12 without a web engine.
 
+## Noto Emoji
+
+- Upstream: https://github.com/google/fonts/tree/main/ofl/notoemoji
+- Source: `NotoEmoji[wght].ttf`, Google Fonts variable font, converted locally to a static Regular 400 subset with fontTools. `src/resources/fonts/NotoEmoji-Regular.ttf` has no `fvar` table and contains the monochrome emoji ranges used by the picker and common custom icons.
+- Copyright 2013, 2022 Google Inc. All Rights Reserved.
+- License: SIL Open Font License 1.1; full text in `src/resources/fonts/OFL.txt`. The font and license are installed beside the application or in its bundle.
+- Purpose: offline monochrome emoji glyphs without depending on an installed system emoji font. The stored icon strings and existing picker are unchanged; arbitrary sequences outside the bundled repertoire should not be treated as guaranteed supported.
+- Conversion was a local development step; target machines need neither Python nor fontTools. Native Kylin ARM64 rendering remains subject to user acceptance.
+
 ## Qt
 
 Qt is used under its applicable open-source licensing terms. Offline distributions include the dynamically linked Qt libraries and plugins plus applicable notices. See https://www.qt.io/licensing/open-source-lgpl-obligations and https://code.qt.io/ for source code. Build versions and platform dependencies are documented in `docs/building.md`.
