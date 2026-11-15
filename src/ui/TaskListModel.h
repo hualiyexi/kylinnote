@@ -54,6 +54,7 @@ public:
     QString entityId(const QModelIndex& index) const;
     int entityCount() const { return m_entityCount; }
     void toggleChildren(const QString& id);
+    void expandChildren(const QString& id);
     void toggleSection(const QString& key);
     void setDragActive(bool active, const QString& sourceId = QString());
 public slots:

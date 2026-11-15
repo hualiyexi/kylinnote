@@ -171,6 +171,16 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
 }  // namespace
 
 void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
+    paintInternal(p, o, i, false);
+}
+
+void TaskDelegate::paintDragPreview(QPainter* p, const QStyleOptionViewItem& o,
+                                    const QModelIndex& i) const {
+    paintInternal(p, o, i, true);
+}
+
+void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
+                                 const QModelIndex& i, bool dragPreview) const {
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
     if (i.data(TaskListModel::HeaderRole).toBool()) {
@@ -239,7 +249,7 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     }
 
     const QColor listColor(i.data(TaskListModel::ListColorRole).toString());
-    if (!deleted && listColor.isValid())
+    if (!dragPreview && !deleted && listColor.isValid())
         p->fillRect(layout.colorBar.toAlignedRect(), listColor);
     if (hovered && !deleted)
         AppIcons::paint(p, QStringLiteral("drag"), layout.dragHandle, AppStyle::color(Color::Faint));

@@ -331,6 +331,7 @@ private slots:
     void taskDropReorderPinnedAndParentDetach();
     void taskDropSiblingReorderPreservesPinnedAt_data();
     void taskDropSiblingReorderPreservesPinnedAt();
+    void taskDropReparentValidationAndPersistence();
     void taskDropListSectionValidatesMembership();
     void taskDropAtomicFailuresAndIdempotence();
     void createSubtaskInheritsDatesOnly();
@@ -3146,6 +3147,83 @@ void TaskTests::taskDropSiblingReorderPreservesPinnedAt()
     QCOMPARE(store.entity(source).pinnedAt, sourcePin);
     QCOMPARE(store.entity(source).parentId, parent);
     QCOMPARE(store.entity(source).sortOrder, 2);
+}
+
+// 右下半区设父只改父子关系与顺序；非法父项和完整祖先链循环均在写入前拒绝。
+void TaskTests::taskDropReparentValidationAndPersistence()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today = toAppTime(appNow()).date();
+    const QString list = store.createList(QStringLiteral("设父拖放清单"));
+    const QString otherList = store.createList(QStringLiteral("其他设父清单"));
+    const QString parent = store.createTask(QStringLiteral("目标父任务"), list);
+    const QString source = store.createTask(QStringLiteral("待设父任务"), list);
+    const QString grandchild = store.createSubtask(QStringLiteral("源任务后代"), source);
+    QVERIFY(isUuid(parent) && isUuid(source) && isUuid(grandchild));
+    Entity parentValue = store.entity(parent); parentValue.allDayDate = today;
+    QVERIFY(store.saveTask(parentValue));
+    Entity sourceValue = store.entity(source);
+    sourceValue.dueAt = fromAppTime(QDateTime(today.addDays(2), QTime(9, 30)));
+    sourceValue.timeZone = QStringLiteral("Asia/Shanghai");
+    QVERIFY(store.saveTask(sourceValue));
+    const QDateTime sourcePin = utc(2026, 2, 3, 8, 30);
+    QVERIFY(store.setPinnedAt(source, sourcePin));
+    const QDateTime sourceDue = store.entity(source).dueAt;
+    const QString section = QStringLiteral("list:") + list;
+    const QStringList ordered{parent, source, grandchild};
+    QVERIFY2(store.moveEntityForDrop(source, ordered, section, QDate(), false,
+                                     false, false, false, parent), qPrintable(store.lastError()));
+    QCOMPARE(store.entity(source).parentId, parent);
+    QCOMPARE(store.entity(source).sortOrder, 1);
+    QCOMPARE(store.entity(source).dueAt, sourceDue);
+    QCOMPARE(store.entity(source).pinnedAt, sourcePin);
+    QCOMPARE(store.entity(grandchild).parentId, source);
+    QCOMPARE(store.entity(grandchild).sortOrder, 2);
+    QVERIFY(store.load());
+    QCOMPARE(store.entity(source).parentId, parent);
+    QCOMPARE(store.entity(source).dueAt, sourceDue);
+    QCOMPARE(store.entity(source).pinnedAt, sourcePin);
+    QCOMPARE(store.entity(grandchild).parentId, source);
+
+    const QString entitiesSql = QStringLiteral("SELECT * FROM entities ORDER BY id");
+    const QString eventsSql = QStringLiteral("SELECT * FROM entity_events ORDER BY id");
+    auto entitiesBefore = queryRows(entitiesSql), eventsBefore = queryRows(eventsSql);
+    QVERIFY(store.moveEntityForDrop(source, ordered, section, QDate(), false,
+                                    false, false, false, parent));
+    QCOMPARE(queryRows(entitiesSql), entitiesBefore);
+    QCOMPARE(queryRows(eventsSql), eventsBefore);
+
+    const auto reject = [&](const QString& dragged, const QString& newParent,
+                            const QStringList& ids, const QString& targetSection) {
+        const auto entities = queryRows(entitiesSql), events = queryRows(eventsSql);
+        QVERIFY(!store.moveEntityForDrop(dragged, ids, targetSection, QDate(), false,
+                                         false, false, false, newParent));
+        QVERIFY(!store.lastError().isEmpty());
+        QCOMPARE(queryRows(entitiesSql), entities);
+        QCOMPARE(queryRows(eventsSql), events);
+    };
+    reject(source, source, QStringList{source, grandchild}, section);
+    reject(parent, grandchild, ordered, section);
+
+    const QString otherParent = store.createTask(QStringLiteral("跨清单父任务"), otherList);
+    reject(source, otherParent, QStringList{otherParent, source, grandchild}, section);
+
+    const QString noteParent = store.createNote(QStringLiteral("笔记父项"), list);
+    const QString candidate = store.createTask(QStringLiteral("合法源任务"), list);
+    reject(candidate, noteParent, QStringList{noteParent, candidate}, section);
+
+    const QString completedParent = store.createTask(QStringLiteral("已完成父项"), list);
+    QVERIFY(store.setCompleted(completedParent, true));
+    reject(candidate, completedParent, QStringList{completedParent, candidate}, section);
+    const QString abandonedParent = store.createTask(QStringLiteral("已放弃父项"), list);
+    QVERIFY(store.abandonTask(abandonedParent));
+    reject(candidate, abandonedParent, QStringList{abandonedParent, candidate}, section);
+
+    const auto entities = queryRows(entitiesSql), events = queryRows(eventsSql);
+    QVERIFY(!store.moveEntityForDrop(candidate, QStringList{parent, candidate}, section,
+                                     QDate(), false, false, true, true, parent));
+    QCOMPARE(queryRows(entitiesSql), entities);
+    QCOMPARE(queryRows(eventsSql), events);
 }
 
 // list:<id> 只允许该未归档清单内重排：非法目标/跨清单成员必须在写入前整批拒绝。

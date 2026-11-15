@@ -4,9 +4,13 @@
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QCursor>
+#include <QDrag>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPixmap>
+#include <QStyleOptionViewItem>
 
 #include "AppStyle.h"
 #include "TaskDelegate.h"
@@ -30,8 +34,40 @@ QString TaskListView::mimeType()
 
 void TaskListView::startDrag(Qt::DropActions supportedActions)
 {
-    QListView::startDrag(supportedActions);
-    if (auto* taskModel = qobject_cast<TaskListModel*>(model())) taskModel->setDragActive(false);
+    auto* taskModel = qobject_cast<TaskListModel*>(model());
+    auto* delegate = qobject_cast<TaskDelegate*>(itemDelegate());
+    const QModelIndex source = currentIndex();
+    QMimeData* mime = taskModel && source.isValid()
+        ? taskModel->mimeData(QModelIndexList{source}) : nullptr;
+    if (delegate && source.isValid() && mime) {
+        const QRect row = visualRect(source);
+        const qreal dpr = devicePixelRatioF();
+        QPixmap preview(qMax(1, qRound(row.width() * dpr)),
+                        qMax(1, qRound(row.height() * dpr)));
+        preview.setDevicePixelRatio(dpr);
+        preview.fill(Qt::transparent);
+        QStyleOptionViewItem option = viewOptions();
+        option.index = source;
+        option.state.setFlag(QStyle::State_Selected, selectionModel()->isSelected(source));
+        option.rect = QRect(QPoint(0, 0), row.size());
+        QPainter painter(&preview);
+        painter.scale(dpr, dpr);
+        delegate->paintDragPreview(&painter, option, source);
+        painter.end();
+
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->setPixmap(preview);
+        QPoint hotSpot = viewport()->mapFromGlobal(QCursor::pos()) - row.topLeft();
+        hotSpot.setX(qBound(0, hotSpot.x(), row.width() - 1));
+        hotSpot.setY(qBound(0, hotSpot.y(), row.height() - 1));
+        drag->setHotSpot(hotSpot);
+        drag->exec(supportedActions, Qt::MoveAction);
+    } else {
+        delete mime;
+        QListView::startDrag(supportedActions);
+    }
+    if (taskModel) taskModel->setDragActive(false);
     clearDropIndicator();
 }
 
@@ -106,7 +142,7 @@ void TaskListView::dropEvent(QDropEvent* event)
         return;
     }
     emit entityDropRequested(target.sourceId, target.orderedIds, target.targetSection,
-                             target.pinned, target.detachParent);
+                             target.pinned, target.detachParent, target.targetParentId);
     if (taskModel) taskModel->setDragActive(false);
     event->setDropAction(Qt::MoveAction);
     event->accept();
@@ -166,6 +202,21 @@ TaskListView::DropTarget TaskListView::dropTarget(const QMimeData* mime, const Q
         }
     }
 
+    const QRect targetRect = visualRect(targetIndex);
+    const bool after = header || position.y() > targetRect.center().y();
+    const int targetDepth = header ? 0 : targetIndex.data(TaskListModel::DepthRole).toInt();
+    const qreal childThreshold = targetRect.left() + 36.0 + (targetDepth + 1) * 24.0;
+    const bool makeChild = !header && after && position.x() >= childThreshold
+        && sourceIndex.data(TaskListModel::KindRole).toInt() == static_cast<int>(EntityKind::Task)
+        && targetIndex.data(TaskListModel::KindRole).toInt() == static_cast<int>(EntityKind::Task)
+        && (targetIndex.flags() & Qt::ItemIsDragEnabled)
+        && targetIndex.data(TaskListModel::ListIdRole).toString()
+            == sourceIndex.data(TaskListModel::ListIdRole).toString();
+    if (makeChild) {
+        result.targetParentId = targetId;
+        result.detachParent = false;
+    }
+
     QStringList ordered;
     for (int row = 0; row < taskModel->rowCount(); ++row) {
         const QModelIndex index = taskModel->index(row, 0);
@@ -175,8 +226,6 @@ TaskListView::DropTarget TaskListView::dropTarget(const QMimeData* mime, const Q
         const QString id = taskModel->entityId(index);
         if (!block.contains(id)) ordered.append(id);
     }
-    const QRect targetRect = visualRect(targetIndex);
-    const bool after = header || position.y() > targetRect.center().y();
     if (header) {
         ordered.append(block);
     } else {
@@ -187,8 +236,9 @@ TaskListView::DropTarget TaskListView::dropTarget(const QMimeData* mime, const Q
     }
     if (ordered.isEmpty()) return result;
     result.orderedIds = ordered;
-    result.indicator = QRect(20, after ? targetRect.bottom() - 1 : targetRect.top(),
-                             qMax(0, viewport()->width() - 32), 2);
+    const int indicatorLeft = 20 + (makeChild ? (targetDepth + 1) * 24 : 0);
+    result.indicator = QRect(indicatorLeft, after ? targetRect.bottom() - 1 : targetRect.top(),
+                             qMax(0, viewport()->width() - indicatorLeft - 12), 2);
     result.valid = true;
     return result;
 }

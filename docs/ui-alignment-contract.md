@@ -8,7 +8,7 @@
 
 | 区域 | 当前规格 | 实现 |
 |---|---|---|
-| 第三列实体与分组 | 普通实体行 40px，显示详细时 62px（详情从 34px 起、18px 高），分组头 36px；标题单行。清单色条距实体区左侧 16px、覆盖整行，父任务拖动柄在色条左侧，悬浮背景从色条右侧开始并覆盖整行，绘制仅外扩半像素消除抗锯齿细缝；子任务拖动柄与背景额外缩进 24px，色条不动，背景圆角 10px。右侧清单图标下移 1px，清单与日期为独立点击区域 | `TaskListModel`、`TaskDelegate`、`ListAppearance`、`TaskPanel` |
+| 第三列实体与分组 | 普通实体行 40px，显示详细时 62px（详情从 34px 起、18px 高），分组头 36px；标题单行。清单色条距实体区左侧 16px、覆盖整行，父任务拖动柄在色条左侧，悬浮背景从色条右侧开始并覆盖整行，绘制仅外扩半像素消除抗锯齿细缝；子任务拖动柄与背景额外缩进 24px，色条不动，背景圆角 10px。右侧清单图标下移 1px，清单与日期为独立点击区域。拖动预览复用同一行布局但不包含清单色条 | `TaskListModel`、`TaskDelegate`、`TaskListView`、`ListAppearance`、`TaskPanel` |
 | 智能日期范围 | 今天含全部逾期（有效日期 ≤ 今天）；明天仅明天；最近7天含全部逾期及今天至今天+6；计数与列表共用筛选，活动聚合排除归档清单 | `ViewSpec`、`TaskListModel`、`TaskPanel` |
 | 过期顺延 | 仅聚合智能范围的过期分组提供，普通清单及收集箱无顺延入口；每个任务按自身有效日期平移至今天，保留起止时刻、跨日跨度及原提醒，整批事务提交 | `TaskDelegate`、`TaskListModel`、`TaskStore::postponeOverdueTasks()` |
 | 日期编辑入口 | 行内日期、详情与快速添加共用 `TaskDateController` 和唯一 `DatePickerPopup`；已有任务提交前读取最新实体，快速添加走草稿入口且确认后才写入新建任务。四个快捷项为今天、明天、今天+7、下个月同日；纯日期只写 `allDayDate`，明确时刻（含 00:00）只写 `dueAt`，时间页可移除时刻而保留日期 | `TaskDateController`、`DatePickerPopup`、`TaskDetailWidget`、`TaskPanel` |
@@ -16,19 +16,20 @@
 | 智能入口设置 | 功能栏设置按钮打开独立 `SettingsDialog`；所有、今天、明天、最近7天、收集箱、已完成、已放弃、垃圾桶均支持显示／有实体时显示／隐藏（界面第二项称“有内容时显示”）；本机保存，不随业务备份，隐藏不阻断显式实体导航 | `SettingsDialog`、`SmartListSettingsWidget`、`Settings`、`TaskPanel` |
 | 清单归档与删除 | 归档只改清单资格，保留实体状态、日期、提醒与附件；活动聚合、提醒和活动桌面便签排除归档清单，直接清单与历史仍可见。删清单将全部实体移至收集箱并进入垃圾桶，保留 `status`、提醒与原已删时间，恢复后留在收集箱 | `TaskStore`、`TaskRepository`、`NoteManager`、`TaskPanel` |
 | 新建／编辑清单 | 表单只有名称、图标、颜色、文件夹；新建或改名时名称 trim 后 1–64 个 UTF-16 码元，历史长名称未改动时完整保留；外观与文件夹随保存一次提交。图标与名称共用完整输入框边界及焦点状态，色块选中环位于按钮绘制范围内 | `ListEditorDialog`、`EmojiPickerPopup`、`ColorPickerPopup`、`MenuComboBox` |
-| 模态、菜单与提示 | `ModalDialog` 使用透明窗口、圆角卡片与应用阴影；`PopupMenu` 对整张圆角 alpha 图做高斯模糊。`AppToolTip` 统一使用透明圆角气泡：13px 正文、18px 行高、3px 8px 内边距、6px 圆角和深灰底白字；完整可见的同名文字不重复提示，省略文本、完整日期及操作说明保留 | `ModalDialog`、`PopupMenu`、`AppToolTip`、`EntityHoverPreview`、`QssBuilder`、`DesignTokens` |
+| 模态、菜单与提示 | `ModalDialog` 使用透明窗口、圆角卡片与应用阴影；`PopupMenu` 对整张圆角 alpha 图做高斯模糊。实体菜单可见卡片最小宽 194px，普通行 34px、左右外边距 4px、悬浮圆角 8px；普通图标实际绘制 18px，位置为行内 12px，文字间距 8px；分隔线通栏 1px、上下 4px。日期/优先级分组各 68px，图标分别为 22/20px，悬浮盒四周外扩 6px。`AppToolTip` 统一使用透明圆角气泡：13px 正文、18px 行高、3px 8px 内边距、6px 圆角和深灰底白字；完整可见的同名文字不重复提示，省略文本、完整日期及操作说明保留 | `ModalDialog`、`PopupMenu`、`AppToolTip`、`EntityHoverPreview`、`EntityCommands`、`QssBuilder`、`TypeSystem`、`DesignTokens` |
 | 导航图标 | 使用内置资源的准确 ID；今天按应用时区日号选择 `today-icon-1..31`，最近7天、已完成、已过期、垃圾桶及归档组分别使用对应导航图形。按 viewBox 等比绘制，不再附加统一光学内缩；普通导航图形为 20×20 | `AppIcons`、`ListAppearance`、`NavigationDelegate`、`SidebarSectionHeader` |
 | 自定义清单/文件夹图标 | 默认 SVG 与 emoji 共用 `ListAppearance`/`GlyphButton`；显式恢复文本画笔并复用 emoji 字体回退，按绘制框度量留出血，选中不消失、14–20px 小图标不裁切 | `TypeSystem`、`ListAppearance`、`GlyphButton`、`FolderEditorDialog` |
 | 清单拖动与文件夹 | 普通未归档清单可拖动：上下边缘排序，平铺清单中心合并，文件夹内中心移动；拖动中显示插入线或圆角包围框。组织区末尾和可见空白可移到顶层末尾。合并先弹名称/图标编辑器，确认后原子建夹，取消不改组织归属、顺序或 revision；正文失焦仍按原编辑会话保存。不创建嵌套文件夹。文件夹可选择、展开/收起，置顶跨清单汇总，其余按清单分节 | `NavigationListWidget`、`NavigationDelegate`、`FolderEditorDialog`、`TaskStore`、`TaskPanel` |
-| 任务层级与手动顺序 | 父任务后连续展示子任务，支持折叠；跨分区归组后每个实体仅出现一次，计数不被折叠改变。拖动携带可见子树，同父级内排序保留各自实际置顶状态，跨父级仍走“关联主任务”。段内先 `sortOrder`，同值保留原日期/创建时间/置顶回退；进入/离开置顶区同步切换置顶状态。文件夹任务只能拖回自己的清单，禁止跨清单误投放 | `TaskListModel`、`TaskListView`、`TaskDelegate`、`TaskStore::moveEntityForDrop()` |
+| 任务层级与手动顺序 | 父任务后连续展示子任务，支持折叠；跨分区归组后每个实体仅出现一次，计数不被折叠改变。拖动携带可见子树，同父级内排序保留各自实际置顶状态；下半区左侧为普通后移，达到 `36 + (目标深度 + 1) × 24` 横向阈值的右下半区设为子任务，落点线同步多缩进一级 24px，成功后展开父项。也可通过“关联主任务”设父。纯设父不暗改日期/置顶，源后代保持关系；Store 校验同清单、进行中任务及完整祖先链，关系和顺序原子提交，非法目标零写入。段内先 `sortOrder`，同值保留原日期/创建时间/置顶回退；进入/离开置顶区同步切换置顶状态。文件夹任务只能拖回自己的清单，禁止跨清单误投放 | `TaskListModel`、`TaskListView`、`TaskDelegate`、`TaskStore::moveEntityForDrop()` |
 | 时间区拖动 | 使用 `overdue/today/tomorrow/next7days` 稳定键；跨区分别落到昨天、今天、明天、后天，保留时刻/跨度/提醒，同段不改日期。子任务脱离父级按真实日期所属区判断，不沿父级显示日期误判。空置顶区及缺失的空时间分区仅在拖动时追加到归组后的列表底部，不移动原行；结束、取消或离开后移除 | `TaskDrop`、`TaskListModel`、`TaskListView`、`TaskStore` |
-| 快速添加与任务右键 | 快速添加为 10px 圆角、透明边框，浅色底使用 `QuickAddBg=#F7F7F7`，placeholder 包含实际目标清单；日期按钮仅在输入行内聚焦或日期弹层打开时显示。文件夹选择成员清单，空文件夹禁用。右键复用日期、优先级、添加子任务、关联主任务、置顶、移动到、副本、转换与删除等已实现命令，保留完成状态和桌面便签，不展示标签/复制链接/未定义命令 | `QssBuilder`、`TaskPanel`、`EntityCommands`、`TaskStore::createSubtask()` |
+| 快速添加与任务右键 | 快速添加为 10px 圆角、透明边框，浅色底使用 `QuickAddBg=#F7F7F7`，placeholder 包含实际目标清单；日期按钮仅在输入行内聚焦或日期弹层打开时显示。文件夹选择成员清单，空文件夹禁用。右键复用日期、优先级、添加子任务、关联主任务、置顶、移动到、副本、转换与删除等已实现命令，保留完成状态和桌面便签，不展示标签/复制链接/未定义命令；添加子任务、关联主任务、取消置顶、移动到与副本使用各自语义 SVG，普通动作和桌面便签统一为 18px | `QssBuilder`、`PopupMenu`、`AppIcons`、`TaskPanel`、`EntityCommands`、`TaskStore::createSubtask()` |
 
 本轮不新增摘要、指派、标签或过滤器等范围外功能；早期参照矩阵中的范围外项目不构成本轮交付项。
 
 ### 本轮已执行验证与边界
 
 - 原生 Windows x64、Qt 5.12.8：主 UI 套件 **90 passed，0 failed**；核心 `tasks` **65**、`updates` **40**、`stats` **22**、`branding` **35 passed**。新增覆盖文件夹聚合/建夹、顶层末尾落点、跨分区子树唯一性、首次/末尾置顶投放、同父排序保留置顶、真实日期分区改期、父子 revision 同事务合并及跨清单拒绝。CTest 使用既有 `offscreen` 环境，**5/5 suites passed**；其中原生窗口两项及原生浮层视觉一项明确跳过，不用 offscreen 冒充窗口验收。
+- 本次实体菜单与拖放修正：新增纯色探针验证普通图标实际为 18px、行内起点 12px、图标文字间距 8px，并以像素验证通栏分隔线；覆盖预览仅移除色条、右下设父与缩进落点、折叠父项自动展开、持久化及非法祖先/跨清单零写入。Windows Qt 5.12.8 完整 CTest **5/5 suites passed**。按用户要求本轮不生成人工验收截图，原生视觉与手势由用户验收。
 - 150% 缩放的 `organizationDragVisualPreview` + `visualPreview` 实测 DPR **1.5**，合计 **4 项通过**。窗口高度被当前可用屏幕夹限，该结果不表示可无限制显示请求的完整逻辑高度。
 - 已检查原生深浅主题截图、文件夹合并框、时间空投放区及父子行 2 倍局部图；局部图使用完整面板实际底色合成，裁剪与放大统一为物理像素，避免透明背景吞字或高 DPR 二次缩放。产物仅留本机忽略目录 `.tools/ui-screenshots-round4/` 与 `.tools/ui-screenshots-round4-150/`。
 - 本轮未跑 Linux、ARM64 或银河麒麟 V10 SP1 真机；下方 Ubuntu 等验证结果仅对应各自历史轮次。

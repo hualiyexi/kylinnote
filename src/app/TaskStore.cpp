@@ -1224,11 +1224,43 @@ bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
 }
 bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
                                   const QString &targetSection, const QDate &targetDate,
-                                  bool pinned, bool detachParent, bool adjustDate, bool adjustPinned)
+                                  bool pinned, bool detachParent, bool adjustDate, bool adjustPinned,
+                                  const QString &targetParentId)
 {
     if (!ensureLoaded()) return false;
     // orderedIds 逐 ID 从当前快照重读：不存在、重复或缺 source 整批拒绝，不落任何写入。
     if (sourceId.isEmpty() || orderedIds.isEmpty()) return fail(QStringLiteral("目标段顺序不能为空"));
+    if (!targetParentId.isEmpty()) {
+        if (detachParent || adjustDate || adjustPinned)
+            return fail(QStringLiteral("设父拖动不能同时修改日期或置顶"));
+        const StoredEntity *source = find(sourceId);
+        const StoredEntity *parent = find(targetParentId);
+        if (!source || !parent) return fail(QStringLiteral("源任务或父任务不存在"));
+        const Entity &sourceEntity = source->entity;
+        const Entity &parentEntity = parent->entity;
+        const bool validSource = sourceEntity.kind == EntityKind::Task
+            && sourceEntity.status == TaskStatus::Active && !sourceEntity.deleted;
+        const bool validParent = parentEntity.kind == EntityKind::Task
+            && parentEntity.status == TaskStatus::Active && !parentEntity.deleted;
+        if (!validSource || !validParent)
+            return fail(QStringLiteral("源任务和父任务都必须是未删除的进行中任务"));
+        if (sourceEntity.listId != parentEntity.listId)
+            return fail(QStringLiteral("子任务与父任务必须属于同一清单"));
+        const TaskList *list = findList(parentEntity.listId);
+        if (!list || list->archivedAtUtcMs > 0) return fail(QStringLiteral("父任务所属清单不可用"));
+        // 可见行可能折叠或被筛选，必须沿完整快照祖先链防环。
+        QSet<QString> ancestors;
+        QString ancestorId = targetParentId;
+        while (!ancestorId.isEmpty()) {
+            if (ancestorId == sourceId)
+                return fail(QStringLiteral("不能把任务移动到自身或其后代下"));
+            if (ancestors.contains(ancestorId)) return fail(QStringLiteral("父任务层级存在循环"));
+            ancestors.insert(ancestorId);
+            const StoredEntity *ancestor = find(ancestorId);
+            if (!ancestor) return fail(QStringLiteral("父任务层级不完整"));
+            ancestorId = ancestor->entity.parentId;
+        }
+    }
     const TaskList *targetList = nullptr;
     if (targetSection.startsWith(QStringLiteral("list:"))) {
         targetList = findList(targetSection.mid(5));
@@ -1247,6 +1279,8 @@ bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &or
         if (id == sourceId) hasSource = true;
     }
     if (!hasSource) return fail(QStringLiteral("目标段必须包含拖动任务"));
+    if (!targetParentId.isEmpty() && !seen.contains(targetParentId))
+        return fail(QStringLiteral("目标段必须包含父任务"));
     // 只有真正跨时间分区才改期；同段排序的 targetDate 为空，保留段内其他合法日期。
     const QDate today = toAppTime(appNow()).date();
     const bool timeSection = TaskDrop::isTimeSection(targetSection);
@@ -1274,6 +1308,7 @@ bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &or
                 else if (!pinned && value.pinnedAt.isValid()) value.pinnedAt = QDateTime();   // 离开置顶分区
             }
             if (detachParent && !value.parentId.isEmpty()) value.parentId.clear();
+            if (!targetParentId.isEmpty()) value.parentId = targetParentId;
             if (timeSection && adjustDate) {
                 const QDate from = effectiveDate(value);
                 if (!from.isValid()) return fail(QStringLiteral("无有效日期的任务不能拖入时间分区"));

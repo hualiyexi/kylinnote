@@ -15,7 +15,8 @@ public:
 
 signals:
     void entityDropRequested(QString sourceId, QStringList orderedIds,
-                             QString targetSection, bool pinned, bool detachParent);
+                             QString targetSection, bool pinned, bool detachParent,
+                             QString targetParentId);
 
 protected:
     void startDrag(Qt::DropActions supportedActions) override;
@@ -31,6 +32,7 @@ private:
         QString sourceId;
         QStringList orderedIds;
         QString targetSection;
+        QString targetParentId;
         QRect indicator;
         bool pinned = false;
         bool detachParent = false;

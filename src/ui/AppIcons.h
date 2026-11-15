@@ -17,7 +17,8 @@ enum class IconId {
     None,
     // 导航
     All, Inbox, Today, Tomorrow, Upcoming, Overdue, Done, Abandoned, Trash,
-    Folder, Note, TaskList, Pin, PinSection, Archive, Unarchive, ArchivedLists, SmartSettings,
+    Folder, Note, TaskList, Pin, Unpin, AddSubtask, LinkParent, MoveTo, Copy,
+    PinSection, Archive, Unarchive, ArchivedLists, SmartSettings,
     // 操作
     Search, More, Add, Close, Check,
     Calendar, Clock, Reminder, Repeat,

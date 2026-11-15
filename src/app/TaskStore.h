@@ -109,11 +109,14 @@ public:
     // targetSection="pinned" 时 pinned 必须为 true（明显矛盾拒绝）。adjustDate=false
     // 用于同段手动排序：targetDate 必须无效，保留“最近7天”段内原有的后天以后日期。
     // adjustPinned=false 用于同父、同显示分区排序，保留实际 pinnedAt（含未置顶子任务）。
+    // targetParentId 非空时表示右下半区设父：源与父项必须都是同清单、未删除的进行中任务，
+    // 完整祖先链不得包含源；此时 detachParent/adjustDate/adjustPinned 必须均为 false，
+    // 只更新父子关系与目标顺序，不暗改日期或置顶。源已有后代保持原 parentId。
     // 失败整批无部分成功；幂等返回 true。
     bool moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
                            const QString &targetSection, const QDate &targetDate,
                            bool pinned, bool detachParent, bool adjustDate = true,
-                           bool adjustPinned = true);
+                           bool adjustPinned = true, const QString &targetParentId = QString());
     QString createSection(const QString &listId, const QString &name);
     bool renameSection(const QString &id, const QString &name);
     bool deleteSection(const QString &id);

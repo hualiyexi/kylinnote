@@ -50,6 +50,7 @@ qreal pointSize(TypeScale scale) {
         case TypeScale::Caption: return 8.5;
         case TypeScale::Body: return 10.5;
         case TypeScale::Menu: return 9.75;
+        case TypeScale::MenuCaption: return 9.0;
         case TypeScale::Subtitle: return 10.5;
         case TypeScale::Title: return 20.0;
         case TypeScale::Display: return 24.0;
@@ -117,6 +118,9 @@ QFont qfont(FontScene scene) {
             break;
         case FontScene::Menu:
             f.setPointSizeF(pointSize(TypeScale::Menu));
+            break;
+        case FontScene::MenuCaption:
+            f.setPointSizeF(pointSize(TypeScale::MenuCaption));
             break;
         case FontScene::Count:
             break;

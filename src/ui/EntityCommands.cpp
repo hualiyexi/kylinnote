@@ -5,6 +5,8 @@
 #include "AppIcons.h"
 #include "EntityPicker.h"
 #include "ListAppearance.h"
+#include "PopupMenu.h"
+#include "design/TypeSystem.h"
 
 #include <algorithm>
 
@@ -18,9 +20,11 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QResizeEvent>
 #include <QSet>
 #include <QTimer>
 #include <QToolButton>
@@ -61,21 +65,21 @@ CommandInfo commandInfo(EntityCommand cmd)
     case EntityCommand::SetPriorityNone:
         return {"setPriorityNone", QStringLiteral("无优先级"), IconId::FlagNone};
     case EntityCommand::AddSubtask:
-        return {"addSubtask", QStringLiteral("添加子任务"), IconId::Add};
+        return {"addSubtask", QStringLiteral("添加子任务"), IconId::AddSubtask};
     case EntityCommand::LinkParent:
-        return {"linkParent", QStringLiteral("关联主任务"), IconId::Link};
+        return {"linkParent", QStringLiteral("关联主任务"), IconId::LinkParent};
     case EntityCommand::TogglePin:
         return {"togglePin", QStringLiteral("置顶"), IconId::Pin};
     case EntityCommand::Abandon:
         return {"abandon", QStringLiteral("放弃"), IconId::Abandoned};
     case EntityCommand::MoveTo:
-        return {"moveTo", QStringLiteral("移动到"), IconId::Folder};
+        return {"moveTo", QStringLiteral("移动到"), IconId::MoveTo};
     case EntityCommand::EditTags:
         return {"editTags", QStringLiteral("标签"), IconId::Tag};
     case EntityCommand::StartFocus:
         return {"startFocus", QStringLiteral("开始专注"), IconId::Clock};
     case EntityCommand::Clone:
-        return {"clone", QStringLiteral("创建副本"), IconId::Add};
+        return {"clone", QStringLiteral("创建副本"), IconId::Copy};
     case EntityCommand::CopyLink:
         return {"copyLink", QStringLiteral("复制链接"), IconId::Link};
     case EntityCommand::ConvertKind:
@@ -148,13 +152,57 @@ void setActionText(QAction *action, const QString &text)
     action->setStatusTip(text);
 }
 
+void setPinAction(QAction *action, bool pinned)
+{
+    setActionText(action, pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
+    action->setIcon(AppIcons::icon(pinned ? IconId::Unpin : IconId::Pin, 18));
+}
+
+// 网页快捷区分组高 68px：标题 y=10/h=16，图标盒 y=32；
+// 图标四周各外扩 6px 作为悬浮与命中区域，最后一个图标的右缘距分组 12px。
+class QuickSection final : public QWidget {
+public:
+    QuickSection(const QString &title, int glyphSize, QWidget *parent = nullptr)
+        : QWidget(parent), m_glyphSize(glyphSize), m_title(new QLabel(title, this))
+    {
+        setFixedHeight(68);
+        m_title->setObjectName(QStringLiteral("QuickBarTitle"));
+        m_title->setFont(ds::qfont(ds::FontScene::MenuCaption));
+        m_title->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+
+    void addButton(QToolButton *button) { m_buttons.append(button); }
+    QSize sizeHint() const override { return QSize(160, 68); }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        m_title->setGeometry(12, 10, qMax(0, width() - 24), 16);
+        const int visibleSpan = qMax(0, width() - 24 - m_glyphSize);
+        for (int i = 0; i < m_buttons.size(); ++i) {
+            const int glyphX = 12 + (m_buttons.size() > 1
+                ? i * visibleSpan / (m_buttons.size() - 1) : 0);
+            m_buttons.at(i)->setGeometry(glyphX - 6, 32,
+                                        m_glyphSize + 12, m_glyphSize + 12);
+        }
+    }
+
+private:
+    int m_glyphSize;
+    QLabel *m_title;
+    QVector<QToolButton *> m_buttons;
+};
+
 QMenu *newMenu(const QString &objectName, QWidget *parent)
 {
-    QMenu *menu = new QMenu(parent);
+    QMenu *menu = new PopupMenu(parent);
     menu->setObjectName(objectName);
+    menu->setProperty("entityMenu", true);
+    // PopupMenu 两侧各留 20px 透明阴影边距；可见卡片与网页一致至少 194px。
+    menu->setMinimumWidth(194 + 2 * PopupMenu::shadowMargin());
     menu->setToolTipsVisible(false);
     menu->setSeparatorsCollapsible(false);
-    // QssBuilder 已统一提供 12px 外框、34px item 与 8px hover 圆角。
     return menu;
 }
 
@@ -235,7 +283,7 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
         addSeparator(menu);
 
         QAction *pin = makeAction(EntityCommand::TogglePin, entityId, menu);
-        setActionText(pin, ctx.pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
+        setPinAction(pin, ctx.pinned);
         menu->addAction(pin);
         if (isTask)
             menu->addAction(makeAction(EntityCommand::Complete, entityId, menu));
@@ -274,7 +322,7 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
         menu->addAction(makeAction(EntityCommand::LinkParent, entityId, menu));
 
     QAction *pin = makeAction(EntityCommand::TogglePin, entityId, menu);
-    setActionText(pin, ctx.pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
+    setPinAction(pin, ctx.pinned);
     menu->addAction(pin);
     if (isTask) {
         QAction *complete = makeAction(EntityCommand::Complete, entityId, menu);
@@ -434,7 +482,7 @@ QMenu *EntityCommands::buildWorkspaceMenu(QWidget *parent)
 QAction *EntityCommands::makeAction(EntityCommand cmd, const QString &entityId, QWidget *parent)
 {
     const CommandInfo info = commandInfo(cmd);
-    QAction *action = new QAction(AppIcons::icon(info.icon), info.text, parent);
+    QAction *action = new QAction(AppIcons::icon(info.icon, 18), info.text, parent);
     action->setObjectName(QString::fromLatin1(info.objectName));
     action->setProperty("accessibleName", info.text);
     action->setToolTip(info.text);
@@ -451,8 +499,7 @@ QAction *EntityCommands::makeAction(EntityCommand cmd, const QString &entityId, 
         const Entity entity = m_store->entity(entityId);
         if (!entity.id.isEmpty()) {
             if (cmd == EntityCommand::TogglePin) {
-                setActionText(action, entity.pinnedAt.isValid() ? QStringLiteral("取消置顶")
-                                                                 : QStringLiteral("置顶"));
+                setPinAction(action, entity.pinnedAt.isValid());
             } else if (cmd == EntityCommand::ConvertKind) {
                 setActionText(action, entity.kind == EntityKind::Task ? QStringLiteral("转换为笔记")
                                                                        : QStringLiteral("转换为任务"));
@@ -466,27 +513,23 @@ QAction *EntityCommands::makeAction(EntityCommand cmd, const QString &entityId, 
 
 void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const QString &entityId)
 {
-    QWidget *host = new QWidget(menu);
+    auto *host = new QuickSection(QStringLiteral("日期"), 22, menu);
     host->setObjectName(QStringLiteral("dateQuickBarWidget"));
-    QHBoxLayout *layout = new QHBoxLayout(host);
-    layout->setContentsMargins(6, 0, 6, 0);
-    layout->setSpacing(2);
 
-    const auto addButton = [this, menu, host, layout, &entityId](EntityCommand cmd, const QString &objectName) {
+    const auto addButton = [this, menu, host, &entityId](EntityCommand cmd, const QString &objectName) {
         QAction *action = makeAction(cmd, entityId, host);
         QToolButton *button = new QToolButton(host);
         button->setObjectName(objectName);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         button->setAutoRaise(true);
-        button->setFixedSize(34, 34);
-        button->setIconSize(QSize(18, 18));
+        button->setIconSize(QSize(22, 22));
         button->setFocusPolicy(Qt::StrongFocus);
         button->setDefaultAction(action);
         if (AppIcons::hasIcon(objectName))
-            button->setIcon(AppIcons::icon(objectName, ds::ColorToken::TextSecondary, 18));
+            button->setIcon(AppIcons::icon(objectName, ds::ColorToken::TextSecondary, 22));
         button->setAccessibleName(action->property("accessibleName").toString());
         connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
-        layout->addWidget(button);
+        host->addButton(button);
     };
 
     Q_UNUSED(ctx);
@@ -503,30 +546,32 @@ void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const 
 void EntityCommands::addPriorityBar(QMenu *menu, const MenuContext &ctx, const QString &entityId)
 {
     Q_UNUSED(ctx);
-    QWidget *host = new QWidget(menu);
+    auto *host = new QuickSection(QStringLiteral("优先级"), 20, menu);
     host->setObjectName(QStringLiteral("priorityBarWidget"));
-    QHBoxLayout *layout = new QHBoxLayout(host);
-    layout->setContentsMargins(6, 0, 6, 0);
-    layout->setSpacing(2);
+    const int currentPriority = m_store ? m_store->entity(entityId).priority : 0;
 
-    const auto addButton = [this, menu, host, layout, &entityId](EntityCommand cmd, const QString &objectName) {
+    const auto addButton = [this, menu, host, &entityId, currentPriority](
+                               EntityCommand cmd, const QString &objectName, int priority) {
         QAction *action = makeAction(cmd, entityId, host);
         QToolButton *button = new QToolButton(host);
         button->setObjectName(objectName);
+        button->setProperty("quickPriority", true);
+        button->setProperty("priorityValue", priority);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         button->setAutoRaise(true);
-        button->setFixedSize(34, 34);
-        button->setIconSize(QSize(18, 18));
+        button->setIconSize(QSize(20, 20));
         button->setFocusPolicy(Qt::StrongFocus);
         button->setDefaultAction(action);
+        button->setCheckable(true);
+        button->setChecked(currentPriority == priority);
         button->setAccessibleName(action->property("accessibleName").toString());
         connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
-        layout->addWidget(button);
+        host->addButton(button);
     };
-    addButton(EntityCommand::SetPriorityHigh, QStringLiteral("priority-3"));
-    addButton(EntityCommand::SetPriorityMedium, QStringLiteral("priority-2"));
-    addButton(EntityCommand::SetPriorityLow, QStringLiteral("priority-1"));
-    addButton(EntityCommand::SetPriorityNone, QStringLiteral("priority-0"));
+    addButton(EntityCommand::SetPriorityHigh, QStringLiteral("priority-3"), 3);
+    addButton(EntityCommand::SetPriorityMedium, QStringLiteral("priority-2"), 2);
+    addButton(EntityCommand::SetPriorityLow, QStringLiteral("priority-1"), 1);
+    addButton(EntityCommand::SetPriorityNone, QStringLiteral("priority-0"), 0);
 
     addWidgetAction(menu, host, QStringLiteral("priorityBar"), QStringLiteral("优先级快捷设置"),
                     IconId::FlagHigh);
@@ -616,7 +661,7 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
     const auto addDestination = [this, moveMenu, entityId, currentListId](const TaskList &list,
                                                                           const QString &folderId,
                                                                           bool indented) {
-        QAction *action = new QAction(ListAppearance::icon(list, 16, QColor()),
+        QAction *action = new QAction(ListAppearance::icon(list, 18, QColor()),
                                       indented ? QStringLiteral("    ") + list.name : list.name,
                                       moveMenu);
         action->setObjectName(QStringLiteral("moveToList.%1").arg(list.id));
@@ -634,7 +679,7 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
 
     // v5 只有一层文件夹；文件夹标题不可作为目标，清单才是目标节点。
     for (const Folder &folder : folders) {
-        QAction *heading = new QAction(AppIcons::icon(IconId::Folder), folder.name, moveMenu);
+        QAction *heading = new QAction(AppIcons::icon(IconId::Folder, 18), folder.name, moveMenu);
         heading->setObjectName(QStringLiteral("moveFolder.%1").arg(folder.id));
         heading->setProperty("accessibleName", QStringLiteral("文件夹%1").arg(folder.name));
         heading->setToolTip(QStringLiteral("文件夹：%1").arg(folder.name));

@@ -516,21 +516,27 @@ void TaskPanel::buildUi() {
             [this](const QString& key) { m_model->toggleSection(key); });
     connect(m_list, &TaskListView::entityDropRequested, this,
             [this](const QString& sourceId, const QStringList& orderedIds,
-                   const QString& targetSection, bool pinned, bool detachParent) {
+                   const QString& targetSection, bool pinned, bool detachParent,
+                   const QString& targetParentId) {
         if (!flush()) return;
         const QModelIndex source = m_model->indexForTask(sourceId);
         if (!source.isValid()) return;
         const QString sourceSection = detachParent
             ? source.data(TaskListModel::UnpinnedSectionRole).toString()
             : source.data(TaskListModel::SectionKeyRole).toString();
-        const bool adjustDate = m_model->filter().renderer == ViewRenderer::Time
+        const bool reparent = !targetParentId.isEmpty();
+        const bool adjustDate = !reparent && m_model->filter().renderer == ViewRenderer::Time
             && sourceSection != targetSection && TaskDrop::isTimeSection(targetSection);
         const QDate targetDate = adjustDate
             ? TaskDrop::dateForSection(targetSection, toAppTime(appNow()).date()) : QDate();
-        const bool adjustPinned = sourceSection != targetSection || detachParent;
+        const bool adjustPinned = !reparent && (sourceSection != targetSection || detachParent);
         if (!m_store->moveEntityForDrop(sourceId, orderedIds, targetSection, targetDate,
-                                        pinned, detachParent, adjustDate, adjustPinned))
+                                        pinned, detachParent, adjustDate, adjustPinned,
+                                        targetParentId)) {
             showError(m_store->lastError());
+            return;
+        }
+        if (reparent) m_model->expandChildren(targetParentId);
     });
     m_list->setMouseTracking(true);
     m_list->viewport()->setAttribute(Qt::WA_Hover, true);
@@ -1647,7 +1653,7 @@ void TaskPanel::showTaskMenu(const QPoint& position) {
 
     if (!entity.deleted && entity.kind == EntityKind::Task) {
         const bool desktopOpen = m_store->desktopNote(id).open;
-        auto* desktop = new QAction(AppIcons::icon(IconId::DesktopNote, 16),
+        auto* desktop = new QAction(AppIcons::icon(IconId::DesktopNote, 18),
                                     desktopOpen ? QStringLiteral("关闭桌面便签")
                                                 : QStringLiteral("贴到桌面"), menu);
         desktop->setObjectName(QStringLiteral("CmdDesktopNote"));

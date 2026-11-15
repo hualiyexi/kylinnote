@@ -69,6 +69,7 @@
 #include "ui/AppIcons.h"
 #include "ui/AppToolTip.h"
 #include "ui/ActivityLogDialog.h"
+#include "ui/EntityCommands.h"
 #include "ui/EntityHoverPreview.h"
 #include "ui/EntityPicker.h"
 #include "ui/AttachmentWidget.h"
@@ -3401,14 +3402,15 @@ private slots:
         QVERIFY(childIndex.isValid());
 
         TaskDelegate delegate;
-        const auto render = [&delegate](const QModelIndex& index) {
+        const auto render = [&delegate](const QModelIndex& index, bool dragPreview = false) {
             QImage image(560, 40, QImage::Format_ARGB32_Premultiplied);
             image.fill(Qt::transparent);
             QPainter painter(&image);
             QStyleOptionViewItem option;
             option.rect = QRect(0, 0, 560, 40);
             option.state = QStyle::State_Enabled | QStyle::State_MouseOver;
-            delegate.paint(&painter, option, index);
+            if (dragPreview) delegate.paintDragPreview(&painter, option, index);
+            else delegate.paint(&painter, option, index);
             painter.end();
             return image;
         };
@@ -3421,6 +3423,16 @@ private slots:
         const QColor listColor(QStringLiteral("#4CA1FF"));
         QCOMPARE(QColor::fromRgba(parentImage.pixel(16, 20)), listColor);
         QCOMPARE(QColor::fromRgba(childImage.pixel(16, 20)), listColor);
+        const QImage dragImage = render(parentIndex, true);
+        QCOMPARE(qAlpha(dragImage.pixel(16, 20)), 0);
+        bool previewOnlyOmitsColorBar = true;
+        for (int y = 0; y < dragImage.height(); ++y) {
+            for (int x = 0; x < dragImage.width(); ++x) {
+                if (x >= 16 && x <= 18) continue;
+                if (dragImage.pixel(x, y) != parentImage.pixel(x, y)) previewOnlyOmitsColorBar = false;
+            }
+        }
+        QVERIFY(previewOnlyOmitsColorBar);
 
         const int originalEntityCount = model.entityCount();
         parentValue = m_store->entity(parent);
@@ -3504,7 +3516,8 @@ private slots:
             return QModelIndex();
         };
         const auto drop = [view, model, headerFor](const QString& sourceId, const QModelIndex& target,
-                                                    bool before = false, bool after = false) {
+                                                    bool before = false, bool after = false,
+                                                    bool asChild = false) {
             QMimeData mime;
             QSignalSpy drops(view, &TaskListView::entityDropRequested);
             mime.setData(TaskListView::mimeType(), sourceId.toUtf8());
@@ -3523,13 +3536,27 @@ private slots:
             view->scrollTo(currentTarget, QAbstractItemView::EnsureVisible);
             QApplication::processEvents();
             const QRect rect = view->visualRect(currentTarget);
-            const QPoint point(rect.center().x(),
-                               before ? rect.top() + 2 : after ? rect.bottom() - 2 : rect.center().y());
+            const int depth = currentTarget.data(TaskListModel::DepthRole).toInt();
+            const int x = asChild ? rect.left() + 36 + (depth + 1) * 24 + 2
+                : after ? rect.left() + 24 : rect.center().x();
+            const QPoint point(x, before ? rect.top() + 2
+                : (after || asChild) ? rect.bottom() - 2 : rect.center().y());
             QDragMoveEvent move(point, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
             QApplication::sendEvent(view->viewport(), &move);
+            if (asChild) {
+                const QImage indicator = view->viewport()->grab().toImage();
+                const qreal dpr = indicator.devicePixelRatio();
+                const QColor pixel = indicator.pixelColor(qRound((20 + (depth + 1) * 24 + 4) * dpr),
+                                                           qRound((rect.bottom() - 1) * dpr));
+                if (pixel != AppStyle::color(AppStyle::Color::Accent)) {
+                    qDebug() << "missing indented drop indicator" << depth << pixel;
+                    return false;
+                }
+            }
             QDropEvent event(QPointF(point), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
             QApplication::sendEvent(view->viewport(), &event);
-            const bool delivered = drops.count() == 1 && drops.first().at(2).toString() == targetKey;
+            const bool delivered = drops.count() == 1 && drops.first().at(2).toString() == targetKey
+                && drops.first().at(5).toString() == (asChild ? targetId : QString());
             if (!delivered)
                 qDebug() << "unresolved drop" << sourceId << targetKey << targetId
                          << view->indexAt(point).data(TaskListModel::SectionKeyRole)
@@ -3672,6 +3699,25 @@ private slots:
         QVERIFY(m_store->entity(parent).pinnedAt.isValid());
         QVERIFY(model->indexForTask(child).row() > model->indexForTask(sibling).row());
 
+        // 右下半区产生缩进落点并设父；源已有后代保持关系，折叠父项成功后自动展开。
+        const QString dropParent = m_store->createTask(QStringLiteral("拖放目标父任务"), list);
+        const QString dropSource = m_store->createTask(QStringLiteral("拖放源任务"), list);
+        const QString dropGrandchild = m_store->createSubtask(QStringLiteral("源任务原有孩子"), dropSource);
+        QTRY_VERIFY(model->indexForTask(dropSource).isValid());
+        QVERIFY(drop(dropSource, model->indexForTask(dropParent), false, false, true));
+        QTRY_COMPARE(m_store->entity(dropSource).parentId, dropParent);
+        QCOMPARE(m_store->entity(dropGrandchild).parentId, dropSource);
+        QTRY_COMPARE(model->data(model->indexForTask(dropSource), TaskListModel::DepthRole).toInt(), 1);
+        QCOMPARE(model->data(model->indexForTask(dropGrandchild), TaskListModel::DepthRole).toInt(), 2);
+        model->toggleChildren(dropParent);
+        QTRY_VERIFY(model->data(model->indexForTask(dropParent), TaskListModel::ChildrenCollapsedRole).toBool());
+        const QString secondDropSource = m_store->createTask(QStringLiteral("折叠后拖入的任务"), list);
+        QTRY_VERIFY(model->indexForTask(secondDropSource).isValid());
+        QVERIFY(drop(secondDropSource, model->indexForTask(dropParent), false, false, true));
+        QTRY_COMPARE(m_store->entity(secondDropSource).parentId, dropParent);
+        QTRY_VERIFY(model->indexForTask(secondDropSource).isValid());
+        QVERIFY(!model->data(model->indexForTask(dropParent), TaskListModel::ChildrenCollapsedRole).toBool());
+
         // 文件夹聚合视图禁止把置顶任务误投进另一清单。
         const QString folder = m_store->createFolder(QStringLiteral("拖动落点校验"));
         const QString second = m_store->createList(QStringLiteral("第二清单"), folder);
@@ -3701,6 +3747,94 @@ private slots:
         QCOMPARE(folderDrops.count(), 0);
         QCOMPARE(m_store->entity(parent).listId, list);
         QCOMPARE(m_store->entity(foreign).sortOrder, foreignOrder);
+    }
+    void entityContextMenuMatchesWebGeometry() {
+        const QString id = m_store->createTask(QStringLiteral("菜单几何任务"));
+        EntityCommands commands(m_store.get());
+        MenuContext context;
+        QMenu* menu = commands.buildEntityMenu(context, id, nullptr);
+        QVERIFY(menu);
+        auto* popup = qobject_cast<PopupMenu*>(menu);
+        QVERIFY(popup);
+        QAction* add = nullptr;
+        for (QAction* action : menu->actions())
+            if (action->objectName() == QLatin1String("addSubtask")) add = action;
+        QVERIFY(add);
+        const QColor probeColor(1, 2, 3);
+        QPixmap probePixmap(18, 18);
+        probePixmap.fill(probeColor);
+        QAction* probe = new QAction(QIcon(probePixmap), QStringLiteral("图标尺寸探针"), menu);
+        probe->setObjectName(QStringLiteral("iconMetricProbe"));
+        menu->insertAction(add, probe);
+        menu->popup(QPoint(80, 80));
+        QTRY_VERIFY(menu->isVisible());
+        const int shadow = PopupMenu::shadowMargin();
+        const QRect card(shadow, shadow,
+                         menu->width() - 2 * shadow, menu->height() - 2 * shadow);
+        QCOMPARE(card.width(), 194);
+        QAction* separator = nullptr;
+        for (QAction* action : menu->actions()) {
+            if (!separator && action->isSeparator()) separator = action;
+        }
+        QVERIFY(add && separator);
+        const QRect addRect = menu->actionGeometry(add);
+        QCOMPARE(addRect.height(), 34);
+        QCOMPARE(addRect.left(), card.left() + 4);
+        QCOMPARE(addRect.right(), card.right() - 4);
+        QCOMPARE(add->icon().actualSize(QSize(18, 18)), QSize(18, 18));
+        QCOMPARE(menu->actionGeometry(separator).height(), 9);
+        const QImage menuImage = menu->grab().toImage();
+        const qreal dpr = menuImage.devicePixelRatio();
+        const int separatorY = menu->actionGeometry(separator).center().y();
+        const auto menuPixel = [&](const QPoint& point) {
+            return menuImage.pixelColor(qRound(point.x() * dpr), qRound(point.y() * dpr));
+        };
+        QRect probeInk;
+        for (int y = 0; y < menuImage.height(); ++y) {
+            for (int x = 0; x < menuImage.width(); ++x) {
+                if (menuImage.pixelColor(x, y) != probeColor) continue;
+                const QRect pixel(x, y, 1, 1);
+                probeInk = probeInk.isNull() ? pixel : probeInk.united(pixel);
+            }
+        }
+        QCOMPARE(probeInk.width(), qRound(18 * dpr));
+        QCOMPARE(probeInk.height(), qRound(18 * dpr));
+        QCOMPARE(probeInk.left(), qRound((menu->actionGeometry(probe).left() + 12) * dpr));
+        bool iconTextGapClear = true;
+        const QRect probeRow = menu->actionGeometry(probe);
+        const QColor cardColor = ThemeManager::instance().color(ds::ColorToken::MenuBg);
+        for (int y = probeRow.top(); y <= probeRow.bottom(); ++y) {
+            for (int x = probeRow.left() + 30; x <= probeRow.left() + 37; ++x) {
+                if (menuPixel(QPoint(x, y)) != cardColor) iconTextGapClear = false;
+            }
+        }
+        QVERIFY(iconTextGapClear);
+        const QColor divider = ThemeManager::instance().color(ds::ColorToken::Divider);
+        QCOMPARE(menuPixel(QPoint(card.left() + 1, separatorY)), divider);
+        QCOMPARE(menuPixel(QPoint(card.right() - 1, separatorY)), divider);
+
+        QWidget* dateHost = menu->findChild<QWidget*>(QStringLiteral("dateQuickBarWidget"));
+        QWidget* priorityHost = menu->findChild<QWidget*>(QStringLiteral("priorityBarWidget"));
+        QVERIFY(dateHost && priorityHost);
+        QCOMPARE(dateHost->height(), 68);
+        QCOMPARE(priorityHost->height(), 68);
+        QLabel* dateTitle = dateHost->findChild<QLabel*>(QStringLiteral("QuickBarTitle"));
+        QVERIFY(dateTitle);
+        QCOMPARE(dateTitle->geometry(), QRect(12, 10, dateHost->width() - 24, 16));
+        QVERIFY(qAbs(dateTitle->font().pointSizeF() - 9.0) < 0.01);
+        QToolButton* today = dateHost->findChild<QToolButton*>(QStringLiteral("quick-today"));
+        QToolButton* high = priorityHost->findChild<QToolButton*>(QStringLiteral("priority-3"));
+        QToolButton* noPriority = priorityHost->findChild<QToolButton*>(QStringLiteral("priority-0"));
+        QVERIFY(today && high && noPriority);
+        QCOMPARE(today->size(), QSize(34, 34));
+        QCOMPARE(today->iconSize(), QSize(22, 22));
+        QCOMPARE(high->size(), QSize(32, 32));
+        QCOMPARE(high->iconSize(), QSize(20, 20));
+        QCOMPARE(today->geometry().y(), 32);
+        QCOMPARE(high->geometry().y(), 32);
+        QVERIFY(noPriority->isChecked());
+        menu->close();
+        delete menu;
     }
     void taskContextMenuAddsSubtask() {
         const QDate today = toAppTime(appNow()).date();

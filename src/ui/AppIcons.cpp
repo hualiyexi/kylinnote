@@ -30,6 +30,11 @@ QString iconNameFor(IconId id) {
         case IconId::Note: return "note";
         case IconId::TaskList: return "normal-list";
         case IconId::Pin: return "pin-task";
+        case IconId::Unpin: return "unpin-task";
+        case IconId::AddSubtask: return "subtask-bold";
+        case IconId::LinkParent: return "bind-parent";
+        case IconId::MoveTo: return "move-list";
+        case IconId::Copy: return "copy";
         case IconId::PinSection: return "pin-task-section";
         case IconId::Archive: return "archive";
         case IconId::Unarchive: return "unarchive";
@@ -245,6 +250,11 @@ QString accessibleName(IconId id) {
         case IconId::Note: return QStringLiteral("笔记");
         case IconId::TaskList: return QStringLiteral("任务清单");
         case IconId::Pin: return QStringLiteral("置顶");
+        case IconId::Unpin: return QStringLiteral("取消置顶");
+        case IconId::AddSubtask: return QStringLiteral("添加子任务");
+        case IconId::LinkParent: return QStringLiteral("关联主任务");
+        case IconId::MoveTo: return QStringLiteral("移动到");
+        case IconId::Copy: return QStringLiteral("创建副本");
         case IconId::PinSection: return QStringLiteral("已置顶分区");
         case IconId::Archive: return QStringLiteral("归档清单");
         case IconId::Unarchive: return QStringLiteral("取消归档");

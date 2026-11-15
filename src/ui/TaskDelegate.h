@@ -19,6 +19,10 @@ public:
     void paint(QPainter* painter,
                const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
+    // 与普通行共用布局；仅拖动预览省略清单色条，避免它变成独立的悬浮色块。
+    void paintDragPreview(QPainter* painter,
+                          const QStyleOptionViewItem& option,
+                          const QModelIndex& index) const;
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     bool helpEvent(QHelpEvent* event, QAbstractItemView* view,
                    const QStyleOptionViewItem& option, const QModelIndex& index) override;
@@ -34,6 +38,11 @@ signals:
     void postponeActivated(QStringList entityIds);
     void childrenToggleActivated(QString entityId);
     void sectionToggleActivated(QString sectionKey);
+private:
+    void paintInternal(QPainter* painter,
+                       const QStyleOptionViewItem& option,
+                       const QModelIndex& index,
+                       bool dragPreview) const;
 };
 
 // 侧栏导航行：分区标题、SVG 图标、独立右对齐数量。

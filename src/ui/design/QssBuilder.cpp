@@ -102,6 +102,9 @@ QString buildStyleSheet(Theme theme) {
         "QMenu::item:selected{background:%22;color:%1;}"
         "QMenu::item:disabled{color:%23;}"
         "QMenu::separator{height:1px;background:%19;margin:5px 10px;}"
+        "QMenu[entityMenu=\"true\"]::item{margin:0 4px;padding:7px 12px 7px 18px;min-height:18px;border-radius:8px;}"
+        "QMenu[entityMenu=\"true\"]::separator{height:1px;background:%19;margin:4px 0;}"
+        "QMenu[entityMenu=\"true\"]::right-arrow{width:12px;height:12px;}"
         "QStatusBar{background:%18;border-top:1px solid %19;color:%4;}"
         "QStatusBar::item{border:0;}"
         "QSplitter::handle{background:transparent;}"
@@ -206,6 +209,16 @@ QString buildStyleSheet(Theme theme) {
             "QFrame#QuickAddFrame QLineEdit#QuickAdd,"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd:hover,"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd:focus{background:transparent;border:0;padding:0;}"
+            "QLabel#QuickBarTitle{color:%FAINT%;padding:0;}"
+            "QMenu[entityMenu=\"true\"] QWidget#dateQuickBarWidget QToolButton,"
+            "QMenu[entityMenu=\"true\"] QWidget#priorityBarWidget QToolButton{"
+            "padding:0;border:0;border-radius:8px;background:transparent;}"
+            "QMenu[entityMenu=\"true\"] QWidget#dateQuickBarWidget QToolButton:hover,"
+            "QMenu[entityMenu=\"true\"] QWidget#priorityBarWidget QToolButton:hover{background:%4;}"
+            "QMenu[entityMenu=\"true\"] QWidget#dateQuickBarWidget QToolButton:pressed,"
+            "QMenu[entityMenu=\"true\"] QWidget#priorityBarWidget QToolButton:pressed{background:%5;}"
+            "QMenu[entityMenu=\"true\"] QWidget#priorityBarWidget QToolButton[quickPriority=\"true\"]:checked{"
+            "background:%PRIORITY_ACTIVE%;}"
             "QToolButton#QuickAddDate{color:%3;padding:0 4px;border:0;}"
             "QToolButton#QuickAddDate[hasDate=\"true\"]{color:%PRIMARY%;}"
             "QWidget#WindowControls{background:transparent;border-top-right-radius:10px;}"
@@ -223,6 +236,8 @@ QString buildStyleSheet(Theme theme) {
             // Qt 5 链式 arg 的双位数字占位易错位；组件专用色使用命名替换。
             .replace(QStringLiteral("%RAILBG%"), railBg)
             .replace(QStringLiteral("%QUICKADDBG%"), quickAddBg)
+            .replace(QStringLiteral("%FAINT%"), faint)
+            .replace(QStringLiteral("%PRIORITY_ACTIVE%"), hex(ColorToken::PrimarySoft, theme))
             .replace(QStringLiteral("%PRIMARY%"), primary);
 }
 

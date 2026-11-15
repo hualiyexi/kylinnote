@@ -1,7 +1,9 @@
 #include "PopupMenu.h"
 
 #include <QEvent>
+#include <QAction>
 #include <QPainter>
+#include <QWidgetAction>
 #include <QPainterPath>
 #include <QVector>
 #include <cmath>
@@ -167,8 +169,36 @@ void PopupMenu::paintEvent(QPaintEvent* event) {
         painter.setBrush(Qt::NoBrush);
         painter.drawPath(card);
     }
-    // item 文字/图标/分隔线/选中高亮仍由 QMenu + 全局 QSS 绘制，压在卡片之上。
+    // item 文字、基础图标、分隔线与选中高亮由 QMenu + 全局 QSS 绘制。
     QMenu::paintEvent(event);
+    // Qt 5.12 把所有 action（含 separator）限制在同一缩进区域内，不能只靠 QSS
+    // 让分隔线通栏。实体菜单在最后补画网页几何，不使用会被子控件覆盖的底层线。
+    if (property("entityMenu").toBool()) {
+        QPainter painter(this);
+        const int left = qRound(cardRect().left()) + 1;
+        const int right = qRound(cardRect().right()) - 1;
+        for (QAction* action : actions()) {
+            if (!action->isVisible()) continue;
+            if (action->isSeparator()) {
+                const int y = actionGeometry(action).center().y();
+                painter.fillRect(QRect(left, y, qMax(0, right - left + 1), 1),
+                                 ThemeManager::instance().color(ds::ColorToken::Divider));
+                continue;
+            }
+            // QCommonStyle 在 Qt 5.12 中把菜单图标固定为 PM_SmallIconSize=16。
+            // QSS 预留 18px 左内边距，让文字落在 x+38；这里清掉原 16px 图标，
+            // 并在 x+12 重画 18px，最终得到网页的 12+18+8 图标文字几何。
+            if (qobject_cast<QWidgetAction*>(action) || action->icon().isNull()) continue;
+            const QRect row = actionGeometry(action);
+            const QRect iconRect(row.left() + 12, row.center().y() - 9, 18, 18);
+            const QRect cover(row.left(), iconRect.top(), 30, 18);
+            const bool hovered = action == activeAction() && action->isEnabled();
+            painter.fillRect(cover, ThemeManager::instance().color(
+                hovered ? ds::ColorToken::MenuHover : ds::ColorToken::MenuBg));
+            action->icon().paint(&painter, iconRect, Qt::AlignCenter,
+                                 action->isEnabled() ? QIcon::Normal : QIcon::Disabled);
+        }
+    }
 }
 
 }  // namespace kl

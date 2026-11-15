@@ -378,6 +378,11 @@ void TaskListModel::toggleChildren(const QString& id) {
     else m_collapsedTasks.insert(id);
     refresh();
 }
+void TaskListModel::expandChildren(const QString& id) {
+    if (id.isEmpty() || !m_collapsedTasks.contains(id)) return;
+    m_collapsedTasks.remove(id);
+    refresh();
+}
 void TaskListModel::toggleSection(const QString& key) {
     if (key.isEmpty()) return;
     if (m_collapsedSections.contains(key)) m_collapsedSections.remove(key);

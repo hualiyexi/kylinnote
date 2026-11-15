@@ -10,11 +10,12 @@
 namespace kl {
 namespace ds {
 
-// 字号阶梯（pt）。考据主体 14px≈10.5pt、菜单 13px≈9.75pt、详情标题 20pt。
+// 字号阶梯（pt）。考据主体 14px≈10.5pt、菜单 13px≈9.75pt、菜单标题 12px≈9pt、详情标题 20pt。
 enum class TypeScale : int {
     Caption = 0,  // 辅助/计数
     Body,         // 正文/列表（滴答计算值 14px，96 DPI 下 10.5pt）
     Menu,         // 菜单（13px，96 DPI 下 9.75pt）
+    MenuCaption,  // 菜单分组标题（12px，96 DPI 下 9pt）
     Subtitle,     // 次级标题
     Title,        // 面板标题
     Display,      // 大标题
@@ -34,6 +35,7 @@ enum class FontScene : int {
     DetailTitle,// 与正文融为一体的实体标题
     ListSection,// 第三列清单内分区标题（14px / 600）
     Menu,       // 13px 常规菜单与父任务链接
+    MenuCaption,// 12px 菜单分组标题
     Count
 };
 
