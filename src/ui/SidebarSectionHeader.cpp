@@ -17,13 +17,13 @@ SidebarSectionHeader::SidebarSectionHeader(const QString& title, const QString& 
     setObjectName(objectName);
     setFixedHeight(36);
     auto* outer = new QHBoxLayout(this);
-    outer->setContentsMargins(NavigationGeometry::SectionHorizontalInset, 3,
-                              NavigationGeometry::SectionHorizontalInset, 3);
+    outer->setContentsMargins(NavigationGeometry::RowHorizontalInset, 3,
+                              NavigationGeometry::RowHorizontalInset, 3);
     outer->setSpacing(0);
     m_card = new QFrame(this);
     m_card->setObjectName(QStringLiteral("SidebarSectionCard"));
     auto* layout = new QHBoxLayout(m_card);
-    layout->setContentsMargins(NavigationGeometry::SectionTitleInset, 0, 4, 0);
+    layout->setContentsMargins(NavigationGeometry::ListIconOffset, 0, 4, 0);
     layout->setSpacing(4);
     m_title = new QLabel(title, m_card);
     m_title->setFont(ds::qfont(ds::FontScene::Caption));
@@ -70,6 +70,34 @@ void SidebarSectionHeader::setLeadingIcon(IconId icon) {
     applyTheme();
 }
 
+void SidebarSectionHeader::setDisclosureEnabled(bool enabled) {
+    if (m_disclosureEnabled == enabled) return;
+    m_disclosureEnabled = enabled;
+    if (enabled && !m_disclosure) {
+        m_disclosure = new QToolButton(this);
+        m_disclosure->setObjectName(objectName() + QStringLiteral("Disclosure"));
+        m_disclosure->setFixedSize(14, 20);
+        m_disclosure->setIconSize(QSize(10, 10));
+        m_disclosure->setFocusPolicy(Qt::StrongFocus);
+        m_disclosure->setAutoRaise(true);
+        m_disclosure->setCursor(Qt::PointingHandCursor);
+        m_disclosure->setToolTip(QStringLiteral("展开或收起清单区域"));
+        m_disclosure->setAccessibleName(m_disclosure->toolTip());
+        m_disclosure->setStyleSheet(QStringLiteral("QToolButton{padding:0;border:0;}"));
+        m_disclosure->move(NavigationGeometry::DisclosureLeft,
+                           (height() - m_disclosure->height()) / 2);
+        m_disclosure->installEventFilter(this);
+        connect(m_disclosure, &QToolButton::clicked,
+                this, &SidebarSectionHeader::disclosureToggled);
+    }
+    if (m_disclosure) {
+        m_disclosure->setVisible(enabled);
+        if (enabled) m_disclosure->raise();
+    }
+    updateHover(m_hovered);
+    applyTheme();
+}
+
 void SidebarSectionHeader::setExpanded(bool expanded) {
     if (m_expanded == expanded) return;
     m_expanded = expanded;
@@ -87,6 +115,12 @@ void SidebarSectionHeader::leaveEvent(QEvent* event) {
 }
 
 void SidebarSectionHeader::mouseReleaseEvent(QMouseEvent* event) {
+    if (m_disclosureEnabled && event->button() == Qt::LeftButton
+        && event->pos().x() < NavigationGeometry::RowHorizontalInset) {
+        emit disclosureToggled();
+        event->accept();
+        return;
+    }
     if (m_collapseAction && event->button() == Qt::LeftButton
         && m_card->rect().contains(m_card->mapFromParent(event->pos()))) {
         emit actionTriggered();
@@ -115,6 +149,17 @@ void SidebarSectionHeader::applyTheme() {
             m_action->setIcon(QIcon(down.transformed(QTransform().rotate(-90))));
         }
     }
+    if (m_disclosure) {
+        m_disclosure->setIcon(AppIcons::icon(IconId::ChevronDown,
+            ds::ColorToken::TextTertiary, NavigationGeometry::DisclosureGlyphSize));
+        if (!m_expanded) {
+            const QPixmap down = m_disclosure->icon().pixmap(
+                NavigationGeometry::DisclosureGlyphSize, NavigationGeometry::DisclosureGlyphSize);
+            m_disclosure->setIcon(QIcon(down.transformed(QTransform().rotate(-90))));
+        }
+        m_disclosure->setVisible(m_disclosureEnabled && (m_hovered || m_disclosure->hasFocus()));
+        if (m_disclosureEnabled) m_disclosure->raise();
+    }
     if (m_action && !m_collapseAction && !m_hovered && !m_action->hasFocus())
         m_action->setIcon(QIcon());
 }
@@ -128,7 +173,7 @@ void SidebarSectionHeader::updateHover(bool hovered) {
 }
 
 bool SidebarSectionHeader::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == m_action
+    if ((watched == m_action || watched == m_disclosure)
         && (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut))
         applyTheme();
     return QFrame::eventFilter(watched, event);

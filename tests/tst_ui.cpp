@@ -98,6 +98,7 @@
 #include "ui/TaskListModel.h"
 #include "ui/TaskListView.h"
 #include "ui/TaskPanel.h"
+#include "ui/SidebarSectionHeader.h"
 #include "ui/ToastIsland.h"
 #include "ui/UpdateDialog.h"
 #include "ui/WindowChrome.h"
@@ -2425,18 +2426,20 @@ private slots:
         // 普通行与文件夹行使用同一个 20px 图标盒，箭头不影响这条左轴。
         const QImage topIcon = render(top);
         const QImage folderIcon = render(folder);
-        QCOMPARE(NavigationGeometry::FolderIconOffset, NavigationGeometry::ListIconOffset);
         QCOMPARE(iconLeft, NavigationGeometry::TitleLeft);
         QCOMPARE(NavigationGeometry::FolderDisclosureWidth, 16);
-        // 命中区仍覆盖原来的 x+17 点击点；三角形独立于图标绘制。
+        // 箭头与图标分别占据左侧区域和 14px 左轴，不再相互重叠。
+        QVERIFY(NavigationGeometry::DisclosureLeft
+                + NavigationGeometry::DisclosureGlyphSize < iconLeft);
         int arrowInk = 0;
         for (int y = 12; y < 25; ++y)
-            for (int x = 10; x < 14; ++x)
+            for (int x = 0; x < 10; ++x)
                 if (folderIcon.pixelColor(x, y).alpha() > 0) ++arrowInk;
         QVERIFY(arrowInk > 0);
         QVERIFY(QRectF(10, 10, 16, 16).contains(QPointF(17, 18)));
 
-        // 子清单图标盒对齐文件夹文字，20px 盒内的实际图形为 16px 并下移 1px。
+        // 子清单缩进 22px，使用 16px 图形；所有导航图标下移 1px。
+        QCOMPARE(NavigationGeometry::FolderChildIndent, 26 - 4);
         QImage expectedChild(220, 36, QImage::Format_ARGB32_Premultiplied);
         expectedChild.fill(Qt::transparent);
         QPainter childPainter(&expectedChild);
@@ -2445,7 +2448,7 @@ private slots:
             + NavigationGeometry::ChildIconGlyphInset;
         const qreal childGlyphTop = 18.0 - NavigationGeometry::IconBoxSize / 2.0
             + NavigationGeometry::ChildIconGlyphInset
-            + NavigationGeometry::ChildIconGlyphVerticalOffset;
+            + NavigationGeometry::IconGlyphVerticalOffset;
         AppIcons::paint(&childPainter, IconId::Folder,
                         QRectF(childGlyphLeft, childGlyphTop,
                                NavigationGeometry::ChildIconGlyphSize,
@@ -2463,15 +2466,14 @@ private slots:
         QPainter folderPainter(&expectedFolder);
         folderPainter.setFont(AppStyle::font(AppStyle::Font::Body));
         folderPainter.setPen(AppStyle::color(AppStyle::Color::Text));
-        const int folderLabelLeft = NavigationGeometry::RowHorizontalInset
-            + NavigationGeometry::FolderIconOffset + NavigationGeometry::IconBoxSize
+        const int folderLabelLeft = iconLeft + NavigationGeometry::IconBoxSize
             + NavigationGeometry::IconLabelGap;
         folderPainter.drawText(QRectF(folderLabelLeft, 0, 130, 36),
                                Qt::AlignLeft | Qt::AlignVCenter, folder->text());
         folderPainter.end();
         QVERIFY(actualFolder.copy(folderLabelLeft, 0, 130, 36)
                 == expectedFolder.copy(folderLabelLeft, 0, 130, 36));
-        QCOMPARE(folderLabelLeft, iconLeft + NavigationGeometry::FolderChildIndent);
+        QCOMPARE(folderLabelLeft, iconLeft + NavigationGeometry::FolderChildIndent + 4);
 
         QCOMPARE(ds::pointSize(ds::TypeScale::Body), 10.5);
         QCOMPARE(ds::pointSize(ds::TypeScale::Menu), 9.75);
@@ -2485,6 +2487,38 @@ private slots:
         const auto labels = header->findChildren<QLabel*>();
         QCOMPARE(labels.size(), 1);
         QCOMPARE(labels.first()->mapTo(navigationView->viewport(), QPoint()).x(), iconLeft);
+    }
+    void listSectionDisclosureCollapsesOrganization() {
+        const QString folder = m_store->createFolder(QStringLiteral("折叠文件夹"));
+        const QString child = m_store->createList(QStringLiteral("子清单"), folder);
+        const QString top = m_store->createList(QStringLiteral("顶层清单"));
+        QVERIFY(!child.isEmpty() && !top.isEmpty());
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* header = panel.findChild<SidebarSectionHeader*>(QStringLiteral("ListSectionHeader"));
+        QVERIFY(navigation && header);
+        auto* disclosure = header->disclosureButton();
+        QVERIFY(disclosure);
+        QCOMPARE(disclosure->x(), NavigationGeometry::DisclosureLeft);
+        const auto organizationVisible = [navigation]() {
+            for (int row = 0; row < navigation->count(); ++row) {
+                const auto* item = navigation->item(row);
+                if (item->data(NavigationDelegate::SectionRole).toBool()
+                    || item->data(NavigationDelegate::DividerRole).toBool()) continue;
+                const auto scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
+                if (scope == ViewScope::List || scope == ViewScope::Folder)
+                    if (!item->isHidden()) return true;
+            }
+            return false;
+        };
+        QVERIFY(organizationVisible());
+        header->setExpanded(true);
+        QTest::mouseClick(disclosure, Qt::LeftButton);
+        QTRY_VERIFY(!organizationVisible());
+        disclosure = panel.findChild<SidebarSectionHeader*>(
+            QStringLiteral("ListSectionHeader"))->disclosureButton();
+        QTest::mouseClick(disclosure, Qt::LeftButton);
+        QTRY_VERIFY(organizationVisible());
     }
     void sidebarSectionHeaderUsesOrdinaryRowHover() {
         TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
@@ -2768,6 +2802,20 @@ private slots:
             QVERIFY(item->data(Qt::DisplayRole).toString() != QStringLiteral("历史"));
             if (item->data(NavigationDelegate::DividerRole).toBool()) {
                 ++dividerCount;
+                if (!item->data(NavigationDelegate::OrganizationEndRole).toBool()) {
+                    auto* navDelegate = qobject_cast<NavigationDelegate*>(navigation->itemDelegate());
+                    QVERIFY(navDelegate);
+                    QImage separator(220, 33, QImage::Format_ARGB32_Premultiplied);
+                    separator.fill(Qt::white);
+                    QPainter separatorPainter(&separator);
+                    QStyleOptionViewItem separatorOption;
+                    separatorOption.rect = QRect(0, 0, 220, 33);
+                    navDelegate->paint(&separatorPainter, separatorOption,
+                                       navigation->model()->index(row, 0));
+                    separatorPainter.end();
+                    QCOMPARE(separator.pixelColor(110, 16),
+                             ThemeManager::instance().color(ds::ColorToken::Divider));
+                }
                 QVERIFY(item->data(Qt::DisplayRole).toString().isEmpty());
                 QCOMPARE(item->data(Qt::UserRole).toInt(), -1);
                 QCOMPARE(item->sizeHint().height(), 33);

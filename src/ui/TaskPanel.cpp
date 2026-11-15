@@ -759,7 +759,8 @@ void TaskPanel::rebuildNavigation() {
         item->setSizeHint(QSize(160, 36));
         auto* header = new SidebarSectionHeader(title, objectName, m_navigation);
         header->setAction(actionIcon, toolTip, actionName, collapseAction);
-        header->setExpanded(m_archivedExpanded);
+        header->setExpanded(objectName == QLatin1String("ArchiveSectionHeader")
+                            ? m_archivedExpanded : !m_listSectionCollapsed);
         m_navigation->setItemWidget(item, header);
         connect(header, &SidebarSectionHeader::actionTriggered, this, action);
         return header;
@@ -831,15 +832,22 @@ void TaskPanel::rebuildNavigation() {
     add(QStringLiteral("最近7天"), ViewScope::Next7Days, QString(), nullptr,
         QStringLiteral("next7days"));
     for (const TaskList& list : m_store->lists())
-        if (list.inbox)
-            add(QStringLiteral("收集箱"), ViewScope::List, list.id, &list,
-                QStringLiteral("inbox"));
+        if (list.inbox) {
+            auto* inbox = add(QStringLiteral("收集箱"), ViewScope::List, list.id, &list,
+                              QStringLiteral("inbox"));
+            if (inbox) inbox->setHidden(m_listSectionCollapsed);
+        }
 
     divider();
-    interactiveSection(QStringLiteral("清单"), QStringLiteral("ListSectionHeader"),
+    auto* listSection = interactiveSection(QStringLiteral("清单"), QStringLiteral("ListSectionHeader"),
                        IconId::Add, QStringLiteral("GroupMenuButton"),
                        QStringLiteral("添加清单"), false,
                        [this]() { createListDialog(QString(), EntityKind::Task); });
+    listSection->setDisclosureEnabled(true);
+    connect(listSection, &SidebarSectionHeader::disclosureToggled, this, [this]() {
+        m_listSectionCollapsed = !m_listSectionCollapsed;
+        QTimer::singleShot(0, this, [this]() { rebuildNavigation(); });
+    });
     struct NavigationContainer {
         const TaskList* list = nullptr;
         const Folder* folder = nullptr;
@@ -862,15 +870,25 @@ void TaskPanel::rebuildNavigation() {
     });
     for (const NavigationContainer& container : containers) {
         if (container.list) {
-            add(container.list->name, ViewScope::List, container.list->id, container.list);
+            auto* item = add(container.list->name, ViewScope::List, container.list->id,
+                             container.list);
+            if (item) item->setHidden(m_listSectionCollapsed);
             continue;
         }
         folder(*container.folder);
+        for (int row = m_navigation->count() - 1; row >= 0; --row) {
+            if (m_navigation->item(row)->data(NavigationDelegate::FolderIdRole).toString()
+                == container.folder->id) {
+                m_navigation->item(row)->setHidden(m_listSectionCollapsed);
+                break;
+            }
+        }
         for (const TaskList& list : lists) {
             if (list.inbox || list.archivedAtUtcMs > 0 || list.folderId != container.folder->id) continue;
             auto* item = add(list.name, ViewScope::List, list.id, &list, QString(),
                              NavigationGeometry::FolderChildIndent);
-            if (item) item->setHidden(m_collapsedFolders.contains(container.folder->id));
+            if (item) item->setHidden(m_listSectionCollapsed
+                                      || m_collapsedFolders.contains(container.folder->id));
         }
     }
 
@@ -886,15 +904,16 @@ void TaskPanel::rebuildNavigation() {
                 QTimer::singleShot(0, this, [this]() { rebuildNavigation(); });
             });
         archiveHeader->setLeadingIcon(IconId::ArchivedLists);
+        archiveHeader->setHidden(m_listSectionCollapsed);
         for (const TaskList& list : m_store->lists()) {
             if (list.inbox || list.archivedAtUtcMs == 0) continue;
             if (auto* item = add(list.name, ViewScope::List, list.id, &list, QString(), 12))
-                item->setHidden(!m_archivedExpanded);
+                item->setHidden(m_listSectionCollapsed || !m_archivedExpanded);
         }
     }
 
-    divider()->setData(NavigationDelegate::OrganizationEndRole, true);
     divider();
+    divider()->setData(NavigationDelegate::OrganizationEndRole, true);
     add(QStringLiteral("已完成"), ViewScope::Completed, QString(), nullptr,
         QStringLiteral("completed"));
     add(QStringLiteral("已放弃"), ViewScope::Abandoned, QString(), nullptr,

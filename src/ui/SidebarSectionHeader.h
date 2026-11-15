@@ -17,11 +17,14 @@ public:
                    bool collapseAction = false);
     void setLeadingIcon(IconId icon);
     void setExpanded(bool expanded);
+    void setDisclosureEnabled(bool enabled);
+    QToolButton* disclosureButton() const { return m_disclosure; }
     bool expanded() const { return m_expanded; }
     QToolButton* actionButton() const { return m_action; }
 
 signals:
     void actionTriggered();
+    void disclosureToggled();
 
 protected:
     void enterEvent(QEvent* event) override;
@@ -36,6 +39,8 @@ private:
     QLabel* m_leadingIcon = nullptr;
     QLabel* m_title = nullptr;
     QToolButton* m_action = nullptr;
+    QToolButton* m_disclosure = nullptr;
+    bool m_disclosureEnabled = false;
     IconId m_leadingIconId = IconId::None;
     IconId m_actionIcon = IconId::None;
     bool m_collapseAction = false;

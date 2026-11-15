@@ -117,8 +117,7 @@ struct NavigationLayout {
 NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
     const QRectF row = option.rect;
     NavigationLayout layout;
-    layout.background = row.adjusted(NavigationGeometry::RowHorizontalInset, 1.0,
-                                     -NavigationGeometry::RowHorizontalInset, -1.0);
+    layout.background = row.adjusted(10.0, 1.0, -10.0, -1.0);
     const int indent = index.data(NavigationDelegate::IndentRole).toInt();
     const bool folder = !index.data(NavigationDelegate::FolderIdRole).toString().isEmpty();
     // 文件夹箭头独立占位；图标与分区标题对齐，子清单图标盒再对齐文件夹文字。
@@ -371,15 +370,12 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const QRect row = o.rect;
     if (i.data(DividerRole).toBool()) {
         p->setRenderHint(QPainter::Antialiasing, false);
-        const bool organizationEnd = i.data(OrganizationEndRole).toBool();
         const bool after = i.data(DropLineRole).toString() == QLatin1String("after");
-        const int y = organizationEnd ? (after ? row.bottom() - 1 : row.top()) : row.top() + 16;
-        if (after || !organizationEnd) {
-            const QColor color = after ? AppStyle::color(Color::Accent)
-                : ThemeManager::instance().color(ds::ColorToken::Divider);
-            p->setPen(QPen(color, after ? 2.0 : 1.0));
-            p->drawLine(row.left() + 10, y, row.right() - 10, y);
-        }
+        const int y = after ? row.bottom() - 1 : row.top() + 16;
+        const QColor color = after ? AppStyle::color(Color::Accent)
+            : ThemeManager::instance().color(ds::ColorToken::Divider);
+        p->setPen(QPen(color, after ? 2.0 : 1.0));
+        p->drawLine(row.left() + 10, y, row.right() - 10, y);
         p->restore();
         return;
     }
@@ -407,10 +403,9 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const QString iconName = i.data(IconNameRole).toString();
     QRectF iconGlyph = layout.icon;
     if (!i.data(ParentFolderRole).toString().isEmpty()) {
-        // 20px 布局盒内画 16px 图形，并下移 1px 对齐中文视觉中线。
+        // 子清单使用 16px 图形；外层 20px 布局盒决定与文件夹文字的对齐。
         iconGlyph = QRectF(layout.icon.left() + NavigationGeometry::ChildIconGlyphInset,
-                           layout.icon.top() + NavigationGeometry::ChildIconGlyphInset
-                               + NavigationGeometry::ChildIconGlyphVerticalOffset,
+                           layout.icon.top() + NavigationGeometry::ChildIconGlyphInset,
                            NavigationGeometry::ChildIconGlyphSize,
                            NavigationGeometry::ChildIconGlyphSize);
     }
@@ -420,9 +415,11 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
         list.color = i.data(ListColorRole).toString();
         list.kind = static_cast<EntityKind>(i.data(ListKindRole).toInt());
         list.inbox = iconName == QLatin1String("inbox-list");
-        ListAppearance::paint(p, list, iconGlyph, iconColor);
+        ListAppearance::paint(p, list,
+            iconGlyph.translated(0.0, NavigationGeometry::IconGlyphVerticalOffset), iconColor);
     } else {
-        AppIcons::paint(p, static_cast<IconId>(i.data(IconRole).toInt()), iconGlyph, iconColor);
+        AppIcons::paint(p, static_cast<IconId>(i.data(IconRole).toInt()),
+            iconGlyph.translated(0.0, NavigationGeometry::IconGlyphVerticalOffset), iconColor);
     }
 
     // 滴答文件夹与普通清单均为 14px 常规字重，不额外加粗或缩小。
@@ -434,7 +431,7 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 
     p->setFont(AppStyle::font(AppStyle::Font::Small));
     p->setPen(AppStyle::color(Color::Faint));
-    p->drawText(QRectF(layout.background.left(), row.top() + 1.0,
+    p->drawText(QRectF(layout.background.left(), row.top(),
                        layout.background.width() - 12.0, row.height()),
                 Qt::AlignRight | Qt::AlignVCenter, layout.count);
     if (!layout.dot.isNull()) {
@@ -443,8 +440,11 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
         p->drawEllipse(layout.dot);
     }
     if (!folderId.isEmpty()) {
-        const QRectF arrow(layout.background.left(), layout.background.center().y() - 5.0,
-                           10.0, 10.0);
+        const QRectF arrow(NavigationGeometry::DisclosureLeft,
+                           layout.background.center().y()
+                               - NavigationGeometry::DisclosureGlyphSize / 2.0,
+                           NavigationGeometry::DisclosureGlyphSize,
+                           NavigationGeometry::DisclosureGlyphSize);
         paintTriangle(p, arrow, i.data(FolderExpandedRole).toBool(),
                       AppStyle::color(hovered ? Color::Muted : Color::Faint));
     }

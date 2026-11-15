@@ -128,6 +128,7 @@ private:
     bool m_detailOverlay = false;
     bool m_focusMode = false;
     bool m_archivedExpanded = false;
+    bool m_listSectionCollapsed = false;
     bool m_keepHiddenView = false;
     bool m_layoutUpdating = false;
     bool m_restoringLayout = false;
