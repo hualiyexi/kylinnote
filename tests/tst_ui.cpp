@@ -1834,6 +1834,20 @@ private slots:
         QTRY_VERIFY(AppToolTip::isVisible());
         AppToolTip::hideText();
 
+        auto* tipLabel = AppToolTip::window()->findChild<QLabel*>(QStringLiteral("AppToolTipText"));
+        QVERIFY(tipLabel);
+        const QString singleLine = QStringLiteral("测").repeated(30);
+        AppToolTip::showText(QPoint(200, 200), singleLine);
+        QApplication::processEvents();
+        QVERIFY(!tipLabel->wordWrap());
+        QVERIFY(tipLabel->width() >= tipLabel->fontMetrics().horizontalAdvance(singleLine));
+        const QString wrapped = QStringLiteral("测").repeated(31);
+        AppToolTip::showText(QPoint(200, 200), wrapped);
+        QApplication::processEvents();
+        QVERIFY(tipLabel->wordWrap());
+        QVERIFY(tipLabel->maximumWidth() <= 248);
+        AppToolTip::hideText();
+
         const QString id = m_store->createTask(QStringLiteral("短标题"));
         TaskListModel model(m_store.get());
         QListView tasks; tasks.setModel(&model); tasks.resize(560, 100); tasks.show();

@@ -24,6 +24,16 @@ namespace kl {
 namespace AppToolTip {
 namespace {
 
+constexpr int kNoWrapCharacters = 30;
+constexpr int kMaxWidth = 248;
+
+int plainTextLength(const QString& text) {
+    if (!Qt::mightBeRichText(text)) return text.size();
+    QTextDocument document;
+    document.setHtml(text);
+    return document.toPlainText().size();
+}
+
 class Bubble final : public QWidget {
 public:
     explicit Bubble()
@@ -51,6 +61,10 @@ public:
     }
 
     void setText(const QString& text) {
+        // 30 字以内保持单行；超过后才启用换行和最大宽度。
+        const bool wrap = plainTextLength(text) > kNoWrapCharacters;
+        m_label->setWordWrap(wrap);
+        m_label->setMaximumWidth(wrap ? kMaxWidth : QWIDGETSIZE_MAX);
         m_label->setTextFormat(Qt::mightBeRichText(text) ? Qt::RichText : Qt::PlainText);
         m_label->setText(text);
         adjustSize();

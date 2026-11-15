@@ -133,7 +133,7 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
     const QString listColor = index.data(NavigationDelegate::ListColorRole).toString();
     const bool colorDot = !folder && QColor(listColor).isValid();
     if (colorDot)
-        layout.dot = QRectF(right - 12.0, layout.background.center().y() - 4.0, 8.0, 8.0);
+        layout.dot = QRectF(right - 12.0, layout.background.center().y() - 3.0, 8.0, 8.0);
     const qreal labelRight = colorDot ? right - 12.0 : right;
     layout.label = QRectF(layout.icon.right() + 6.0, row.top(),
                           qMax(0.0, labelRight - layout.icon.right() - 6.0), row.height());
@@ -422,8 +422,9 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 
     p->setFont(AppStyle::font(AppStyle::Font::Small));
     p->setPen(AppStyle::color(Color::Faint));
-    p->drawText(QRectF(layout.background.left(), row.top(), layout.background.width() - 12.0,
-                       row.height()), Qt::AlignRight | Qt::AlignVCenter, layout.count);
+    p->drawText(QRectF(layout.background.left(), row.top() + 1.0,
+                       layout.background.width() - 12.0, row.height()),
+                Qt::AlignRight | Qt::AlignVCenter, layout.count);
     if (!layout.dot.isNull()) {
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(i.data(ListColorRole).toString()));
