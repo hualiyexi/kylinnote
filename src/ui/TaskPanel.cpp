@@ -488,6 +488,8 @@ void TaskPanel::buildUi() {
     });
     connect(taskDelegate, &TaskDelegate::childrenToggleActivated, this,
             [this](const QString& id) { m_model->toggleChildren(id); });
+    connect(taskDelegate, &TaskDelegate::sectionToggleActivated, this,
+            [this](const QString& key) { m_model->toggleSection(key); });
     connect(m_list, &TaskListView::entityDropRequested, this,
             [this](const QString& sourceId, const QStringList& orderedIds,
                    const QString& targetSection, bool pinned, bool detachParent) {

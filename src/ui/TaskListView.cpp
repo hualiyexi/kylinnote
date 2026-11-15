@@ -5,6 +5,7 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 
 #include "AppStyle.h"
@@ -37,6 +38,15 @@ void TaskListView::paintEvent(QPaintEvent* event)
     if (m_dropIndicator.isEmpty()) return;
     QPainter painter(viewport());
     painter.fillRect(m_dropIndicator, AppStyle::color(AppStyle::Color::Accent));
+}
+
+void TaskListView::mouseMoveEvent(QMouseEvent* event)
+{
+    QListView::mouseMoveEvent(event);
+    const QModelIndex index = indexAt(event->pos());
+    const bool header = index.isValid()
+        && index.data(TaskListModel::HeaderRole).toBool();
+    viewport()->setCursor(header ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
 void TaskListView::dragEnterEvent(QDragEnterEvent* event)

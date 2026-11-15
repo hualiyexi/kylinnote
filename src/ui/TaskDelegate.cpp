@@ -23,6 +23,24 @@ QRectF headerActionRect(const QRect& row) {
     return QRectF(row.right() - 58.0, row.center().y() - 13.0, 46.0, 26.0);
 }
 
+// 与滴答分区头一致：左侧 20px 起画 12px 三角，标题从 36px 起排。
+QRectF sectionArrowRect(const QRect& row) {
+    return QRectF(row.left() + 20.0, row.center().y() - 6.0, 12.0, 12.0);
+}
+constexpr qreal kSectionTitleLeft = 36.0;
+
+// 滴答用同一个下三角旋转表示收起，避免再维护一套右向图标。
+void paintTriangle(QPainter* p, const QRectF& rect, bool expanded, const QColor& color) {
+    p->save();
+    p->translate(rect.center());
+    if (!expanded) p->rotate(-90.0);
+    AppIcons::paint(p, QStringLiteral("thin-triangle-down"),
+                    QRectF(-rect.width() / 2.0, -rect.height() / 2.0,
+                           rect.width(), rect.height()),
+                    color);
+    p->restore();
+}
+
 struct TaskLayout {
     QRectF background;
     QRectF colorBar;
@@ -106,10 +124,11 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
     layout.background = row.adjusted(10.0, 1.0, -10.0, -1.0);
     const int indent = index.data(NavigationDelegate::IndentRole).toInt();
     const bool folder = !index.data(NavigationDelegate::FolderIdRole).toString().isEmpty();
+    // 滴答文件夹行：箭头占行首 16px，图标盒 20px（12px 起），再空 6px 到文字。
     if (folder)
-        layout.disclosure = QRectF(layout.background.left() + 4.0,
+        layout.disclosure = QRectF(layout.background.left(),
                                    layout.background.center().y() - 8.0, 16.0, 16.0);
-    layout.icon = QRectF(layout.background.left() + (folder ? 26.0 : 12.0) + indent,
+    layout.icon = QRectF(layout.background.left() + 12.0 + indent,
                          layout.background.center().y() - 10.0, 20.0, 20.0);
     layout.count = index.data(NavigationDelegate::CountRole).toString();
     const QFont countFont = AppStyle::font(AppStyle::Font::Small);
@@ -131,11 +150,15 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         p->setFont(titleFont);
         p->setPen(AppStyle::color(Color::Text));
         const QString title = i.data().toString();
-        qreal textLeft = row.left() + 16.0;
+        const bool collapsed = i.data(TaskListModel::SectionCollapsedRole).toBool();
+        const QColor arrowColor = AppStyle::color(
+            (o.state & QStyle::State_MouseOver) ? Color::Muted : Color::Faint);
+        paintTriangle(p, sectionArrowRect(row), !collapsed, arrowColor);
+        qreal textLeft = row.left() + kSectionTitleLeft;
         if (i.data(TaskListModel::SectionKeyRole).toString() == QLatin1String("pinned")) {
-            const QRectF icon(row.left() + 15.0, row.center().y() - 8.0, 16.0, 16.0);
+            const QRectF icon(textLeft, row.center().y() - 8.0, 16.0, 16.0);
             AppIcons::paint(p, IconId::PinSection, icon, AppStyle::color(Color::Star));
-            textLeft = icon.right() + 6.0;
+            textLeft = icon.right() + 5.0;
         }
         p->drawText(QRectF(textLeft, row.top(), qMax(0.0, row.width() - textLeft), row.height()),
                     Qt::AlignLeft | Qt::AlignVCenter, title);
@@ -301,6 +324,11 @@ bool TaskDelegate::editorEvent(QEvent* event,
                         index.data(TaskListModel::HeaderEntityIdsRole).toStringList());
                     return true;
                 }
+                const QString sectionKey = index.data(TaskListModel::SectionKeyRole).toString();
+                if (!sectionKey.isEmpty()) {
+                    emit sectionToggleActivated(sectionKey);
+                    return true;
+                }
                 return false;
             }
             const TaskLayout layout = taskLayout(option, index);
@@ -401,9 +429,9 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     p->drawText(QRectF(layout.background.left(), row.top(), layout.background.width() - 12.0,
                        row.height()), Qt::AlignRight | Qt::AlignVCenter, layout.count);
     if (!folderId.isEmpty()) {
-        const QString disclosure = i.data(FolderExpandedRole).toBool()
-            ? QStringLiteral("chevron-folder-open") : QStringLiteral("chevron-folder-close");
-        AppIcons::paint(p, disclosure, layout.disclosure, AppStyle::color(Color::Muted));
+        paintTriangle(p, layout.disclosure.adjusted(2.0, 2.0, -2.0, -2.0),
+                      i.data(FolderExpandedRole).toBool(),
+                      AppStyle::color(hovered ? Color::Muted : Color::Faint));
     }
     if (o.state & QStyle::State_HasFocus) {
         p->setBrush(Qt::NoBrush);

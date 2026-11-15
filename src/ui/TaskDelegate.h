@@ -31,6 +31,7 @@ signals:
     void listActivated(QString listId);
     void postponeActivated(QStringList entityIds);
     void childrenToggleActivated(QString entityId);
+    void sectionToggleActivated(QString sectionKey);
 };
 
 // 侧栏导航行：分区标题、SVG 图标、独立右对齐数量。

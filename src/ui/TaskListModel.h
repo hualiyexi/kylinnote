@@ -34,7 +34,8 @@ public:
         DepthRole,
         HasChildrenRole,
         ChildrenCollapsedRole,
-        UnpinnedSectionRole
+        UnpinnedSectionRole,
+        SectionCollapsedRole
     };
     explicit TaskListModel(TaskStore* store, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -51,6 +52,7 @@ public:
     QString entityId(const QModelIndex& index) const;
     int entityCount() const { return m_entityCount; }
     void toggleChildren(const QString& id);
+    void toggleSection(const QString& key);
     void setDragActive(bool active, const QString& sourceId = QString());
 public slots:
     void refresh();
@@ -71,6 +73,7 @@ private:
     ViewSpec m_filter;
     QVector<Row> m_rows;
     QSet<QString> m_collapsedTasks;
+    QSet<QString> m_collapsedSections;
     QString m_dragSourceId;
     bool m_dragActive = false;
     int m_entityCount = 0;

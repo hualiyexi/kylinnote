@@ -2179,7 +2179,7 @@ private slots:
         QVERIFY(rowRect.isValid());
         const QImage image = view->viewport()->grab().toImage();
         const qreal dpr = image.devicePixelRatio();
-        const QRectF icon(rowRect.left() + 15.0, rowRect.center().y() - 8.0, 16.0, 16.0);
+        const QRectF icon(rowRect.left() + 36.0, rowRect.center().y() - 8.0, 16.0, 16.0);
         int orangePixels = 0;
         for (int y = qFloor(icon.top() * dpr); y <= qCeil(icon.bottom() * dpr); ++y) {
             for (int x = qFloor(icon.left() * dpr); x <= qCeil(icon.right() * dpr); ++x) {
@@ -2245,6 +2245,109 @@ private slots:
         }
         QVERIFY2(heights.size() >= 3, qPrintable(QStringLiteral("headers: %1").arg(heights.size())));
         for (int height : heights) QVERIFY(qAbs(height - heights.first()) <= 1);
+    }
+    void sectionHeaderToggleCollapsesRows() {
+        const QDate today = toAppTime(appNow()).date();
+        const auto makeDatedTask = [this](const QString& title, const QDate& date) {
+            const QString id = m_store->createTask(title);
+            Entity entity = m_store->entity(id);
+            entity.allDayDate = date;
+            return m_store->saveTask(entity) ? id : QString();
+        };
+        const QString pinned = makeDatedTask(QStringLiteral("可折叠置顶"), today);
+        QVERIFY(!pinned.isEmpty());
+        QVERIFY(m_store->setPinnedAt(pinned, appNow()));
+        const QString normal = makeDatedTask(QStringLiteral("可折叠今天"), today);
+        QVERIFY(!normal.isEmpty());
+
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(navigation && view && model);
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (navigation->item(row)->data(Qt::UserRole).toInt()
+                == static_cast<int>(ViewScope::Today)) {
+                navigation->setCurrentRow(row);
+                break;
+            }
+        }
+        QTRY_COMPARE(model->filter().scope, ViewScope::Today);
+        const auto headerFor = [view, model](const QString& key) {
+            for (int row = 0; row < model->rowCount(); ++row) {
+                const QModelIndex index = model->index(row, 0);
+                if (model->data(index, TaskListModel::HeaderRole).toBool()
+                    && model->data(index, TaskListModel::SectionKeyRole).toString() == key)
+                    return index;
+            }
+            return QModelIndex();
+        };
+        const QModelIndex pinnedHeader = headerFor(QStringLiteral("pinned"));
+        QVERIFY(pinnedHeader.isValid());
+        const int expandedRows = model->rowCount();
+        const QString screenshotDir = qEnvironmentVariable("KYLINLIST_SCREENSHOT_DIR");
+        if (!screenshotDir.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDir));
+            QVERIFY(view->grab().save(screenshotDir + QStringLiteral("/section-expanded.png")));
+        }
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          view->visualRect(pinnedHeader).center());
+        QTRY_VERIFY(headerFor(QStringLiteral("pinned")).data(
+            TaskListModel::SectionCollapsedRole).toBool());
+        if (!screenshotDir.isEmpty())
+            QVERIFY(view->grab().save(screenshotDir + QStringLiteral("/section-collapsed.png")));
+        QCOMPARE(model->rowCount(), expandedRows - 1);
+        QVERIFY(!model->indexForTask(pinned).isValid());
+        QVERIFY(model->indexForTask(normal).isValid());
+        QCOMPARE(headerFor(QStringLiteral("pinned"))
+                     .data(TaskListModel::HeaderEntityIdsRole).toStringList().size(), 1);
+
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          view->visualRect(headerFor(QStringLiteral("pinned"))).center());
+        QTRY_VERIFY(!headerFor(QStringLiteral("pinned")).data(
+            TaskListModel::SectionCollapsedRole).toBool());
+        QCOMPARE(model->rowCount(), expandedRows);
+        QVERIFY(model->indexForTask(pinned).isValid());
+    }
+    void folderDisclosureCollapsesLists() {
+        const QString folder = m_store->createFolder(QStringLiteral("可折叠文件夹"),
+                                                     QStringLiteral("🏛️"));
+        const QString list = m_store->createList(QStringLiteral("文件夹内清单"), folder,
+                                                 EntityKind::Task, QStringLiteral("🏛️"),
+                                                 QStringLiteral("#4CA1FF"));
+        QVERIFY(!list.isEmpty());
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        QVERIFY(navigation);
+        const auto itemFor = [navigation](const QString& folderId, const QString& listId) {
+            for (int row = 0; row < navigation->count(); ++row) {
+                QListWidgetItem* item = navigation->item(row);
+                if (!folderId.isEmpty()
+                    && item->data(NavigationDelegate::FolderIdRole).toString() == folderId)
+                    return item;
+                if (!listId.isEmpty() && item->data(Qt::UserRole + 1).toString() == listId)
+                    return item;
+            }
+            return static_cast<QListWidgetItem*>(nullptr);
+        };
+        QListWidgetItem* folderItem = itemFor(folder, QString());
+        QListWidgetItem* listItem = itemFor(QString(), list);
+        QVERIFY(folderItem && listItem);
+        QVERIFY(!listItem->isHidden());
+        QVERIFY(folderItem->data(NavigationDelegate::FolderExpandedRole).toBool());
+        const QRect folderRect = navigation->visualItemRect(folderItem);
+        QTest::mouseClick(navigation->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          QPoint(folderRect.left() + 18, folderRect.center().y()));
+        QTRY_VERIFY((listItem = itemFor(QString(), list)) != nullptr);
+        QTRY_VERIFY(listItem->isHidden());
+        QVERIFY(!itemFor(folder, QString())->data(NavigationDelegate::FolderExpandedRole).toBool());
+
+        folderItem = itemFor(folder, QString());
+        const QRect collapsedRect = navigation->visualItemRect(folderItem);
+        QTest::mouseClick(navigation->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          QPoint(collapsedRect.left() + 18, collapsedRect.center().y()));
+        QTRY_VERIFY((listItem = itemFor(QString(), list)) != nullptr);
+        QTRY_VERIFY(!listItem->isHidden());
     }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));

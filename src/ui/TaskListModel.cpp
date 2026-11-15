@@ -61,6 +61,7 @@ QVariant TaskListModel::data(const QModelIndex& index, int role) const {
         if (role == HeaderRole) return true;
         if (role == SectionKeyRole) return row.sectionKey;
         if (role == HeaderEntityIdsRole) return row.sectionEntityIds;
+        if (role == SectionCollapsedRole) return m_collapsedSections.contains(row.sectionKey);
         if (role == HeaderActionRole) {
             return row.sectionKey == QLatin1String("overdue") && m_filter.scope != ViewScope::List
                 ? QStringLiteral("postpone") : QString();
@@ -329,7 +330,8 @@ void TaskListModel::refresh() {
         header.sectionEntityIds = group.ids;
         m_rows.append(header);
         m_entityCount += group.ids.size();
-        m_rows += group.rows;
+        if (!m_collapsedSections.contains(section.key))
+            m_rows += group.rows;
     }
     // 父子归组后原分区可能变空。先输出所有正常行，再统一追加临时投放区，
     // 这样 dragEnter 不会在按下位置之前插入标题并改变目标坐标。
@@ -354,6 +356,12 @@ void TaskListModel::toggleChildren(const QString& id) {
     if (id.isEmpty()) return;
     if (m_collapsedTasks.contains(id)) m_collapsedTasks.remove(id);
     else m_collapsedTasks.insert(id);
+    refresh();
+}
+void TaskListModel::toggleSection(const QString& key) {
+    if (key.isEmpty()) return;
+    if (m_collapsedSections.contains(key)) m_collapsedSections.remove(key);
+    else m_collapsedSections.insert(key);
     refresh();
 }
 QString TaskListModel::unpinnedSection(const Entity& entity) const {
