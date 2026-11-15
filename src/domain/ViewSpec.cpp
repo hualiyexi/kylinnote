@@ -163,6 +163,7 @@ QString scheduleLabel(const Entity &entity)
     const auto format = [](const QDateTime &value) { return toAppTime(value).toString(QStringLiteral("M月d日 HH:mm")); };
     if (entity.startAt.isValid() && entity.dueAt.isValid()) return format(entity.startAt) + QStringLiteral(" — ") + format(entity.dueAt);
     if (entity.dueAt.isValid()) return QStringLiteral("截止 ") + format(entity.dueAt);
+    if (entity.allDayDate.isValid()) return entity.allDayDate.toString(QStringLiteral("M月d日"));
     if (entity.startAt.isValid()) return QStringLiteral("开始 ") + format(entity.startAt);
     return QStringLiteral("未安排时间");
 }

@@ -17,7 +17,23 @@ QString rowScheduleLabel(const Entity& entity) {
     else if (date == today.addDays(-1)) label = QStringLiteral("昨天");
     else if (date.year() == today.year()) label = date.toString(QStringLiteral("M月d日"));
     else label = date.toString(QStringLiteral("yyyy年M月d日"));
-    const QDateTime timed = entity.dueAt.isValid() ? entity.dueAt : entity.startAt;
+    const QDateTime timed = entity.dueAt.isValid() ? entity.dueAt
+        : entity.allDayDate.isValid() ? QDateTime() : entity.startAt;
+    if (timed.isValid()) label += toAppTime(timed).toString(QStringLiteral(" HH:mm"));
+    return label;
+}
+
+QString rowScheduleTooltip(const Entity& entity) {
+    const QDate date = effectiveDate(entity);
+    if (!date.isValid()) return QString();
+    const QDate today = toAppTime(appNow()).date();
+    const QString weekday = QStringLiteral("周")
+        + QStringLiteral("一二三四五六日").mid(date.dayOfWeek() - 1, 1);
+    QString label = date.year() == today.year()
+        ? weekday + date.toString(QStringLiteral("，M月d日"))
+        : date.toString(QStringLiteral("yyyy年M月d日 ")) + weekday;
+    const QDateTime timed = entity.dueAt.isValid() ? entity.dueAt
+        : entity.allDayDate.isValid() ? QDateTime() : entity.startAt;
     if (timed.isValid()) label += toAppTime(timed).toString(QStringLiteral(" HH:mm"));
     return label;
 }
@@ -43,7 +59,7 @@ QVariant TaskListModel::data(const QModelIndex& index, int role) const {
             return row.sectionKey == QLatin1String("overdue") && m_filter.scope != ViewScope::List
                 ? QStringLiteral("postpone") : QString();
         }
-        if (role == Qt::DisplayRole || role == Qt::AccessibleTextRole || role == Qt::ToolTipRole) return row.header;
+        if (role == Qt::DisplayRole || role == Qt::AccessibleTextRole) return row.header;
         return QVariant();
     }
     const Entity& entity = row.entity;
@@ -87,8 +103,7 @@ QVariant TaskListModel::data(const QModelIndex& index, int role) const {
         case ScheduleRole:
             return rowScheduleLabel(entity);
         case ScheduleTooltipRole:
-            return entity.allDayDate.isValid() && !entity.dueAt.isValid()
-                ? entity.allDayDate.toString(QStringLiteral("yyyy年M月d日")) : scheduleLabel(entity);
+            return rowScheduleTooltip(entity);
         case DeletedRole:
             return entity.deleted;
         case OverdueRole: {
@@ -97,8 +112,6 @@ QVariant TaskListModel::data(const QModelIndex& index, int role) const {
         }
         case HeaderRole:
             return false;
-        case Qt::ToolTipRole:
-            return entity.title + QLatin1Char('\n') + (entity.kind == EntityKind::Note ? QStringLiteral("笔记") : scheduleLabel(entity));
         case MetaRole: {
             QStringList parts;
             if (entity.kind == EntityKind::Note) parts << QStringLiteral("笔记");

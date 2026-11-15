@@ -24,6 +24,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include "../app/TaskStore.h"
+#include "../domain/ViewSpec.h"
 #include "AppIcons.h"
 #include "AttachmentWidget.h"
 #include "ActivityLogDialog.h"
@@ -765,18 +766,15 @@ void TaskDetailWidget::refreshIcons() {
 void TaskDetailWidget::updateDateChip() {
     if (m_id.isEmpty()) return;
     const Entity entity = m_store->entity(m_id);
-    const QDateTime effective = entity.dueAt.isValid() ? entity.dueAt : entity.startAt;
+    const QDateTime timed = entity.dueAt.isValid() ? entity.dueAt
+        : entity.allDayDate.isValid() ? QDateTime() : entity.startAt;
     const QDate today = toAppTime(appNow()).date();
-    const QDate date = entity.dueAt.isValid() ? toAppTime(entity.dueAt).date()
-                      : entity.allDayDate.isValid() ? entity.allDayDate
-                      : toAppTime(effective).date();
+    const QDate date = effectiveDate(entity);
     const bool active = entity.kind == EntityKind::Task && entity.status == TaskStatus::Active;
     const qint64 days = date.isValid() ? date.daysTo(today) : 0;
     const bool overdue = active && (days > 0 || (entity.dueAt.isValid() && entity.dueAt < appNow()));
     QString text = date.isValid() ? date.toString(QStringLiteral("yyyy/MM/dd")) : QStringLiteral("设置日期");
-    if (effective.isValid() && (!entity.allDayDate.isValid() || entity.dueAt.isValid())
-        && toAppTime(effective).time() != QTime(0, 0))
-        text += toAppTime(effective).toString(QStringLiteral(" HH:mm"));
+    if (timed.isValid()) text += toAppTime(timed).toString(QStringLiteral(" HH:mm"));
     if (active && days > 0) text += QStringLiteral(", 延期%1天").arg(days);
     m_dateChip->setText(text);
     m_dateChip->setAccessibleName(text);

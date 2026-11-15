@@ -46,7 +46,7 @@ QString color(ds::ColorToken token)
 
 QIcon quickIcon(int index)
 {
-    // 顺序与滴答日期面板一致：今天 / 明天 / 下周 / 下个月。
+    // 今天 / 明天 / 今天 +7 天 / 下个月同日。
     static const char* const kIds[] = {"quick-today", "tomorrow-list",
                                        "quick-nextweek", "quick-nextmonth"};
     if (index < 0 || index >= 4) return QIcon();
@@ -93,9 +93,9 @@ QToolButton* makeBackButton(QWidget* parent)
 
 DatePickerPopup::DatePickerPopup(QWidget* parent)
     : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint)
-    , m_dateTime(appNow())
-    , m_visibleMonth(QDate(toAppTime(m_dateTime).date().year(), toAppTime(m_dateTime).date().month(), 1))
+    , m_visibleMonth(toAppTime(appNow()).date())
 {
+    m_visibleMonth = QDate(m_visibleMonth.year(), m_visibleMonth.month(), 1);
     setObjectName(QStringLiteral("DatePickerPopup"));
     setWindowTitle(QStringLiteral("日期选择器"));
     setAttribute(Qt::WA_TranslucentBackground);
@@ -186,15 +186,21 @@ QWidget* DatePickerPopup::buildMainPage(QWidget* parent)
     quickRow->setContentsMargins(0, 0, 0, 0);
     quickRow->setSpacing(12);
     quickRow->addStretch();
-    // 四个 tooltip 与执行效果均未验证，不绑定推断命令。
+    const QString quickLabels[] = {
+        QStringLiteral("今天"), QStringLiteral("明天"),
+        QStringLiteral("7天后"), QStringLiteral("下个月同日")
+    };
     for (int i = 0; i < 4; ++i) {
         auto* button = new QToolButton(datePage);
         button->setObjectName(QStringLiteral("DatePickerQuick"));
         button->setProperty("quickIndex", i);
         button->setIconSize(QSize(20, 20));
         button->setFixedSize(40, 32);
-        button->setToolTip(QStringLiteral("快捷选项（含义与行为未验证）"));
-        button->setAccessibleName(QStringLiteral("快捷选项 %1（含义未验证）").arg(i + 1));
+        button->setToolTip(i == 3 ? QStringLiteral("下个月同日（月末不足时取最后一天）") : quickLabels[i]);
+        button->setAccessibleName(quickLabels[i]);
+        connect(button, &QToolButton::clicked, this, [this, i]() {
+            selectDate(quickDate(i, toAppTime(appNow()).date()));
+        });
         m_quickButtons.append(button);
         quickRow->addWidget(button);
     }
@@ -341,7 +347,7 @@ QWidget* DatePickerPopup::buildMainPage(QWidget* parent)
     connect(recurrenceEntry, &QPushButton::clicked, this, &DatePickerPopup::openRecurrencePage);
     connect(clear, &QPushButton::clicked, this, [this]() {
         m_dateTime = QDateTime();
-        m_hasDate = false;
+        m_allDayDate = QDate();
         m_reminder = QDateTime();
         m_recurrence = QStringLiteral("none");
         m_persistentReminder = false;
@@ -388,7 +394,20 @@ QWidget* DatePickerPopup::buildTimePage(QWidget* parent)
     m_timeEdit->setMaxLength(5);
     m_timeEdit->setAccessibleName(QStringLiteral("设置时间"));
     layout->addWidget(m_timeEdit);
+    auto* noTime = new QPushButton(QStringLiteral("不指定时间"), page);
+    noTime->setObjectName(QStringLiteral("DatePickerNoTime"));
+    noTime->setAccessibleName(QStringLiteral("不指定时间"));
+    noTime->setToolTip(QStringLiteral("保留日期，移除时刻"));
+    noTime->setFixedHeight(32);
+    layout->addWidget(noTime);
 
+    connect(noTime, &QPushButton::clicked, this, [this]() {
+        if (hasTime()) setAllDayDate(selectedDate());
+        m_timeList->setCurrentRow(-1);
+        m_timeEdit->clear();
+        setInputInvalid(m_timeEdit, false);
+        showMainPage();
+    });
     connect(back, &QToolButton::clicked, this, &DatePickerPopup::showMainPage);
     auto chooseItem = [this](QListWidgetItem* item) {
         if (!item) return;
@@ -598,15 +617,15 @@ QPushButton#DatePickerEntry {
 }
 QPushButton#DatePickerEntry:hover { background-color: %HOVER%; }
 QPushButton#DatePickerEntry:focus { border-color: %FOCUS_RING%; }
-QPushButton#DatePickerClear {
+QPushButton#DatePickerClear, QPushButton#DatePickerNoTime {
     color: %TEXT_SECONDARY%;
     background-color: %SURFACE%;
     border: 1px solid %BORDER%;
     border-radius: 6px;
     padding: 4px 8px;
 }
-QPushButton#DatePickerClear:hover { background-color: %FIELD_HOVER%; }
-QPushButton#DatePickerClear:focus { border-color: %FOCUS_RING%; }
+QPushButton#DatePickerClear:hover, QPushButton#DatePickerNoTime:hover { background-color: %FIELD_HOVER%; }
+QPushButton#DatePickerClear:focus, QPushButton#DatePickerNoTime:focus { border-color: %FOCUS_RING%; }
 QPushButton#DatePickerConfirm {
     color: %ON_PRIMARY%;
     background-color: %PRIMARY%;
@@ -708,14 +727,14 @@ void DatePickerPopup::buildCalendarGrid()
     const QDate first(m_visibleMonth.year(), m_visibleMonth.month(), 1);
     const int offset = (7 + first.dayOfWeek() - m_firstDay) % 7;
     const QDate start = first.addDays(-offset);
-    const QDate selected = m_dateTime.isValid() ? toAppTime(m_dateTime).date() : QDate();
+    const QDate selected = selectedDate();
     for (int index = 0; index < 42; ++index) {
         const QDate date = start.addDays(index);
         QToolButton* button = m_dayButtons.at(index);
         button->setText(QString::number(date.day()));
         button->setProperty("date", date);
         button->setProperty("outsideMonth", date.month() != m_visibleMonth.month());
-        button->setChecked(m_hasDate && date == selected);
+        button->setChecked(hasDate() && date == selected);
         button->setToolTip(date.toString(QStringLiteral("yyyy年M月d日")));
         button->setAccessibleName(date.toString(QStringLiteral("yyyy年M月d日 dddd")));
         repolish(button);
@@ -728,17 +747,24 @@ void DatePickerPopup::updateMonthLabel()
         m_monthLabel->setText(QStringLiteral("%1年%2月").arg(m_visibleMonth.year()).arg(m_visibleMonth.month()));
 }
 
+QDate DatePickerPopup::quickDate(int index, const QDate& today)
+{
+    if (!today.isValid()) return QDate();
+    if (index == 0) return today;
+    if (index == 1) return today.addDays(1);
+    if (index == 2) return today.addDays(7);
+    if (index == 3) return today.addMonths(1);
+    return QDate();
+}
+
 void DatePickerPopup::selectDate(const QDate& date)
 {
     if (!date.isValid()) return;
-    const QDateTime current = toAppTime(m_dateTime);
-    const QTime time = m_hasDate && current.isValid() ? current.time() : QTime(0, 0);
-    m_dateTime = fromAppTime(QDateTime(date, time));
-    m_hasDate = true;
-    m_cleared = false;
-    m_visibleMonth = QDate(date.year(), date.month(), 1);
-    updateMonthLabel();
-    buildCalendarGrid();
+    if (hasTime()) {
+        setDateTime(fromAppTime(QDateTime(date, toAppTime(m_dateTime).time())));
+    } else {
+        setAllDayDate(date);
+    }
 }
 
 void DatePickerPopup::setRangeMode(bool range)
@@ -758,7 +784,7 @@ void DatePickerPopup::openTimePage()
 {
     const QDateTime local = toAppTime(m_dateTime);
     m_timeList->setCurrentRow(-1);
-    if (m_hasDate && local.isValid()) {
+    if (hasTime()) {
         const int minute = local.time().hour() * 60 + local.time().minute();
         if (local.time().second() == 0 && local.time().msec() == 0 && minute % 30 == 0) {
             const int row = minute / 30;
@@ -824,12 +850,9 @@ void DatePickerPopup::openRecurrencePage()
 void DatePickerPopup::applyTime(const QTime& time)
 {
     if (!time.isValid()) return;
-    m_dateTime = fromAppTime(QDateTime(selectedDate(), time));
-    m_hasDate = true;
-    m_cleared = false;
+    setDateTime(fromAppTime(QDateTime(selectedDate(), time)));
     m_timeEdit->setText(time.toString(QStringLiteral("HH:mm")));
     setInputInvalid(m_timeEdit, false);
-    buildCalendarGrid();
 }
 
 bool DatePickerPopup::applyCustomTime()
@@ -891,15 +914,15 @@ bool DatePickerPopup::applyCustomRecurrence()
 
 QDate DatePickerPopup::selectedDate() const
 {
-    const QDateTime local = toAppTime(m_dateTime);
-    return local.isValid() ? local.date() : toAppTime(appNow()).date();
+    if (hasTime()) return toAppTime(m_dateTime).date();
+    return m_allDayDate.isValid() ? m_allDayDate : toAppTime(appNow()).date();
 }
 
 void DatePickerPopup::setDateTime(const QDateTime& dt)
 {
     m_dateTime = dt.isValid() ? dt.toUTC() : QDateTime();
-    if (!m_dateTime.isValid()) m_hasDate = false;
-    if (m_dateTime.isValid()) {
+    m_allDayDate = QDate();
+    if (hasTime()) {
         const QDate date = toAppTime(m_dateTime).date();
         m_visibleMonth = QDate(date.year(), date.month(), 1);
     }
@@ -908,13 +931,21 @@ void DatePickerPopup::setDateTime(const QDateTime& dt)
     buildCalendarGrid();
 }
 
+void DatePickerPopup::setAllDayDate(const QDate& date)
+{
+    m_dateTime = QDateTime();
+    m_allDayDate = date;
+    if (date.isValid()) m_visibleMonth = QDate(date.year(), date.month(), 1);
+    m_cleared = false;
+    updateMonthLabel();
+    buildCalendarGrid();
+}
+
 void DatePickerPopup::setHasDate(bool has)
 {
-    if (has && !m_dateTime.isValid())
-        m_dateTime = fromAppTime(QDateTime(selectedDate(), QTime(0, 0)));
-    m_hasDate = has;
+    if (!has) setDateTime(QDateTime());
+    else if (!hasDate()) setAllDayDate(selectedDate());
     m_cleared = false;
-    buildCalendarGrid();
 }
 
 void DatePickerPopup::setReminder(const QDateTime& reminder)
@@ -933,12 +964,22 @@ void DatePickerPopup::setRecurrence(const QString& rule)
 
 QDateTime DatePickerPopup::dateTime() const
 {
-    return m_hasDate && m_dateTime.isValid() ? m_dateTime.toUTC() : QDateTime();
+    return hasTime() ? m_dateTime.toUTC() : QDateTime();
+}
+
+QDate DatePickerPopup::allDayDate() const
+{
+    return m_allDayDate;
 }
 
 bool DatePickerPopup::hasDate() const
 {
-    return m_hasDate;
+    return hasTime() || m_allDayDate.isValid();
+}
+
+bool DatePickerPopup::hasTime() const
+{
+    return m_dateTime.isValid();
 }
 
 QDateTime DatePickerPopup::reminder() const
@@ -989,7 +1030,7 @@ void DatePickerPopup::popupAt(const QRect& globalAnchor)
     activateWindow();
 
     bool focused = false;
-    if (m_hasDate) {
+    if (hasDate()) {
         for (QToolButton* button : m_dayButtons) {
             if (button->isChecked() && button->property("outsideMonth").toBool() == false) {
                 button->setFocus();

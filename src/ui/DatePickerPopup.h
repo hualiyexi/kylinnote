@@ -18,7 +18,7 @@ class QTime;
 
 namespace kl {
 
-// 日期弹层的值均为 UTC；只有显示与用户输入使用 Asia/Shanghai 墙上时间。
+// 明确时刻使用 UTC；纯日期使用 QDate，只有显示与输入时刻才换算应用时区。
 // accepted() 使用 QDialog 已有信号，cleared() 表示用户明确点击了“清除”。
 // 给定接口中信号与 const getter 同名；在非 const 对象上查询状态需通过 const 引用调用 getter。
 class DatePickerPopup : public QDialog {
@@ -26,16 +26,22 @@ class DatePickerPopup : public QDialog {
 public:
     explicit DatePickerPopup(QWidget* parent = nullptr);
 
+    // setDateTime 始终表示明确时刻，包含 00:00；与 setAllDayDate 互斥。
     void setDateTime(const QDateTime& dt);
+    void setAllDayDate(const QDate& date);
     void setHasDate(bool has);
     void setReminder(const QDateTime& reminder);
     void setRecurrence(const QString& rule);
 
     QDateTime dateTime() const;
+    QDate allDayDate() const;
     bool hasDate() const;
+    bool hasTime() const;
     QDateTime reminder() const;
     QString recurrence() const;
     bool cleared() const;
+
+    static QDate quickDate(int index, const QDate& today);
 
     void popupBelow(QWidget* anchor);
     void popupAt(const QRect& globalAnchor);
@@ -69,11 +75,11 @@ private:
     QDate selectedDate() const;
 
     QDateTime m_dateTime;
+    QDate m_allDayDate;
     QDateTime m_reminder;
     QString m_recurrence = QStringLiteral("none");
     QDate m_visibleMonth;
     int m_firstDay = Qt::Monday;
-    bool m_hasDate = false;
     bool m_cleared = false;
     bool m_persistentReminder = false;
 

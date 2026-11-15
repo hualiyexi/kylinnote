@@ -305,6 +305,8 @@ private slots:
     void attachmentsShaStateAndTransactions();
     void desktopNotesAreDeviceIndependent();
     void allDayRecurrenceAndFlatBackup();
+    void dateOnlyAndMidnightBackup_data();
+    void dateOnlyAndMidnightBackup();
     void entityCodecAndBackupRoundTrip();
     void listAppearanceArchiveAndAtomicUpdate();
     void listUpdatesRejectStaleRevisions();
@@ -1534,6 +1536,59 @@ void TaskTests::allDayRecurrenceAndFlatBackup()
     QCOMPARE(queryRows(QStringLiteral("SELECT * FROM recurrence_links ORDER BY id")), beforeLinks);
     QCOMPARE(queryRows(QStringLiteral("SELECT * FROM reminders ORDER BY id")), beforeReminders);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM desktop_notes")).toInt(), 0); // 本机桌面投影不属于备份
+}
+
+void TaskTests::dateOnlyAndMidnightBackup_data()
+{
+    QTest::addColumn<QDate>("allDayDate");
+    QTest::addColumn<QDateTime>("startAt");
+    QTest::addColumn<QDateTime>("dueAt");
+    const QDate date(2026, 11, 15);
+    const QDateTime midnight = fromAppTime(QDateTime(date, QTime(0, 0)));
+    QTest::newRow("date-only") << date << QDateTime() << QDateTime();
+    QTest::newRow("explicit-midnight") << QDate() << QDateTime() << midnight;
+    QTest::newRow("legacy-date-with-start")
+        << date << fromAppTime(QDateTime(date.addDays(-1), QTime(14, 30))) << QDateTime();
+    QTest::newRow("legacy-date-with-midnight") << date << QDateTime() << midnight;
+}
+
+void TaskTests::dateOnlyAndMidnightBackup()
+{
+    QFETCH(QDate, allDayDate);
+    QFETCH(QDateTime, startAt);
+    QFETCH(QDateTime, dueAt);
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString id = store.createTask(QStringLiteral("日期语义")); QVERIFY(!id.isEmpty());
+    Entity task = store.entity(id);
+    task.allDayDate = allDayDate; task.startAt = startAt; task.dueAt = dueAt;
+    QVERIFY2(store.saveTask(task), qPrintable(store.lastError()));
+    QVERIFY(store.load());
+    QCOMPARE(store.entity(id).allDayDate, allDayDate);
+    QCOMPARE(store.entity(id).startAt, startAt);
+    QCOMPARE(store.entity(id).dueAt, dueAt);
+    QCOMPARE(scalar(QStringLiteral("SELECT all_day_date IS NULL FROM entities WHERE id='%1'").arg(id)).toBool(), !allDayDate.isValid());
+    QCOMPARE(scalar(QStringLiteral("SELECT start_at_utc_ms IS NULL FROM entities WHERE id='%1'").arg(id)).toBool(), !startAt.isValid());
+    QCOMPARE(scalar(QStringLiteral("SELECT due_at_utc_ms IS NULL FROM entities WHERE id='%1'").arg(id)).toBool(), !dueAt.isValid());
+    const QList<QVariantList> before = queryRows(QStringLiteral("SELECT * FROM entities ORDER BY id"));
+    QVERIFY2(store.exportBackup(backupPath()), qPrintable(store.lastError()));
+    const QJsonObject root = readMetadata(backupPath());
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 3);
+    const QJsonArray entities = root.value(QStringLiteral("entities")).toArray();
+    QCOMPARE(entities.size(), 1);
+    const QJsonObject exported = entities.first().toObject();
+    QCOMPARE(exported.value(QStringLiteral("allDayDate")).isNull(), !allDayDate.isValid());
+    if (allDayDate.isValid())
+        QCOMPARE(exported.value(QStringLiteral("allDayDate")).toString(), allDayDate.toString(Qt::ISODate));
+    QCOMPARE(exported.value(QStringLiteral("startAtUtcMs")).isNull(), !startAt.isValid());
+    QCOMPARE(exported.value(QStringLiteral("dueAtUtcMs")).isNull(), !dueAt.isValid());
+    if (dueAt.isValid())
+        QCOMPARE(static_cast<qint64>(exported.value(QStringLiteral("dueAtUtcMs")).toDouble()), dueAt.toMSecsSinceEpoch());
+    QVERIFY2(store.importBackup(backupPath()), qPrintable(store.lastError()));
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM entities ORDER BY id")), before);
+    QCOMPARE(store.entity(id).allDayDate, allDayDate);
+    QCOMPARE(store.entity(id).startAt, startAt);
+    QCOMPARE(store.entity(id).dueAt, dueAt);
+    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 6);
 }
 
 void TaskTests::entityCodecAndBackupRoundTrip()
