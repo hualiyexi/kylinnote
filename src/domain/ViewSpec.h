@@ -17,6 +17,10 @@ struct ViewSpec {
     QString folderId;
     ViewRenderer renderer = ViewRenderer::List;
     QString search;
+    // 纯展示选项，不写入任务数据；默认保持活动清单只显示未完成任务的旧行为。
+    bool showCompleted = false;
+    bool showDetails = false;
+    bool countdownDates = false;
 };
 
 QDate effectiveDate(const Entity &entity);

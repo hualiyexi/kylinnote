@@ -1,6 +1,7 @@
 #include "TaskListModel.h"
 #include "../app/TaskStore.h"
 #include "ListAppearance.h"
+#include "Markdown.h"
 #include "TaskListView.h"
 
 #include <QMimeData>
@@ -11,11 +12,17 @@
 namespace kl {
 namespace {
 
-QString rowScheduleLabel(const Entity& entity) {
+QString rowScheduleLabel(const Entity& entity, bool countdown) {
     if (entity.kind != EntityKind::Task) return QString();
     const QDate date = effectiveDate(entity);
     if (!date.isValid()) return QString();
     const QDate today = toAppTime(appNow()).date();
+    if (countdown) {
+        const int days = today.daysTo(date);
+        if (days == 0) return QStringLiteral("今天");
+        return days > 0 ? QStringLiteral("%1天后").arg(days)
+                        : QStringLiteral("%1天前").arg(-days);
+    }
     QString label;
     if (date == today) label = QStringLiteral("今天");
     else if (date == today.addDays(1)) label = QStringLiteral("明天");
@@ -120,9 +127,22 @@ QVariant TaskListModel::data(const QModelIndex& index, int role) const {
         case ListColorRole:
             return list.color;
         case ScheduleRole:
-            return rowScheduleLabel(entity);
+            return rowScheduleLabel(entity, m_filter.countdownDates);
         case ScheduleTooltipRole:
             return rowScheduleTooltip(entity);
+        case DetailRole: {
+            QStringList parts;
+            if (!entity.body.trimmed().isEmpty())
+                parts.append(Markdown::plainText(entity).simplified());
+            if (!entity.checklist.isEmpty()) {
+                int done = 0;
+                for (const ChecklistItem& item : entity.checklist) if (item.done) ++done;
+                parts.append(QStringLiteral("检查项 %1/%2").arg(done).arg(entity.checklist.size()));
+            }
+            return parts.join(QStringLiteral(" · "));
+        }
+        case DetailsVisibleRole:
+            return m_filter.showDetails;
         case DeletedRole:
             return entity.deleted;
         case OverdueRole: {

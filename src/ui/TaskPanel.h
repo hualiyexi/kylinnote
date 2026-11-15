@@ -125,6 +125,7 @@ private:
     bool m_sidebarUserHidden = false;
     bool m_detailAutoHidden = false;
     bool m_sidebarAutoHidden = false;
+    bool m_preferDetailOverlay = true;
     bool m_detailOverlay = false;
     bool m_focusMode = false;
     bool m_archivedExpanded = false;

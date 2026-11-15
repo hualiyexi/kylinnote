@@ -25,7 +25,7 @@ option(KYLINLIST_BUNDLE_QT "Install Linux executable beside bundled Qt libraries
 option(KYLINLIST_WITH_DBUS "Build the optional Linux D-Bus adapter" ${UNIX})
 option(KYLINLIST_REQUIRE_X11 "Fail if Linux global-hotkey support cannot be built" OFF)
 
-find_package(Qt5 5.12 REQUIRED COMPONENTS Core Gui Widgets Sql Network Svg)
+find_package(Qt5 5.12 REQUIRED COMPONENTS Core Gui Widgets Sql Network Svg PrintSupport)
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     find_package(Qt5 5.12 REQUIRED COMPONENTS DBus)
 endif()
@@ -107,6 +107,8 @@ set(KYLINLIST_UI_SOURCES
     src/ui/EmojiPickerPopup.cpp
     src/ui/SettingsDialog.cpp
     src/ui/TaskDetailWidget.cpp
+    src/ui/DisplaySettingsDialog.cpp
+    src/ui/TaskPrintDocument.cpp
     src/ui/TaskPanel.cpp
     src/ui/ReminderPopup.cpp
     src/ui/EntityCommands.cpp
@@ -125,7 +127,7 @@ if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
 endif()
 add_library(kylinlist_ui STATIC ${KYLINLIST_UI_SOURCES})
 target_include_directories(kylinlist_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(kylinlist_ui PUBLIC kylinlist_core Qt5::Widgets Qt5::Svg)
+target_link_libraries(kylinlist_ui PUBLIC kylinlist_core Qt5::Widgets Qt5::Svg Qt5::PrintSupport)
 if(UNIX AND NOT APPLE AND KYLINLIST_WITH_DBUS)
     target_link_libraries(kylinlist_ui PUBLIC Qt5::DBus)
     target_compile_definitions(kylinlist_ui PUBLIC KYLINLIST_HAVE_DBUS=1)

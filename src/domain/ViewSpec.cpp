@@ -107,7 +107,13 @@ bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today, co
             // 笔记保留的 status 不影响普通清单可见性，也永不进入任务时间/归档视图。
             if (spec.scope != ViewScope::AllLists && spec.scope != ViewScope::List
                 && spec.scope != ViewScope::Folder) return false;
-        } else if (entity.status != TaskStatus::Active) return false;
+        } else if (entity.status != TaskStatus::Active) {
+            const bool visibleCompleted = spec.showCompleted
+                && entity.status == TaskStatus::Completed
+                && (spec.scope == ViewScope::AllLists || spec.scope == ViewScope::List
+                    || spec.scope == ViewScope::Folder);
+            if (!visibleCompleted) return false;
+        }
     }
     if (spec.scope == ViewScope::List && entity.listId != spec.listId) return false;
     if (spec.scope == ViewScope::Folder && !folderListIds.contains(entity.listId)) return false;
@@ -143,9 +149,11 @@ QVector<ViewSection> buildSections(const QVector<Entity> &entities, const ViewSp
         return sections;
     }
 
-    QVector<Entity> pinned, overdue, upcoming, undated, notes;
+    QVector<Entity> pinned, overdue, upcoming, undated, notes, completed;
     for (const Entity &entity : filtered) {
-        if (entity.pinnedAt.isValid()) pinned.append(entity);
+        if (entity.kind == EntityKind::Task && entity.status == TaskStatus::Completed)
+            completed.append(entity);
+        else if (entity.pinnedAt.isValid()) pinned.append(entity);
         else if (entity.kind == EntityKind::Note) notes.append(entity);
         else {
             const QDate date = effectiveDate(entity);
@@ -154,13 +162,15 @@ QVector<ViewSection> buildSections(const QVector<Entity> &entities, const ViewSp
             else upcoming.append(entity);
         }
     }
-    sortPinned(&pinned); sortByDate(&overdue); sortByDate(&upcoming); sortByCreated(&undated); sortByCreated(&notes);
+    sortPinned(&pinned); sortByDate(&overdue); sortByDate(&upcoming); sortByCreated(&undated);
+    sortByCreated(&notes); sortByCreated(&completed);
     appendSection(&sections, QStringLiteral("pinned"), QStringLiteral("置顶"), pinned);
     appendSection(&sections, QStringLiteral("overdue"), QStringLiteral("已过期"), overdue);
     appendSection(&sections, QStringLiteral("upcoming"), QStringLiteral("未过期"), upcoming);
     if (spec.renderer == ViewRenderer::List) {
         appendSection(&sections, QStringLiteral("undated"), QStringLiteral("无日期"), undated);
         appendSection(&sections, QStringLiteral("notes"), QStringLiteral("笔记"), notes);
+        appendSection(&sections, QStringLiteral("completed"), QStringLiteral("已完成"), completed);
     }
     return sections;
 }

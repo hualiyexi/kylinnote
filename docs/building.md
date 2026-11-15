@@ -1,6 +1,6 @@
 # 构建、测试与离线打包
 
-KylinList 使用 C++14、Qt Widgets、Qt Sql/SQLite 和 Qt Network。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
+KylinList 使用 C++14、Qt Widgets、Qt Sql/SQLite、Qt Network 和 Qt PrintSupport。Linux 固定在 Ubuntu 20.04 容器中构建，使用发行版的 Qt 5.12.8；Windows 同样使用 Qt 5.12.8，搭配 MinGW 7.3 x64。Markdown 解析器 MD4C 0.5.2 已随源码附带。
 
 ## 日常优先使用 CI 产物
 

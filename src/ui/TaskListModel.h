@@ -35,7 +35,9 @@ public:
         HasChildrenRole,
         ChildrenCollapsedRole,
         UnpinnedSectionRole,
-        SectionCollapsedRole
+        SectionCollapsedRole,
+        DetailRole,          // 单行纯文本摘要：正文与检查项进度。
+        DetailsVisibleRole
     };
     explicit TaskListModel(TaskStore* store, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;

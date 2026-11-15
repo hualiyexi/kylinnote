@@ -53,10 +53,16 @@ struct TaskLayout {
     QRectF title;
     QRectF list;
     QRectF date;
+    QRectF detail;
 };
 
 TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
     const QRectF row = option.rect;
+    const bool showDetail = index.data(TaskListModel::DetailsVisibleRole).toBool()
+        && !index.data(TaskListModel::DetailRole).toString().isEmpty();
+    const qreal primaryHeight = AppStyle::metric(Metric::TaskRowHeight);
+    const QRectF mainRow(row.left(), row.top(), row.width(),
+                         showDetail ? qMin(primaryHeight, row.height()) : row.height());
     const QFontMetrics smallMetrics(AppStyle::font(AppStyle::Font::Small));
     const int depth = qMax(0, index.data(TaskListModel::DepthRole).toInt());
     const qreal indent = depth * 24.0;
@@ -65,34 +71,41 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     const QString date = index.data(TaskListModel::ScheduleRole).toString();
 
     TaskLayout layout;
-    // 色条不随父子层级移动；拖动柄和悬浮背景在子任务中整体缩进一级。
+    // 色条和行背景覆盖详情；主行交互区域仍保持原来的 40px 高度。
     layout.colorBar = QRectF(row.left() + 16.0, row.top(), 3.0, row.height());
-    layout.dragHandle = QRectF(row.left() + 5.0 + indent, row.center().y() - 6.0, 12.0, 12.0);
+    layout.dragHandle = QRectF(mainRow.left() + 5.0 + indent,
+                               mainRow.center().y() - 6.0, 12.0, 12.0);
     if (index.data(TaskListModel::HasChildrenRole).toBool())
-        layout.disclosure = QRectF(row.left() + 20.0 + indent,
-                                   row.center().y() - 8.0, 16.0, 16.0);
+        layout.disclosure = QRectF(mainRow.left() + 20.0 + indent,
+                                   mainRow.center().y() - 8.0, 16.0, 16.0);
     layout.background = QRectF(row.left() + 20.0 + indent, row.top(),
                                qMax(0.0, row.width() - 38.0 - indent), row.height());
-    layout.checkBox = QRectF(row.left() + 34.0 + indent, row.center().y() - 8.0, 16.0, 16.0);
-    const qreal left = row.left() + 58.0 + indent;
-    const qreal titleFloor = qMin(160.0, qMax(0.0, row.width() - 56.0) * 0.5);
-    const qreal metadataWidth = qMax(0.0, row.width() - 56.0 - titleFloor);
+    layout.checkBox = QRectF(mainRow.left() + 34.0 + indent,
+                             mainRow.center().y() - 8.0, 16.0, 16.0);
+    const qreal left = mainRow.left() + 58.0 + indent;
+    const qreal titleFloor = qMin(160.0, qMax(0.0, mainRow.width() - 56.0) * 0.5);
+    const qreal metadataWidth = qMax(0.0, mainRow.width() - 56.0 - titleFloor);
     // 行背景右侧留 18px；元信息再向内 8px，避免清单/日期贴住右边缘。
-    qreal right = row.right() - 26.0;
+    qreal right = mainRow.right() - 26.0;
     if (!deleted && !date.isEmpty()) {
         const qreal width = qMin(qMin(112.0, smallMetrics.horizontalAdvance(date) + 8.0),
                                 metadataWidth * 0.55);
-        layout.date = QRectF(right - width, row.top(), width, row.height());        right -= width + 8.0;
+        layout.date = QRectF(right - width, mainRow.top(), width, mainRow.height());
+        right -= width + 8.0;
     }
     if (!deleted && !listName.isEmpty()) {
         const qreal nameWidth = qMin(72.0, smallMetrics.horizontalAdvance(listName) + 0.0);
         const qreal width = qMin(nameWidth + 27.0, qMax(0.0, right - left - titleFloor - 8.0));
         if (width >= 22.0) {
-            layout.list = QRectF(right - width, row.top(), width, row.height());
+            layout.list = QRectF(right - width, mainRow.top(), width, mainRow.height());
             right -= width + 8.0;
         }
     }
-    layout.title = QRectF(left, row.top(), qMax(0.0, right - left), row.height());
+    layout.title = QRectF(left, mainRow.top(), qMax(0.0, right - left), mainRow.height());
+    if (showDetail)
+        layout.detail = QRectF(left, mainRow.bottom(),
+                               qMax(0.0, row.right() - 26.0 - left),
+                               qMax(0.0, row.height() - mainRow.height()));
     return layout;
 }
 
@@ -252,6 +265,13 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
                                             qMax(0, qRound(layout.title.width()))));
 
     p->setFont(AppStyle::font(AppStyle::Font::Small));
+    if (!layout.detail.isNull()) {
+        p->setPen(AppStyle::color(Color::Muted));
+        const QString detail = i.data(TaskListModel::DetailRole).toString();
+        p->drawText(layout.detail, Qt::AlignLeft | Qt::AlignVCenter,
+                    p->fontMetrics().elidedText(detail, Qt::ElideRight,
+                                                qMax(0, qRound(layout.detail.width()))));
+    }
     if (!layout.list.isNull()) {
         const TaskList list = listFromIndex(i);
         const QRectF glyph(layout.list.left(), layout.list.center().y() - 7.0, 14.0, 14.0);
@@ -275,8 +295,11 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
 }
 
 QSize TaskDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& index) const {
-    return QSize(320, index.data(TaskListModel::HeaderRole).toBool()
-                          ? 36 : AppStyle::metric(Metric::TaskRowHeight));
+    if (index.data(TaskListModel::HeaderRole).toBool()) return QSize(320, 36);
+    int height = AppStyle::metric(Metric::TaskRowHeight);
+    if (index.data(TaskListModel::DetailsVisibleRole).toBool()
+        && !index.data(TaskListModel::DetailRole).toString().isEmpty()) height += 24;
+    return QSize(320, height);
 }
 
 bool TaskDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
@@ -299,6 +322,9 @@ bool TaskDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
             const QString listName = index.data(TaskListModel::ListNameRole).toString();
             const QFontMetrics metrics(AppStyle::font(AppStyle::Font::Small));
             if (metrics.horizontalAdvance(listName) > layout.list.width() - 18.0) text = listName;
+        } else if (layout.detail.contains(event->pos())) {
+            target = layout.detail.toAlignedRect();
+            text = index.data(TaskListModel::DetailRole).toString();
         } else if (layout.title.contains(event->pos())) {
             target = layout.title.toAlignedRect();
             const QString title = index.data(Qt::DisplayRole).toString();

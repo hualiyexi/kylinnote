@@ -50,9 +50,9 @@ dpkg -i "$DEB"
 [[ "$(dpkg-query -W -f='${Status}' kylinlist)" == 'install ok installed' ]] || die 'Offline dpkg install failed'
 assert_no_system_qt
 LIBDIR=/usr/lib/kylinlist
-for path in kylinlist libQt5Core.so.5 libQt5Gui.so.5 libQt5Widgets.so.5 libQt5Sql.so.5 libQt5Network.so.5 libQt5Svg.so.5 libQt5XcbQpa.so.5 \
+for path in kylinlist libQt5Core.so.5 libQt5Gui.so.5 libQt5Widgets.so.5 libQt5Sql.so.5 libQt5Network.so.5 libQt5Svg.so.5 libQt5PrintSupport.so.5 libQt5XcbQpa.so.5 \
         plugins/platforms/libqxcb.so plugins/sqldrivers/libqsqlite.so \
-        plugins/imageformats/libqsvg.so plugins/iconengines/libqsvgicon.so qt.conf; do
+        plugins/imageformats/libqsvg.so plugins/iconengines/libqsvgicon.so plugins/printsupport/libcupsprintersupport.so qt.conf; do
     [[ -f "$LIBDIR/$path" ]] || die "Bundle is missing $path"
 done
 case "$(dpkg --print-architecture):$(uname -m)" in

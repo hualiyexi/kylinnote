@@ -205,8 +205,8 @@ if [[ "$BUNDLE_QT" == ON ]]; then
     [[ -x "$BIN" ]] || die "Bundle executable missing: $BIN"
     verify_architecture "$BIN"
     echo "==> Using Qt plugins: $PLUGIN_SRC (Qt $QT_VERSION)"
-    for plugin in platforms/libqxcb.so sqldrivers/libqsqlite.so imageformats/libqsvg.so iconengines/libqsvgicon.so; do
-        [[ -f "$PLUGIN_SRC/$plugin" ]] || die "Required Qt plugin missing: $plugin (install libqt5sql5-sqlite and libqt5svg5)"
+    for plugin in platforms/libqxcb.so sqldrivers/libqsqlite.so imageformats/libqsvg.so iconengines/libqsvgicon.so printsupport/libcupsprintersupport.so; do
+        [[ -f "$PLUGIN_SRC/$plugin" ]] || die "Required Qt plugin missing: $plugin (install libqt5sql5-sqlite, libqt5svg5 and libqt5printsupport5)"
         install -D -m 0644 "$PLUGIN_SRC/$plugin" "$LIBDIR/plugins/$plugin"
     done
     # GLX integration is loaded dynamically rather than through DT_NEEDED.

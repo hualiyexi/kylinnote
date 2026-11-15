@@ -83,6 +83,13 @@ QString iconNameFor(IconId id) {
         case IconId::WindowMaximize: return "md-tl-fullscreen";
         case IconId::WindowClose: return "bold_close";
         case IconId::Sort: return "sort";
+        case IconId::MoreTitlebar: return "more-titlebar";
+        case IconId::SidebarCollapse: return "sidebar-collapse";
+        case IconId::SidebarExpand: return "sidebar-expand";
+        case IconId::HideCompleted: return "hide-completed";
+        case IconId::HideDetails: return "hide-details";
+        case IconId::DisplaySettings: return "calendar-config";
+        case IconId::Print: return "print-in-list";
         case IconId::Help: return "help";
         case IconId::Sync: return "sidebar-sync";
 
@@ -289,6 +296,13 @@ QString accessibleName(IconId id) {
         case IconId::WindowMaximize: return QStringLiteral("最大化");
         case IconId::WindowClose: return QStringLiteral("关闭窗口");
         case IconId::Sort: return QStringLiteral("排序与视图");
+        case IconId::MoreTitlebar: return QStringLiteral("视图选项");
+        case IconId::SidebarCollapse: return QStringLiteral("隐藏筛选栏");
+        case IconId::SidebarExpand: return QStringLiteral("显示筛选栏");
+        case IconId::HideCompleted: return QStringLiteral("显示或隐藏已完成");
+        case IconId::HideDetails: return QStringLiteral("显示或隐藏详细");
+        case IconId::DisplaySettings: return QStringLiteral("显示设置");
+        case IconId::Print: return QStringLiteral("打印");
         case IconId::Help: return QStringLiteral("帮助");
         case IconId::Sync: return QStringLiteral("本机数据");
         default: return QString();

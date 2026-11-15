@@ -20,6 +20,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPrintDialog>
+#include <QPrinter>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -30,6 +32,7 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -43,6 +46,7 @@
 #include "../platform/Autostart.h"
 #include "AppIcons.h"
 #include "AppStyle.h"
+#include "DisplaySettingsDialog.h"
 #include "EntityCommands.h"
 #include "FolderEditorDialog.h"
 #include "ListAppearance.h"
@@ -58,9 +62,11 @@
 #include "TaskDetailWidget.h"
 #include "TaskListModel.h"
 #include "TaskListView.h"
+#include "TaskPrintDocument.h"
 #include "ToastIsland.h"
 #include "WindowChrome.h"
 #include "WindowBorderOverlay.h"
+#include "WorkspaceGeometry.h"
 #include "WorkspaceSurface.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
@@ -144,6 +150,11 @@ TaskPanel::TaskPanel(TaskStore* store, QWidget* parent) : QMainWindow(parent), m
     m_sidebarWidth = qBound(180, settings.value(QStringLiteral("sidebarWidth"), AppStyle::metric(AppStyle::Metric::SidebarWidth)).toInt(), 360);
     m_detailWidth = qBound(300, settings.value(QStringLiteral("detailWidth"), 370).toInt(), 560);
     m_sidebarUserHidden = settings.value(QStringLiteral("sidebarHidden"), false).toBool();
+    m_filter.showCompleted = settings.value(QStringLiteral("showCompleted"), false).toBool();
+    m_filter.showDetails = settings.value(QStringLiteral("showDetails"), false).toBool();
+    m_filter.countdownDates = settings.value(QStringLiteral("countdownDates"), false).toBool();
+    m_preferDetailOverlay = settings.value(QStringLiteral("detailPopup"), true).toBool();
+    m_model->setFilter(m_filter);
     m_restoringLayout = true;
     if (m_splitter->count() == 3) {
         const QList<int> restored = m_splitter->sizes();
@@ -223,18 +234,21 @@ void TaskPanel::buildUi() {
     m_activityRail->setObjectName(QStringLiteral("ActivityRail"));
     m_activityRail->setFixedWidth(52);
     auto* rail = new QVBoxLayout(m_activityRail);
-    rail->setContentsMargins(6, 44, 6, 10);
-    rail->setSpacing(8);
+    rail->setContentsMargins(6, WorkspaceGeometry::RailTopMargin, 6, 10);
+    rail->setSpacing(WorkspaceGeometry::RailButtonSpacing);
     auto* account = new QToolButton(m_activityRail);
     account->setObjectName(QStringLiteral("AccountButton"));
-    account->setFixedSize(36, 36);
-    account->setIconSize(QSize(30, 30));
+    account->setFixedSize(WorkspaceGeometry::RailAccountSize,
+                          WorkspaceGeometry::RailAccountSize);
+    account->setIconSize(QSize(WorkspaceGeometry::RailAccountSize,
+                               WorkspaceGeometry::RailAccountSize));
     account->setToolTip(QStringLiteral("本机工作区"));
     account->setAccessibleName(QStringLiteral("本机工作区"));
     account->setCursor(Qt::PointingHandCursor);
     connect(account, &QToolButton::clicked, this, &TaskPanel::backupMenu);
     rail->addWidget(account, 0, Qt::AlignHCenter);
-    rail->addSpacing(12);
+    // 与头像下方 margin 和功能区内边距合计 16px 的网页间距一致。
+    rail->addSpacing(WorkspaceGeometry::RailAfterAccountExtraSpacing);
     const auto railButton = [this, rail](QToolButton*& target, const QString& name,
                                         IconId icon, const QString& tooltip) {
         target = new QToolButton(m_activityRail);
@@ -298,7 +312,7 @@ void TaskPanel::buildUi() {
     m_sidebar->setMinimumWidth(180);
     m_sidebar->setMaximumWidth(360);
     auto* side = new QVBoxLayout(m_sidebar);
-    side->setContentsMargins(4, 12, 4, 8);
+    side->setContentsMargins(4, WorkspaceGeometry::NavigationTopMargin, 4, 8);
     side->setSpacing(2);
 
     m_navigation = new NavigationListWidget(m_sidebar);
@@ -357,12 +371,12 @@ void TaskPanel::buildUi() {
     m_middle->setObjectName(QStringLiteral("ListPane"));
     m_middle->setMinimumWidth(320);
     auto* center = new QVBoxLayout(m_middle);
-    center->setContentsMargins(0, 36, 0, 0);
+    center->setContentsMargins(0, WorkspaceGeometry::ListHeaderTopMargin, 0, 0);
     center->setSpacing(0);
 
     auto* listHeader = new QFrame(m_middle);
     listHeader->setObjectName(QStringLiteral("ListHeader"));
-    listHeader->setFixedHeight(40);
+    listHeader->setFixedHeight(WorkspaceGeometry::ListHeaderHeight);
     auto* header = new QHBoxLayout(listHeader);
     header->setContentsMargins(22, 0, 10, 0);
     header->setSpacing(4);
@@ -389,14 +403,6 @@ void TaskPanel::buildUi() {
     m_renderer->setFixedHeight(32);
     m_renderer->hide();
     header->addWidget(m_renderer);
-    auto* sort = new QToolButton(listHeader);
-    sort->setObjectName(QStringLiteral("ListSort"));
-    sort->setFixedSize(32, 32);
-    sort->setAutoRaise(true);
-    sort->setToolTip(QStringLiteral("排序与视图"));
-    sort->setAccessibleName(QStringLiteral("排序与视图"));
-    connect(sort, &QToolButton::clicked, this, &TaskPanel::workspaceMenu);
-    header->addWidget(sort);
     m_workspaceMore = new QToolButton(listHeader);
     m_workspaceMore->setToolTip(QStringLiteral("视图选项"));
     m_workspaceMore->setAccessibleName(QStringLiteral("工作区视图选项"));
@@ -555,8 +561,12 @@ void TaskPanel::buildUi() {
     // 窗口按钮悬浮在最右列顶部；第二列开关位于列表标题栏。
     m_sidebarToggle = new QToolButton(listHeader);
     m_sidebarToggle->setObjectName(QStringLiteral("SidebarToggle"));
-    m_sidebarToggle->setFixedSize(32, 32);
+    m_sidebarToggle->setFixedSize(WorkspaceGeometry::SidebarToggleSize,
+                                  WorkspaceGeometry::SidebarToggleSize);
+    m_sidebarToggle->setIconSize(QSize(WorkspaceGeometry::SidebarToggleIconSize,
+                                      WorkspaceGeometry::SidebarToggleIconSize));
     m_sidebarToggle->setAutoRaise(true);
+    m_sidebarToggle->setCursor(Qt::PointingHandCursor);
     m_sidebarToggle->setCheckable(true);
     m_sidebarToggle->setChecked(true);
     m_sidebarToggle->setToolTip(QStringLiteral("显示或隐藏筛选栏"));
@@ -1241,11 +1251,17 @@ void TaskPanel::reconcileWorkspaceLayout() {
         return;
     }
     m_layoutUpdating = true;
+    // “侧边栏”模式在窄窗缩小双栏，保留停靠详情；“弹窗”沿用现有覆盖详情。
+    const int middleMinimum = m_preferDetailOverlay ? 320 : 260;
+    const int detailMinimum = m_preferDetailOverlay ? 300 : 260;
+    m_middle->setMinimumWidth(middleMinimum);
+    m_detailFrame->setMinimumWidth(detailMinimum);
     const int available = m_splitter->width();
     const bool oldDetailAutoHidden = m_detailAutoHidden;
     const bool oldSidebarAutoHidden = m_sidebarAutoHidden;
     // 先收第四列，再收第二列；拉宽时按相反顺序恢复。
-    const int detailThreshold = m_sidebarUserHidden ? 621 : 820;
+    const int detailThreshold = m_preferDetailOverlay
+        ? (m_sidebarUserHidden ? 621 : 820) : 0;
     const int sidebarThreshold = 620;
     m_detailAutoHidden = available < detailThreshold;
     m_sidebarAutoHidden = available < sidebarThreshold;
@@ -1283,16 +1299,25 @@ void TaskPanel::reconcileWorkspaceLayout() {
     if (m_sidebarToggle) {
         const QSignalBlocker blocker(m_sidebarToggle);
         m_sidebarToggle->setChecked(showSidebar);
+        m_sidebarToggle->setIcon(AppIcons::icon(
+            showSidebar ? IconId::SidebarCollapse : IconId::SidebarExpand,
+            WorkspaceGeometry::SidebarToggleIconSize));
+        m_sidebarToggle->setToolTip(showSidebar ? QStringLiteral("隐藏筛选栏")
+                                                : QStringLiteral("显示筛选栏"));
+        m_sidebarToggle->setAccessibleName(m_sidebarToggle->toolTip());
     }
 
     QList<int> sizes{0, 0, 0};
     if (showDockedDetail) {
-        const int side = showSidebar ? qMin(m_sidebarWidth, qMax(180, available - 621)) : 0;
-        const int detail = qBound(300, m_detailWidth, qMax(300, available - side - 321));
-        sizes = {side, qMax(320, available - side - detail - 2), detail};
+        const int side = showSidebar
+            ? qMin(m_sidebarWidth, qMax(180, available - middleMinimum - detailMinimum - 1)) : 0;
+        const int detail = qBound(detailMinimum, m_detailWidth,
+                                  qMax(detailMinimum, available - side - middleMinimum - 1));
+        sizes = {side, qMax(middleMinimum, available - side - detail - 2), detail};
     } else {
-        const int side = showSidebar ? qMin(m_sidebarWidth, qMax(180, available - 321)) : 0;
-        sizes = {side, qMax(320, available - side - (showSidebar ? 1 : 0)), 0};
+        const int side = showSidebar
+            ? qMin(m_sidebarWidth, qMax(180, available - middleMinimum - 1)) : 0;
+        sizes = {side, qMax(middleMinimum, available - side - (showSidebar ? 1 : 0)), 0};
     }
     m_splitter->setSizes(sizes);
     syncColumnResizeAreas();
@@ -1369,9 +1394,12 @@ void TaskPanel::updateWindowControlsPosition() {
 
 void TaskPanel::refreshWorkspaceIcons() {
     if (auto* account = findChild<QToolButton*>(QStringLiteral("AccountButton")))
-        account->setIcon(brandMark(30));
+        account->setIcon(brandMark(WorkspaceGeometry::RailAccountSize));
     if (m_railTasks) m_railTasks->setIcon(AppIcons::icon(IconId::Checklist, 20));
-    if (m_sidebarToggle) m_sidebarToggle->setIcon(AppIcons::icon(IconId::TaskList, 17));
+    if (m_sidebarToggle)
+        m_sidebarToggle->setIcon(AppIcons::icon(
+            m_sidebarToggle->isChecked() ? IconId::SidebarCollapse : IconId::SidebarExpand,
+            WorkspaceGeometry::SidebarToggleIconSize));
     if (m_railSearch) m_railSearch->setIcon(AppIcons::icon(IconId::Search, 20));
     if (m_railSettings) m_railSettings->setIcon(AppIcons::icon(IconId::Settings, 20));
     if (auto* notes = findChild<QToolButton*>(QStringLiteral("RailNotes")))
@@ -1382,9 +1410,9 @@ void TaskPanel::refreshWorkspaceIcons() {
         add->setIcon(AppIcons::icon(IconId::Add, 18));
     if (auto* backup = findChild<QToolButton*>(QStringLiteral("BackupMenuButton")))
         backup->setIcon(AppIcons::icon(IconId::Settings, 18));
-    if (m_workspaceMore) m_workspaceMore->setIcon(AppIcons::icon(IconId::More, 18));
-    if (auto* sort = findChild<QToolButton*>(QStringLiteral("ListSort")))
-        sort->setIcon(AppIcons::icon(IconId::Sort, 18));
+    if (m_workspaceMore)
+        m_workspaceMore->setIcon(AppIcons::icon(IconId::MoreTitlebar,
+                                                WorkspaceGeometry::SidebarToggleIconSize));
     if (m_quickDate) {
         m_quickDate->setIcon(AppIcons::icon(IconId::Calendar, 15));
         m_quickDate->setText(QStringLiteral("今天"));
@@ -1787,46 +1815,72 @@ void TaskPanel::backupMenu() {
     menu.exec(QCursor::pos());
 }
 
-// ========== R4: 工作区更多菜单（只管「怎么看」，考据 m04/R12） ==========
+// 工作区显示选项：只提供已经落地的显示能力，不展示未实现的看板/时间线入口。
 void TaskPanel::workspaceMenu() {
     PopupMenu menu(this);
     menu.setObjectName(QStringLiteral("WorkspaceMenu"));
+    // 网页卡片宽约 164px；透明阴影边距不计入卡片宽度。
+    menu.setMinimumWidth(164 + 2 * PopupMenu::shadowMargin());
 
-    // 视图切换（考据 m04：视图图标条）
-    auto* viewSection = menu.addAction(QStringLiteral("视图"));
-    viewSection->setEnabled(false);
-    auto* listView = menu.addAction(AppIcons::icon(IconId::List, 16), QStringLiteral("清单视图"));
-    listView->setCheckable(true);
-    listView->setChecked(m_renderer->currentData().toInt() == static_cast<int>(ViewRenderer::List));
-    listView->setObjectName(QStringLiteral("ViewList"));
-    connect(listView, &QAction::triggered, this, [this]() {
-        m_renderer->setCurrentIndex(0);
+    const bool canToggleCompleted = m_filter.scope == ViewScope::AllLists
+        || m_filter.scope == ViewScope::List || m_filter.scope == ViewScope::Folder;
+    auto* toggleCompleted = menu.addAction(AppIcons::icon(IconId::HideCompleted, 18),
+        m_filter.showCompleted ? QStringLiteral("隐藏已完成") : QStringLiteral("显示已完成"));
+    toggleCompleted->setObjectName(QStringLiteral("HideCompleted"));
+    toggleCompleted->setVisible(canToggleCompleted);
+    connect(toggleCompleted, &QAction::triggered, this, [this]() {
+        m_filter.showCompleted = !m_filter.showCompleted;
+        applyFilter();
     });
-    auto* timeView = menu.addAction(AppIcons::icon(IconId::Calendar, 16), QStringLiteral("时间视图"));
-    timeView->setCheckable(true);
-    timeView->setChecked(m_renderer->currentData().toInt() == static_cast<int>(ViewRenderer::Time));
-    timeView->setEnabled(supportsTime(m_filter.scope));
-    timeView->setObjectName(QStringLiteral("ViewTime"));
-    connect(timeView, &QAction::triggered, this, [this]() {
-        if (supportsTime(m_filter.scope)) m_renderer->setCurrentIndex(1);
+
+    auto* toggleDetails = menu.addAction(AppIcons::icon(IconId::HideDetails, 18),
+        m_filter.showDetails ? QStringLiteral("隐藏详细") : QStringLiteral("显示详细"));
+    toggleDetails->setObjectName(QStringLiteral("HideDetails"));
+    connect(toggleDetails, &QAction::triggered, this, [this]() {
+        m_filter.showDetails = !m_filter.showDetails;
+        applyFilter();
     });
-    menu.addSeparator();
 
-    // 显示设置（考据 R12：隐藏已完成、显示详细、显示设置）
-    auto* hideCompleted = menu.addAction(QStringLiteral("隐藏已完成"));
-    hideCompleted->setCheckable(true);
-    hideCompleted->setObjectName(QStringLiteral("HideCompleted"));
-    // TODO: 接入 ViewSpec 的 hideCompleted 字段（如果模型支持）
-    menu.addSeparator();
-
-    // 显示设置子菜单
-    auto* displaySettings = menu.addMenu(QStringLiteral("显示设置"));
+    auto* displaySettings = menu.addAction(AppIcons::icon(IconId::DisplaySettings, 18),
+                                           QStringLiteral("显示设置"));
     displaySettings->setObjectName(QStringLiteral("DisplaySettings"));
-    auto* dateDisplay = displaySettings->addAction(QStringLiteral("日期显示"));
-    dateDisplay->setObjectName(QStringLiteral("DateDisplay"));
-    // TODO: 接入显示设置
+    connect(displaySettings, &QAction::triggered, this, [this]() {
+        DisplaySettingsDialog dialog(m_filter.countdownDates, m_preferDetailOverlay, this);
+        connect(&dialog, &DisplaySettingsDialog::optionsChanged, this,
+                [this](bool countdownDates, bool popupDetail) {
+            m_filter.countdownDates = countdownDates;
+            m_preferDetailOverlay = popupDetail;
+            applyFilter();
+            reconcileWorkspaceLayout();
+        });
+        dialog.exec();
+    });
 
-    menu.exec(QCursor::pos());
+    auto* printMenu = menu.addMenu(AppIcons::icon(IconId::Print, 18), QStringLiteral("打印"));
+    printMenu->setObjectName(QStringLiteral("PrintMenu"));
+    const auto print = [this](bool includeContent) {
+        QTextDocument document;
+        populateTaskPrintDocument(&document, *m_model, *m_store, m_heading->text(), includeContent);
+        QPrinter printer(QPrinter::HighResolution);
+        printer.setDocName(m_heading->text());
+        QPrintDialog dialog(&printer, this);
+        dialog.setWindowTitle(includeContent ? QStringLiteral("打印标题和内容")
+                                             : QStringLiteral("打印标题"));
+        if (dialog.exec() == QDialog::Accepted) document.print(&printer);
+    };
+    auto* printTitle = printMenu->addAction(QStringLiteral("打印标题"));
+    printTitle->setObjectName(QStringLiteral("PrintTitle"));
+    connect(printTitle, &QAction::triggered, this, [print]() { print(false); });
+    auto* printContent = printMenu->addAction(QStringLiteral("打印标题和内容"));
+    printContent->setObjectName(QStringLiteral("PrintTitleAndContent"));
+    connect(printContent, &QAction::triggered, this, [print]() { print(true); });
+
+    // 与网页 bottomRight 一致：卡片右缘对齐按钮右缘，而不是以鼠标位置为左上角。
+    menu.ensurePolished();
+    const int cardWidth = menu.sizeHint().width() - 2 * PopupMenu::shadowMargin();
+    const QPoint anchor = m_workspaceMore->mapToGlobal(
+        QPoint(m_workspaceMore->width() - cardWidth, m_workspaceMore->height() + 4));
+    menu.exec(anchor);
 }
 
 bool TaskPanel::nativeEvent(const QByteArray& eventType, void* message, long* result) {
@@ -1879,6 +1933,10 @@ void TaskPanel::closeEvent(QCloseEvent* event) {
     settings.setValue(QStringLiteral("sidebarWidth"), m_sidebarWidth);
     settings.setValue(QStringLiteral("detailWidth"), m_detailWidth);
     settings.setValue(QStringLiteral("sidebarHidden"), m_sidebarUserHidden);
+    settings.setValue(QStringLiteral("showCompleted"), m_filter.showCompleted);
+    settings.setValue(QStringLiteral("showDetails"), m_filter.showDetails);
+    settings.setValue(QStringLiteral("countdownDates"), m_filter.countdownDates);
+    settings.setValue(QStringLiteral("detailPopup"), m_preferDetailOverlay);
     if (QSystemTrayIcon::isSystemTrayAvailable()) { hide(); event->ignore(); }
     else { event->accept(); emit quitRequested(); }
 }

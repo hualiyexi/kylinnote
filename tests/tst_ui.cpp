@@ -26,6 +26,7 @@
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QPointer>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -72,6 +73,7 @@
 #include "ui/EntityPicker.h"
 #include "ui/AttachmentWidget.h"
 #include "ui/DetailPopups.h"
+#include "ui/DisplaySettingsDialog.h"
 #include "ui/DatePickerPopup.h"
 #include "ui/ColorPickerPopup.h"
 #include "ui/EmojiPickerPopup.h"
@@ -98,10 +100,12 @@
 #include "ui/TaskListModel.h"
 #include "ui/TaskListView.h"
 #include "ui/TaskPanel.h"
+#include "ui/TaskPrintDocument.h"
 #include "ui/SidebarSectionHeader.h"
 #include "ui/ToastIsland.h"
 #include "ui/UpdateDialog.h"
 #include "ui/WindowChrome.h"
+#include "ui/WorkspaceGeometry.h"
 #include "ui/design/QssBuilder.h"
 #include "ui/design/ThemeManager.h"
 #include "ui/design/TypeSystem.h"
@@ -1185,6 +1189,229 @@ private slots:
             QCOMPARE(rectIn(detail, &panel).left(), detailLeft);
             QCOMPARE(editor->entityId(), id);
         }
+    }
+
+    void workspaceHeaderAlignmentAndSidebarIcons() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1240, 820);
+        panel.show();
+        auto* account = panel.findChild<QToolButton*>(QStringLiteral("AccountButton"));
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* sidebar = panel.findChild<QFrame*>(QStringLiteral("Sidebar"));
+        auto* toggle = panel.findChild<QToolButton*>(QStringLiteral("SidebarToggle"));
+        auto* detail = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        QVERIFY(account && navigation && sidebar && toggle && detail);
+        QVERIFY(!panel.findChild<QToolButton*>(QStringLiteral("ListSort")));
+        QCOMPARE(account->size(), QSize(WorkspaceGeometry::RailAccountSize,
+                                       WorkspaceGeometry::RailAccountSize));
+        QCOMPARE(rectIn(account, &panel).top(), 21 + WorkspaceGeometry::RailTopMargin);
+        QTRY_VERIFY(navigation->count() > 0);
+        QRect firstRow = navigation->visualItemRect(navigation->item(0));
+        firstRow.moveTopLeft(navigation->viewport()->mapTo(&panel, firstRow.topLeft()));
+        QCOMPARE(firstRow.height(), WorkspaceGeometry::NavigationRowHeight);
+        QCOMPARE(rectIn(toggle, &panel).center().y(), firstRow.center().y());
+        QCOMPARE(toggle->iconSize(), QSize(WorkspaceGeometry::SidebarToggleIconSize,
+                                          WorkspaceGeometry::SidebarToggleIconSize));
+        QCOMPARE(detail->layout()->contentsMargins().top(), 36); // 第四列保持原样。
+        const auto inkBounds = [](const QImage& image) {
+            QRect bounds;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    if (qAlpha(image.pixel(x, y)) <= 40) continue;
+                    bounds = bounds.isNull() ? QRect(x, y, 1, 1)
+                                             : bounds.united(QRect(x, y, 1, 1));
+                }
+            }
+            return bounds;
+        };
+        const QRect collapseInk = inkBounds(AppIcons::icon(IconId::SidebarCollapse, 20)
+            .pixmap(20, 20).toImage());
+        const QRect expandInk = inkBounds(AppIcons::icon(IconId::SidebarExpand, 20)
+            .pixmap(20, 20).toImage());
+        QVERIFY(collapseInk.width() >= 12 && collapseInk.height() >= 12);
+        QVERIFY(expandInk.width() >= 12 && expandInk.height() >= 12);
+        QVERIFY(toggle->icon().pixmap(20, 20).toImage()
+                == AppIcons::icon(IconId::SidebarCollapse, 20).pixmap(20, 20).toImage());
+        const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+        if (!screenshots.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshots));
+            const QImage top = panel.grab().toImage().copy(0, 0, panel.width(), 130);
+            QVERIFY(top.scaled(top.width() * 2, top.height() * 2,
+                               Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/workspace-header-aligned.png")));
+        }
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QTRY_VERIFY(!sidebar->isVisible());
+        QVERIFY(toggle->icon().pixmap(20, 20).toImage()
+                == AppIcons::icon(IconId::SidebarExpand, 20).pixmap(20, 20).toImage());
+        if (!screenshots.isEmpty()) {
+            const QImage top = panel.grab().toImage().copy(0, 0, panel.width(), 130);
+            QVERIFY(top.scaled(top.width() * 2, top.height() * 2,
+                               Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/workspace-sidebar-collapsed.png")));
+        }
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QTRY_VERIFY(sidebar->isVisible());
+    }
+
+    void workspaceMenuOmitsViewsAndUsesRealActions() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1240, 820);
+        panel.show();
+        auto* more = panel.findChild<QToolButton*>(QStringLiteral("WorkspaceMore"));
+        QVERIFY(more);
+        bool menuOpened = false, settingsOpened = false;
+        int menuCardWidth = 0;
+        QStringList actionTexts, printTexts;
+        QImage menuImage;
+        QTimer::singleShot(0, &panel, [&]() {
+            auto* menu = panel.findChild<PopupMenu*>(QStringLiteral("WorkspaceMenu"));
+            if (!menu) {
+                if (QWidget* popup = QApplication::activePopupWidget()) popup->close();
+                return;
+            }
+            menuOpened = true;
+            for (QAction* action : menu->actions()) actionTexts.append(action->text());
+            menuCardWidth = menu->width() - 2 * PopupMenu::shadowMargin();
+            menuImage = menu->grab().toImage();
+            auto* printMenu = menu->findChild<PopupMenu*>(QStringLiteral("PrintMenu"));
+            if (printMenu) for (QAction* action : printMenu->actions()) printTexts.append(action->text());
+            if (auto* action = menu->findChild<QAction*>(QStringLiteral("HideCompleted")))
+                action->trigger();
+            if (auto* action = menu->findChild<QAction*>(QStringLiteral("HideDetails")))
+                action->trigger();
+            if (auto* action = menu->findChild<QAction*>(QStringLiteral("DisplaySettings"))) {
+                QTimer::singleShot(0, menu, [&]() {
+                    auto* dialog = panel.findChild<DisplaySettingsDialog*>();
+                    if (dialog) {
+                        settingsOpened = true;
+                        if (auto* mode = dialog->findChild<QComboBox*>(QStringLiteral("DateDisplayMode")))
+                            mode->setCurrentIndex(1);
+                        if (auto* sidebar = dialog->findChild<QRadioButton*>(QStringLiteral("DetailSidebar")))
+                            QTest::mouseClick(sidebar, Qt::LeftButton);
+                        dialog->close();
+                    }
+                });
+                action->trigger();
+            }
+            menu->close();
+        });
+        QTest::mouseClick(more, Qt::LeftButton);
+        QVERIFY(menuOpened);
+        QCOMPARE(actionTexts, QStringList({QStringLiteral("显示已完成"), QStringLiteral("显示详细"),
+                                           QStringLiteral("显示设置"), QStringLiteral("打印")}));
+        QVERIFY(!actionTexts.contains(QStringLiteral("视图")));
+        QCOMPARE(printTexts, QStringList({QStringLiteral("打印标题"),
+                                          QStringLiteral("打印标题和内容")}));
+        QCOMPARE(menuCardWidth, 164);
+        QVERIFY(settingsOpened);
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = view ? qobject_cast<TaskListModel*>(view->model()) : nullptr;
+        QVERIFY(model);
+        QVERIFY(model->filter().showCompleted);
+        QVERIFY(model->filter().showDetails);
+        QVERIFY(model->filter().countdownDates);
+        auto* detail = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        QVERIFY(detail);
+        panel.resize(700, 620);
+        QApplication::processEvents();
+        QVERIFY(detail->isVisible());
+        QVERIFY(!detail->property("overlay").toBool());
+        const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+        if (!screenshots.isEmpty() && !menuImage.isNull()) {
+            QVERIFY(QDir().mkpath(screenshots));
+            QVERIFY(menuImage.scaled(menuImage.width() * 2, menuImage.height() * 2,
+                                     Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/workspace-display-menu.png")));
+        }
+    }
+
+    void taskDisplayOptionsFilterAndExpandRows() {
+        const QString activeId = m_store->createTask(QStringLiteral("带详情的任务"));
+        Entity active = m_store->entity(activeId);
+        active.body = QStringLiteral("## 第一行\n第二行");
+        active.allDayDate = toAppTime(appNow()).date().addDays(1);
+        ChecklistItem item;
+        item.text = QStringLiteral("检查项");
+        item.done = true;
+        active.checklist.append(item);
+        QVERIFY(m_store->saveTask(active));
+        const QString completedId = m_store->createTask(QStringLiteral("已完成的任务"));
+        QVERIFY(m_store->setCompleted(completedId, true));
+
+        TaskListModel model(m_store.get());
+        QVERIFY(!model.indexForTask(completedId).isValid());
+        ViewSpec filter = model.filter();
+        filter.showCompleted = true;
+        model.setFilter(filter);
+        const QModelIndex completed = model.indexForTask(completedId);
+        QVERIFY(completed.isValid());
+        QCOMPARE(completed.data(TaskListModel::SectionKeyRole).toString(), QStringLiteral("completed"));
+
+        TaskDelegate delegate;
+        QStyleOptionViewItem option;
+        QModelIndex activeIndex = model.indexForTask(activeId);
+        const int normalHeight = delegate.sizeHint(option, activeIndex).height();
+        QVERIFY(activeIndex.data(TaskListModel::DetailRole).toString().contains(QStringLiteral("第一行 第二行")));
+        QVERIFY(activeIndex.data(TaskListModel::DetailRole).toString().contains(QStringLiteral("检查项 1/1")));
+        filter.showDetails = true;
+        model.setFilter(filter);
+        activeIndex = model.indexForTask(activeId);
+        QCOMPARE(delegate.sizeHint(option, activeIndex).height(), normalHeight + 24);
+        filter.countdownDates = true;
+        model.setFilter(filter);
+        activeIndex = model.indexForTask(activeId);
+        QCOMPARE(activeIndex.data(TaskListModel::ScheduleRole).toString(), QStringLiteral("1天后"));
+    }
+
+    void displaySettingsDialogMatchesWebOptions() {
+        DisplaySettingsDialog dialog(false, true);
+        auto* dateMode = dialog.findChild<QComboBox*>(QStringLiteral("DateDisplayMode"));
+        auto* sidebar = dialog.findChild<QRadioButton*>(QStringLiteral("DetailSidebar"));
+        auto* popup = dialog.findChild<QRadioButton*>(QStringLiteral("DetailPopup"));
+        QVERIFY(dateMode && sidebar && popup);
+        QCOMPARE(dateMode->itemText(0), QStringLiteral("任务时间"));
+        QCOMPARE(dateMode->itemText(1), QStringLiteral("倒数日"));
+        QVERIFY(dialog.popupDetail());
+        QSignalSpy spy(&dialog, &DisplaySettingsDialog::optionsChanged);
+        dateMode->setCurrentIndex(1);
+        QVERIFY(dialog.countdownDates());
+        QTest::mouseClick(sidebar, Qt::LeftButton);
+        QVERIFY(!dialog.popupDetail());
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.last().at(0).toBool(), true);
+        QCOMPARE(spy.last().at(1).toBool(), false);
+        const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+        if (!screenshots.isEmpty()) {
+            dialog.show();
+            QApplication::processEvents();
+            const QImage image = dialog.grab().toImage();
+            QVERIFY(QDir().mkpath(screenshots));
+            QVERIFY(image.scaled(image.width() * 2, image.height() * 2,
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/workspace-display-settings.png")));
+        }
+    }
+
+    void printDocumentUsesVisibleTitlesAndOptionalContent() {
+        const QString id = m_store->createTask(QStringLiteral("打印任务"));
+        Entity task = m_store->entity(id);
+        task.body = QStringLiteral("正文第一行\n正文第二行");
+        ChecklistItem item;
+        item.text = QStringLiteral("打印检查项");
+        task.checklist.append(item);
+        QVERIFY(m_store->saveTask(task));
+        TaskListModel model(m_store.get());
+        QTextDocument titles;
+        populateTaskPrintDocument(&titles, model, *m_store, QStringLiteral("打印视图"), false);
+        QVERIFY(titles.toPlainText().contains(QStringLiteral("打印任务")));
+        QVERIFY(!titles.toPlainText().contains(QStringLiteral("正文第一行")));
+        QVERIFY(!titles.toPlainText().contains(QStringLiteral("打印检查项")));
+        QTextDocument content;
+        populateTaskPrintDocument(&content, model, *m_store, QStringLiteral("打印视图"), true);
+        QVERIFY(content.toPlainText().contains(QStringLiteral("正文第一行")));
+        QVERIFY(content.toPlainText().contains(QStringLiteral("正文第二行")));
+        QVERIFY(content.toPlainText().contains(QStringLiteral("打印检查项")));
     }
 
     void responsiveColumnsAndOverlayDetail() {
