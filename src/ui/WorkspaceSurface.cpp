@@ -73,6 +73,13 @@ WorkspaceSurface::WorkspaceSurface(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("WorkspaceSurface"));
     setAttribute(Qt::WA_StyledBackground, false);
     setAutoFillBackground(false);
+    // 暗色主题不再绘制窗口外阴影；主题切换时立即失效缓存并重绘。
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ds::Theme) {
+        m_shadow = QImage();
+        m_shadowColor = QColor();
+        updateShadow();
+        update();
+    });
 }
 
 void WorkspaceSurface::setFramelessCorners(bool enabled) {
@@ -114,6 +121,12 @@ void WorkspaceSurface::updateClip() {
 void WorkspaceSurface::updateShadow() {
     // 最大化没有外阴影，不生成一张永远被内容盖住的全屏模糊图。
     if (!m_rounded || size().isEmpty()) {
+        m_shadow = QImage();
+        m_shadowColor = QColor();
+        return;
+    }
+    // 暗色主题与多数亮色应用反差已经足够，再画浅色阴影会形成白色光晕。
+    if (ThemeManager::instance().resolvedTheme() == ds::Theme::Dark) {
         m_shadow = QImage();
         m_shadowColor = QColor();
         return;

@@ -2451,6 +2451,24 @@ private slots:
         verify(ThemeManager::Preference::Light);
         verify(ThemeManager::Preference::Dark);
     }
+    void windowShadowRemovedInDarkTheme() {
+        TaskPanel panel(m_store.get()); panel.resize(900, 700); panel.show();
+        QTest::qWait(50);
+        auto* surface = panel.findChild<QWidget*>(QStringLiteral("WorkspaceRoot"));
+        QVERIFY(surface);
+        const auto marginAlpha = [surface]() {
+            const QImage image = surface->grab().toImage();
+            const qreal dpr = image.devicePixelRatio();
+            const int x = qRound(18 * dpr), y = qRound(surface->height() / 2.0 * dpr);
+            return qAlpha(image.pixel(x, y));
+        };
+        ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+        QApplication::processEvents();
+        QVERIFY(marginAlpha() > 0);
+        ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+        QApplication::processEvents();
+        QCOMPARE(marginAlpha(), 0);
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,
@@ -4058,6 +4076,17 @@ private slots:
         if (!dir.isEmpty()) {
             QVERIFY(QDir().mkpath(dir));
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel.png")));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+            QApplication::processEvents();
+            QImage darkPanel = panel.grab().toImage();
+            QImage darkOnGray(darkPanel.size(), QImage::Format_ARGB32_Premultiplied);
+            darkOnGray.fill(QColor(QStringLiteral("#808080")));
+            QPainter darkPainter(&darkOnGray);
+            darkPainter.drawImage(0, 0, darkPanel);
+            darkPainter.end();
+            QVERIFY(darkOnGray.save(dir + QStringLiteral("/task-panel-dark.png")));
+            ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+            QApplication::processEvents();
             auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
             const int originalRow = navigation->currentRow();
             for (int row = 0; row < navigation->count(); ++row) {
