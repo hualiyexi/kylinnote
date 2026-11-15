@@ -26,6 +26,7 @@ QString buildStyleSheet(Theme theme) {
     const QString selection = hex(ColorToken::Selection, theme);
     const QString surface = hex(ColorToken::Surface, theme);
     const QString sidebar = hex(ColorToken::Sidebar, theme);
+    const QString railBg = hex(ColorToken::RailBg, theme);
     const QString sidebarHover = hex(ColorToken::SidebarHover, theme);
     const QString separator = hex(ColorToken::Divider, theme);
     const QString hover = hex(ColorToken::Hover, theme);
@@ -176,7 +177,7 @@ QString buildStyleSheet(Theme theme) {
             "QToolButton#AttachmentActions::menu-indicator{image:none;width:0;height:0;}"
             "QLabel#DetailStatus{color:%7;padding:6px 0;}"
             "QMainWindow#TaskPanel,QWidget#WorkspaceRoot{background:transparent;}"
-            "QFrame#ActivityRail{background:%8;border:0;border-right:1px solid %2;"
+            "QFrame#ActivityRail{background:%11;border:0;border-right:1px solid %2;"
             "border-top-left-radius:10px;border-bottom-left-radius:10px;}"
             "QFrame#ActivityRail QToolButton{border:0;border-radius:8px;padding:0;}"
             "QFrame#ActivityRail QToolButton:hover{background:%4;}"
@@ -205,7 +206,7 @@ QString buildStyleSheet(Theme theme) {
             "QFrame#ToastIsland{background:transparent;border:0;}")
             .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
             .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar)
-            .arg(menuBg).arg(field);
+            .arg(menuBg).arg(field).arg(railBg);
 }
 
 QString buildPreviewCss(Theme theme) {

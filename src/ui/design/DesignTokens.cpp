@@ -58,6 +58,7 @@ ColorTable makeLight() {
     set(ColorToken::Shadow, Black);
     set(ColorToken::RowHover, L_RowHover);
     set(ColorToken::RowSelected, L_RowSelected);
+    set(ColorToken::RailBg, L_RailBg);
     return t;
 }
 
@@ -115,6 +116,7 @@ ColorTable makeDark() {
     set(ColorToken::Shadow, Black);
     set(ColorToken::RowHover, D_RowHover);
     set(ColorToken::RowSelected, D_RowSelected);
+    set(ColorToken::RailBg, D_RailBg);
     return t;
 }
 

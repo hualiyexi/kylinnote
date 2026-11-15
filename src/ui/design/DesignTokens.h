@@ -37,9 +37,10 @@ constexpr QRgb Info = 0xFF4772FA;
 constexpr QRgb L_Text = 0xFF20242C;
 constexpr QRgb L_TextSecondary = 0xFF6B7484;
 constexpr QRgb L_TextTertiary = 0xFFAEB5C0;
-constexpr QRgb L_Surface = 0xFFFFFFFF;
+constexpr QRgb L_Surface = 0xFFFEFEFE;
 constexpr QRgb L_Bg = 0xFFF5F7FC;
-constexpr QRgb L_Sidebar = 0xFFF5F7FC;
+constexpr QRgb L_Sidebar = 0xFFFBFBFB;
+constexpr QRgb L_RailBg = 0xFFF5F5F5;
 constexpr QRgb L_SidebarHover = 0xFFEBEFF8;
 constexpr QRgb L_Hover = 0xFFF2F4F8;
 constexpr QRgb L_Field = 0xFFF2F4F8;
@@ -52,15 +53,16 @@ constexpr QRgb L_Disabled = 0xFFA8A8A8;  // 考据 disabled #a8a8a8
 constexpr QRgb L_Scrollbar = 0xFFD9DFEA;
 constexpr QRgb L_ScrollbarHover = 0xFFC2CCDD;
 constexpr QRgb L_RowHover = 0xFFF5F5F5;
-constexpr QRgb L_RowSelected = 0xFFF0F4FF;  // 极淡主题色
+constexpr QRgb L_RowSelected = 0xFFF0F0F0;
 constexpr QRgb L_TooltipBg = 0xE6191919;
 // 深色中性阶（KylinList 自定）
 constexpr QRgb D_Text = 0xFFE8EAED;
 constexpr QRgb D_TextSecondary = 0xFF9AA0A6;
 constexpr QRgb D_TextTertiary = 0xFF6B7078;
-constexpr QRgb D_Surface = 0xFF1E2126;
+constexpr QRgb D_Surface = 0xFF191919;
 constexpr QRgb D_Bg = 0xFF16181C;
-constexpr QRgb D_Sidebar = 0xFF1A1D22;
+constexpr QRgb D_Sidebar = 0xFF191919;
+constexpr QRgb D_RailBg = 0xFF242424;
 constexpr QRgb D_SidebarHover = 0xFF262A31;
 constexpr QRgb D_Hover = 0xFF262A31;
 constexpr QRgb D_Field = 0xFF262A31;
@@ -99,6 +101,7 @@ enum class ColorToken : int {
     HighlightYellow, HighlightGreen, HighlightBlue, HighlightPink, HighlightPurple,
     WindowBorder, Shadow,
     RowHover, RowSelected,
+    RailBg,
     Count
 };
 

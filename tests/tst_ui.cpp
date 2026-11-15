@@ -2410,6 +2410,47 @@ private slots:
         navImage = render(navDelegate, navIndex, QSize(220, 36), QStyle::State_MouseOver);
         QCOMPARE(navImage.pixelColor(11, 18), hoverColor);
     }
+    void workspaceColumnsUseOwnBackgroundTokens() {
+        const QString list = m_store->createList(QStringLiteral("列底色"), QString(),
+                                                 EntityKind::Task, QStringLiteral("💼"),
+                                                 QStringLiteral("#4CA1FF"));
+        const QString id = m_store->createTask(QStringLiteral("列底色任务"), list);
+        Entity task = m_store->entity(id);
+        task.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(task));
+
+        TaskPanel panel(m_store.get()); panel.resize(1200, 780); panel.show();
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        auto* rail = panel.findChild<QFrame*>(QStringLiteral("ActivityRail"));
+        auto* sidebar = panel.findChild<QFrame*>(QStringLiteral("Sidebar"));
+        auto* listPane = panel.findChild<QFrame*>(QStringLiteral("ListPane"));
+        auto* detail = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        QVERIFY(view && model && rail && sidebar && listPane && detail);
+        view->setCurrentIndex(model->indexForTask(id));
+        QTest::qWait(30);
+
+        const auto sample = [](QWidget* widget, const QPoint& point) {
+            const QImage image = widget->grab().toImage();
+            const qreal dpr = image.devicePixelRatio();
+            return image.pixelColor(qRound(point.x() * dpr), qRound(point.y() * dpr));
+        };
+        const auto verify = [&](ThemeManager::Preference preference) {
+            ThemeManager::instance().setPreference(preference);
+            QApplication::processEvents();
+            const auto& theme = ThemeManager::instance();
+            QCOMPARE(sample(rail, QPoint(rail->width() / 2, rail->height() / 2)),
+                     theme.color(ds::ColorToken::RailBg));
+            QCOMPARE(sample(sidebar, QPoint(sidebar->width() / 2, sidebar->height() - 24)),
+                     theme.color(ds::ColorToken::Sidebar));
+            QCOMPARE(sample(listPane, QPoint(listPane->width() / 2, listPane->height() - 30)),
+                     theme.color(ds::ColorToken::Surface));
+            QCOMPARE(sample(detail, QPoint(detail->width() - 24, detail->height() / 2)),
+                     theme.color(ds::ColorToken::Surface));
+        };
+        verify(ThemeManager::Preference::Light);
+        verify(ThemeManager::Preference::Dark);
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,
