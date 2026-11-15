@@ -4,6 +4,8 @@
 #include <QAbstractListModel>
 #include "../domain/ViewSpec.h"
 
+class QMimeData;
+
 namespace kl {
 class TaskStore;
 class TaskListModel : public QAbstractListModel {
@@ -28,18 +30,28 @@ public:
         SectionKeyRole,
         HeaderActionRole,
         HeaderEntityIdsRole,
-        DepthRole
+        ParentIdRole,
+        DepthRole,
+        HasChildrenRole,
+        ChildrenCollapsedRole,
+        UnpinnedSectionRole
     };
     explicit TaskListModel(TaskStore* store, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     Qt::ItemFlags flags(const QModelIndex& index) const override;
+    QStringList mimeTypes() const override;
+    QMimeData* mimeData(const QModelIndexList& indexes) const override;
+    Qt::DropActions supportedDragActions() const override;
+    Qt::DropActions supportedDropActions() const override;
     bool setData(const QModelIndex& index, const QVariant& value, int role) override;
     void setFilter(const ViewSpec& filter);
     ViewSpec filter() const { return m_filter; }
     QModelIndex indexForTask(QString id) const;
     QString entityId(const QModelIndex& index) const;
     int entityCount() const { return m_entityCount; }
+    void toggleChildren(const QString& id);
+    void setDragActive(bool active, const QString& sourceId = QString());
 public slots:
     void refresh();
 
@@ -49,11 +61,18 @@ private:
         QString header;
         QString sectionKey;
         QStringList sectionEntityIds;
+        int depth = 0;
+        bool hasChildren = false;
         bool isHeader = false;
     };
+    QString unpinnedSection(const Entity& entity) const;
+
     TaskStore* m_store;
     ViewSpec m_filter;
     QVector<Row> m_rows;
+    QSet<QString> m_collapsedTasks;
+    QString m_dragSourceId;
+    bool m_dragActive = false;
     int m_entityCount = 0;
 };
 }  // namespace kl

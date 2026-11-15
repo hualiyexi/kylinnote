@@ -4,6 +4,7 @@
 #include "ActivityLogDialog.h"
 #include "AppIcons.h"
 #include "EntityPicker.h"
+#include "ListAppearance.h"
 
 #include <algorithm>
 
@@ -226,6 +227,7 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
 
     const bool isTask = ctx.kind == EntityKind::Task;
     const bool completedTask = isTask && ctx.completed;
+    const bool activeTask = isTask && !ctx.completed && !ctx.abandoned;
 
     // R26：多选不是单选菜单的重复，尤其“复制文本”不能换成“复制链接”。
     if (ctx.selectedCount > 1) {
@@ -267,8 +269,8 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
         addPriorityBar(menu, ctx, entityId);
     addSeparator(menu);
 
-    // R09 已完成任务没有添加子任务；R08 笔记没有子任务、主任务和放弃。
-    if (isTask && !ctx.completed)
+    // 已完成/已放弃任务和笔记不添加子任务。
+    if (activeTask)
         menu->addAction(makeAction(EntityCommand::AddSubtask, entityId, menu));
     if (isTask)
         menu->addAction(makeAction(EntityCommand::LinkParent, entityId, menu));
@@ -276,11 +278,19 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
     QAction *pin = makeAction(EntityCommand::TogglePin, entityId, menu);
     setActionText(pin, ctx.pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
     menu->addAction(pin);
+    if (isTask) {
+        QAction *complete = makeAction(EntityCommand::Complete, entityId, menu);
+        complete->setObjectName(QStringLiteral("CmdToggleComplete"));
+        setActionText(complete, ctx.completed ? QStringLiteral("设为未完成") : QStringLiteral("完成任务"));
+        menu->addAction(complete);
+    }
 
-    if (isTask)
-        menu->addAction(makeAction(EntityCommand::Abandon, entityId, menu));
+    if (isTask) {
+        QAction *abandon = makeAction(EntityCommand::Abandon, entityId, menu);
+        abandon->setEnabled(!ctx.completed && !ctx.abandoned);
+        menu->addAction(abandon);
+    }
     addMoveToMenu(menu, entityId);
-    menu->addAction(makeAction(EntityCommand::EditTags, entityId, menu));
 
     addSeparator(menu);
     if (ctx.focusEnabled) {
@@ -291,12 +301,10 @@ QMenu *EntityCommands::buildEntityMenu(const MenuContext &ctx, const QString &en
     // R09 已完成任务只保留复制链接、修改完成时间和删除。
     if (!completedTask) {
         menu->addAction(makeAction(EntityCommand::Clone, entityId, menu));
-        menu->addAction(makeAction(EntityCommand::CopyLink, entityId, menu));
         QAction *convert = makeAction(EntityCommand::ConvertKind, entityId, menu);
         setActionText(convert, isTask ? QStringLiteral("转换为笔记") : QStringLiteral("转换为任务"));
         menu->addAction(convert);
     } else {
-        menu->addAction(makeAction(EntityCommand::CopyLink, entityId, menu));
         menu->addAction(makeAction(EntityCommand::EditCompletionTime, entityId, menu));
     }
     menu->addAction(makeAction(EntityCommand::Delete, entityId, menu));
@@ -485,31 +493,12 @@ void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const 
         layout->addWidget(button);
     };
 
-    // 与考据 SVG 名保持一致，便于自动化与可访问性检查定位。
+    Q_UNUSED(ctx);
+    // 仅提供已经有明确数据语义的日期命令，不展示未定义的“下一周期”。
     addButton(EntityCommand::SetDateToday, QStringLiteral("quick-today"));
     addButton(EntityCommand::SetDateTomorrow, QStringLiteral("tomorrow-list"));
     addButton(EntityCommand::SetDateNextWeek, QStringLiteral("quick-nextweek"));
-    addButton(EntityCommand::SetDateNextPeriod, QStringLiteral("quick-nextperiod"));
-    if (ctx.hasDate) {
-        addButton(EntityCommand::SetDateNone, QStringLiteral("date-unselected"));
-        addButton(EntityCommand::ClearDate, QStringLiteral("quick-clear"));
-    } else {
-        // R06 无日期样本的省略号为 disabled 溢出项，不可点击。
-        QAction *overflow = new QAction(AppIcons::icon(IconId::More), QStringLiteral("更多日期"), host);
-        overflow->setObjectName(QStringLiteral("dateOverflowAction"));
-        overflow->setProperty("accessibleName", QStringLiteral("更多日期"));
-        overflow->setToolTip(QStringLiteral("更多日期"));
-        overflow->setEnabled(false);
-        QToolButton *button = new QToolButton(host);
-        button->setObjectName(QStringLiteral("date-overflow"));
-        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        button->setAutoRaise(true);
-        button->setFixedSize(34, 34);
-        button->setIconSize(QSize(18, 18));
-        button->setDefaultAction(overflow);
-        button->setAccessibleName(overflow->property("accessibleName").toString());
-        layout->addWidget(button);
-    }
+    addButton(EntityCommand::SetDateNone, QStringLiteral("date-unselected"));
 
     addWidgetAction(menu, host, QStringLiteral("dateQuickBar"), QStringLiteral("日期快捷设置"),
                     IconId::Calendar);
@@ -631,8 +620,7 @@ void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
     const auto addDestination = [this, moveMenu, entityId, currentListId](const TaskList &list,
                                                                           const QString &folderId,
                                                                           bool indented) {
-        QAction *action = new QAction(AppIcons::icon(list.kind == EntityKind::Note ? IconId::Note
-                                                                                   : IconId::TaskList),
+        QAction *action = new QAction(ListAppearance::icon(list, 16, QColor()),
                                       indented ? QStringLiteral("    ") + list.name : list.name,
                                       moveMenu);
         action->setObjectName(QStringLiteral("moveToList.%1").arg(list.id));
@@ -852,7 +840,8 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             emit errorOccurred(QStringLiteral("子任务标题不能为空"));
             return;
         }
-        const QString newId = m_store->createTask(title, entity.listId, entity.sectionId, entity.id);
+        const QString newId = m_store->createSubtask(title, entity.id);
+        if (!newId.isEmpty()) emit entityCreated(newId);
         finish(cmd, entityId, !newId.isEmpty());
         return;
     }
@@ -922,7 +911,7 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             emit errorOccurred(QStringLiteral("笔记没有完成状态"));
             return;
         }
-        finish(cmd, entityId, m_store->setCompleted(entityId, true));
+        finish(cmd, entityId, m_store->setCompleted(entityId, !entity.completed));
         return;
     }
     case EntityCommand::Clone: {
@@ -932,7 +921,9 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             emit commandExecuted(cmd, entityId);
             return;
         }
-        finish(cmd, entityId, !m_store->cloneTask(entityId).isEmpty());
+        const QString newId = m_store->cloneTask(entityId);
+        if (!newId.isEmpty()) emit entityCreated(newId);
+        finish(cmd, entityId, !newId.isEmpty());
         return;
     }
     case EntityCommand::CopyLink: {

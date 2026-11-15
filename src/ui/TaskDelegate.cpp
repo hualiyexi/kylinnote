@@ -26,6 +26,7 @@ struct TaskLayout {
     QRectF background;
     QRectF colorBar;
     QRectF dragHandle;
+    QRectF disclosure;
     QRectF checkBox;
     QRectF title;
     QRectF list;
@@ -47,6 +48,9 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     // 色条不随父子层级移动；拖动柄和悬浮背景在子任务中整体缩进一级。
     layout.colorBar = QRectF(row.left() + 16.0, row.top(), 3.0, row.height());
     layout.dragHandle = QRectF(row.left() + 5.0 + indent, row.center().y() - 6.0, 12.0, 12.0);
+    if (index.data(TaskListModel::HasChildrenRole).toBool())
+        layout.disclosure = QRectF(row.left() + 20.0 + indent,
+                                   row.center().y() - 8.0, 16.0, 16.0);
     layout.background = QRectF(row.left() + 20.0 + indent, row.top(),
                                qMax(0.0, row.width() - 38.0 - indent), row.height());
     layout.checkBox = QRectF(row.left() + 34.0 + indent, row.center().y() - 8.0, 16.0, 16.0);
@@ -89,6 +93,7 @@ TaskList listFromIndex(const QModelIndex& index) {
 
 struct NavigationLayout {
     QRectF background;
+    QRectF disclosure;
     QRectF icon;
     QRectF label;
     QString count;
@@ -99,7 +104,11 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
     NavigationLayout layout;
     layout.background = row.adjusted(10.0, 1.0, -10.0, -1.0);
     const int indent = index.data(NavigationDelegate::IndentRole).toInt();
-    layout.icon = QRectF(layout.background.left() + 12.0 + indent,
+    const bool folder = !index.data(NavigationDelegate::FolderIdRole).toString().isEmpty();
+    if (folder)
+        layout.disclosure = QRectF(layout.background.left() + 4.0,
+                                   layout.background.center().y() - 8.0, 16.0, 16.0);
+    layout.icon = QRectF(layout.background.left() + (folder ? 26.0 : 12.0) + indent,
                          layout.background.center().y() - 10.0, 20.0, 20.0);
     layout.count = index.data(NavigationDelegate::CountRole).toString();
     const QFont countFont = AppStyle::font(AppStyle::Font::Small);
@@ -171,6 +180,11 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         p->fillRect(layout.colorBar.toAlignedRect(), listColor);
     if (hovered && !deleted)
         AppIcons::paint(p, QStringLiteral("drag"), layout.dragHandle, AppStyle::color(Color::Faint));
+    if (!layout.disclosure.isNull()) {
+        AppIcons::paint(p, i.data(TaskListModel::ChildrenCollapsedRole).toBool()
+            ? QStringLiteral("chevron-folder-close") : QStringLiteral("chevron-folder-open"),
+            layout.disclosure, AppStyle::color(Color::Muted));
+    }
 
     const QRectF box = layout.checkBox;
     if (kind == EntityKind::Note) {
@@ -282,6 +296,10 @@ bool TaskDelegate::editorEvent(QEvent* event,
                 return false;
             }
             const TaskLayout layout = taskLayout(option, index);
+            if (!layout.disclosure.isNull() && layout.disclosure.contains(mouse->pos())) {
+                emit childrenToggleActivated(index.data(TaskListModel::IdRole).toString());
+                return true;
+            }
             if (!layout.date.isNull() && layout.date.contains(mouse->pos())) {
                 emit dateActivated(index.data(TaskListModel::IdRole).toString(),
                                    layout.date.toAlignedRect());
@@ -317,9 +335,15 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const QRect row = o.rect;
     if (i.data(DividerRole).toBool()) {
         p->setRenderHint(QPainter::Antialiasing, false);
-        p->setPen(QPen(ThemeManager::instance().color(ds::ColorToken::Divider), 1.0));
-        const int y = row.top() + 16;
-        p->drawLine(row.left() + 10, y, row.right() - 10, y);
+        const bool organizationEnd = i.data(OrganizationEndRole).toBool();
+        const bool after = i.data(DropLineRole).toString() == QLatin1String("after");
+        const int y = organizationEnd ? (after ? row.bottom() - 1 : row.top()) : row.top() + 16;
+        if (after || !organizationEnd) {
+            const QColor color = after ? AppStyle::color(Color::Accent)
+                : ThemeManager::instance().color(ds::ColorToken::Divider);
+            p->setPen(QPen(color, after ? 2.0 : 1.0));
+            p->drawLine(row.left() + 10, y, row.right() - 10, y);
+        }
         p->restore();
         return;
     }
@@ -337,7 +361,7 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const bool selected = o.state & QStyle::State_Selected;
     const bool hovered = o.state & QStyle::State_MouseOver;
     const qreal radius = 10.0;
-    if ((selected || hovered) && folderId.isEmpty()) {
+    if (selected || hovered) {
         p->setPen(Qt::NoPen);
         p->setBrush(AppStyle::color(selected ? Color::Selection : Color::SidebarHover));
         p->drawRoundedRect(layout.background, radius, radius);
@@ -368,10 +392,27 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     p->setPen(AppStyle::color(selected ? Color::Muted : Color::Faint));
     p->drawText(QRectF(layout.background.left(), row.top(), layout.background.width() - 12.0,
                        row.height()), Qt::AlignRight | Qt::AlignVCenter, layout.count);
+    if (!folderId.isEmpty()) {
+        const QString disclosure = i.data(FolderExpandedRole).toBool()
+            ? QStringLiteral("chevron-folder-open") : QStringLiteral("chevron-folder-close");
+        AppIcons::paint(p, disclosure, layout.disclosure, AppStyle::color(Color::Muted));
+    }
     if (o.state & QStyle::State_HasFocus) {
         p->setBrush(Qt::NoBrush);
         p->setPen(QPen(AppStyle::color(Color::Accent), 1.0));
         p->drawRoundedRect(layout.background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    }
+    if (!i.data(DropTargetRole).toString().isEmpty()) {
+        p->setBrush(Qt::NoBrush);
+        p->setPen(QPen(AppStyle::color(Color::Accent), 1.5));
+        p->drawRoundedRect(layout.background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    }
+    const QString dropLine = i.data(DropLineRole).toString();
+    if (!dropLine.isEmpty()) {
+        const qreal y = dropLine == QLatin1String("after") ? row.bottom() - 1.0 : row.top() + 1.0;
+        p->setPen(QPen(AppStyle::color(Color::Accent), 2.0));
+        p->drawLine(QPointF(layout.background.left() + 4.0, y),
+                    QPointF(layout.background.right() - 4.0, y));
     }
     p->restore();
 }
@@ -379,6 +420,20 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 QSize NavigationDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& i) const {
     if (i.data(DividerRole).toBool()) return QSize(160, 33);
     return QSize(160, i.data(SectionRole).toBool() ? 30 : AppStyle::metric(Metric::NavRowHeight));
+}
+
+bool NavigationDelegate::editorEvent(QEvent* event, QAbstractItemModel*,
+                                     const QStyleOptionViewItem& option,
+                                     const QModelIndex& index) {
+    if (event->type() != QEvent::MouseButtonRelease) return false;
+    auto* mouse = static_cast<QMouseEvent*>(event);
+    const QString folderId = index.data(FolderIdRole).toString();
+    if (mouse->button() == Qt::LeftButton && !folderId.isEmpty()
+        && navigationLayout(option, index).disclosure.contains(mouse->pos())) {
+        emit folderToggleActivated(folderId);
+        return true;
+    }
+    return false;
 }
 
 bool NavigationDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,

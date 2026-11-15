@@ -4,11 +4,11 @@
 
 ## 2026-11-15 清单与智能入口收口（当前行为）
 
-数据契约见[数据模型](data-model.md)：schema v5→v6 原子迁移，清单持久化 `icon`／`color`／`archived_at_utc_ms`；备份导出 v3，读入兼容 v2 并补默认外观与未归档状态。
+数据契约见[数据模型](data-model.md)：schema v5/v6→v7 原子迁移，文件夹与清单持久化图标，清单另有 `color`／`archived_at_utc_ms`；备份导出 v4，读入兼容 v2/v3 并补默认外观与未归档状态。
 
 | 区域 | 当前规格 | 实现 |
 |---|---|---|
-| 第三列实体与分组 | 实体行 40px，分组头 36px；标题单行，清单颜色是覆盖整个实体行高度的连续左边框，相邻实体之间不留色带间隙；右侧清单与日期为独立点击区域，分别进入所属清单与打开日期浮层 | `TaskListModel`、`TaskDelegate`、`ListAppearance`、`TaskPanel` |
+| 第三列实体与分组 | 实体行 40px，分组头 36px；标题单行。清单色条距实体区左侧 16px、覆盖整行，父任务拖动柄在色条左侧，悬浮背景从色条右侧开始；子任务拖动柄与背景额外缩进 24px，色条不动，背景圆角 10px。右侧清单与日期为独立点击区域 | `TaskListModel`、`TaskDelegate`、`ListAppearance`、`TaskPanel` |
 | 智能日期范围 | 今天含全部逾期（有效日期 ≤ 今天）；明天仅明天；最近7天含全部逾期及今天至今天+6；计数与列表共用筛选，活动聚合排除归档清单 | `ViewSpec`、`TaskListModel`、`TaskPanel` |
 | 过期顺延 | 仅聚合智能范围的过期分组提供，普通清单及收集箱无顺延入口；每个任务按自身有效日期平移至今天，保留起止时刻、跨日跨度及原提醒，整批事务提交 | `TaskDelegate`、`TaskListModel`、`TaskStore::postponeOverdueTasks()` |
 | 日期编辑入口 | 行内日期与详情共用 `TaskDateController`；打开时固定实体 ID，提交前读取该实体最新状态。四个快捷项为今天、明天、今天+7、下个月同日；纯日期只写 `allDayDate`，明确时刻（含 00:00）只写 `dueAt`，时间页可移除时刻而保留日期 | `TaskDateController`、`DatePickerPopup`、`TaskDetailWidget`、`TaskPanel` |
@@ -18,14 +18,19 @@
 | 新建／编辑清单 | 表单只有名称、图标、颜色、文件夹；新建或改名时名称 trim 后 1–64 个 UTF-16 码元，历史长名称未改动时完整保留；外观与文件夹随保存一次提交。图标与名称共用完整输入框边界及焦点状态，色块选中环位于按钮绘制范围内 | `ListEditorDialog`、`EmojiPickerPopup`、`ColorPickerPopup`、`MenuComboBox` |
 | 模态、菜单与提示 | `ModalDialog` 使用透明窗口、圆角卡片与应用阴影；`PopupMenu` 对整张圆角 alpha 图做高斯模糊。`AppToolTip` 统一使用透明圆角气泡：13px 正文、18px 行高、3px 8px 内边距、6px 圆角和深灰底白字；完整可见的同名文字不重复提示，省略文本、完整日期及操作说明保留 | `ModalDialog`、`PopupMenu`、`AppToolTip`、`EntityHoverPreview`、`QssBuilder`、`DesignTokens` |
 | 导航图标 | 使用内置资源的准确 ID；今天按应用时区日号选择 `today-icon-1..31`，最近7天、已完成、已过期、垃圾桶及归档组分别使用对应导航图形。按 viewBox 等比绘制，不再附加统一光学内缩；普通导航图形为 20×20 | `AppIcons`、`ListAppearance`、`NavigationDelegate`、`SidebarSectionHeader` |
+| 自定义清单/文件夹图标 | 默认 SVG 与 emoji 共用 `ListAppearance`/`GlyphButton`；显式恢复文本画笔并复用 emoji 字体回退，按绘制框度量留出血，选中不消失、14–20px 小图标不裁切 | `TypeSystem`、`ListAppearance`、`GlyphButton`、`FolderEditorDialog` |
+| 清单拖动与文件夹 | 普通未归档清单可拖动：上下边缘排序，平铺清单中心合并，文件夹内中心移动；拖动中显示插入线或圆角包围框。组织区末尾和可见空白可移到顶层末尾。合并先弹名称/图标编辑器，确认后原子建夹，取消不改组织归属、顺序或 revision；正文失焦仍按原编辑会话保存。不创建嵌套文件夹。文件夹可选择、展开/收起，置顶跨清单汇总，其余按清单分节 | `NavigationListWidget`、`NavigationDelegate`、`FolderEditorDialog`、`TaskStore`、`TaskPanel` |
+| 任务层级与手动顺序 | 父任务后连续展示子任务，支持折叠；跨分区归组后每个实体仅出现一次，计数不被折叠改变。拖动携带可见子树，同父级内排序保留各自实际置顶状态，跨父级仍走“关联主任务”。段内先 `sortOrder`，同值保留原日期/创建时间/置顶回退；进入/离开置顶区同步切换置顶状态。文件夹任务只能拖回自己的清单，禁止跨清单误投放 | `TaskListModel`、`TaskListView`、`TaskDelegate`、`TaskStore::moveEntityForDrop()` |
+| 时间区拖动 | 使用 `overdue/today/tomorrow/next7days` 稳定键；跨区分别落到昨天、今天、明天、后天，保留时刻/跨度/提醒，同段不改日期。子任务脱离父级按真实日期所属区判断，不沿父级显示日期误判。空置顶区及缺失的空时间分区仅在拖动时追加到归组后的列表底部，不移动原行；结束、取消或离开后移除 | `TaskDrop`、`TaskListModel`、`TaskListView`、`TaskStore` |
+| 快速添加与任务右键 | 快速添加为 10px 圆角、透明边框、语义浅底，placeholder 包含实际目标清单；文件夹选择成员清单，空文件夹禁用。右键复用日期、优先级、添加子任务、关联主任务、置顶、移动到、副本、转换与删除等已实现命令，保留完成状态和桌面便签，不展示标签/复制链接/未定义命令 | `QssBuilder`、`TaskPanel`、`EntityCommands`、`TaskStore::createSubtask()` |
 
 本轮不新增摘要、指派、标签或过滤器等范围外功能；早期参照矩阵中的范围外项目不构成本轮交付项。
 
 ### 本轮已执行验证与边界
 
-- 原生 Windows x64、Qt 5.12.8：主 UI 套件 **82 passed**；核心 `tasks` **48**、`updates` **40**、`stats` **22**、`branding` **35 passed**。新增覆盖精确图标 ID、分组分隔、连续色带像素、tooltip 去重与透明圆角、日期快捷项、纯日期及明确 00:00。
-- 150% 缩放的 `visualPreview` 实测 DPR **1.5**，**3 项通过**。窗口高度被当前可用屏幕夹限，该结果不表示可无限制显示请求的完整逻辑高度。
-- 已检查原生深浅主题截图、时间页及侧栏；tooltip、分隔线与两种清单颜色的相邻实体均输出局部放大图，并分别合成到浅／深背景核对。透明圆角、连续色带和“不指定时间”布局在 100%／150% 下均已复验，产物仅留本机忽略目录。
+- 原生 Windows x64、Qt 5.12.8：主 UI 套件 **90 passed，0 failed**；核心 `tasks` **65**、`updates` **40**、`stats` **22**、`branding` **35 passed**。新增覆盖文件夹聚合/建夹、顶层末尾落点、跨分区子树唯一性、首次/末尾置顶投放、同父排序保留置顶、真实日期分区改期、父子 revision 同事务合并及跨清单拒绝。CTest 使用既有 `offscreen` 环境，**5/5 suites passed**；其中原生窗口两项及原生浮层视觉一项明确跳过，不用 offscreen 冒充窗口验收。
+- 150% 缩放的 `organizationDragVisualPreview` + `visualPreview` 实测 DPR **1.5**，合计 **4 项通过**。窗口高度被当前可用屏幕夹限，该结果不表示可无限制显示请求的完整逻辑高度。
+- 已检查原生深浅主题截图、文件夹合并框、时间空投放区及父子行 2 倍局部图；局部图使用完整面板实际底色合成，裁剪与放大统一为物理像素，避免透明背景吞字或高 DPR 二次缩放。产物仅留本机忽略目录 `.tools/ui-screenshots-round4/` 与 `.tools/ui-screenshots-round4-150/`。
 - 本轮未跑 Linux、ARM64 或银河麒麟 V10 SP1 真机；下方 Ubuntu 等验证结果仅对应各自历史轮次。
 
 ## 历史证据等级

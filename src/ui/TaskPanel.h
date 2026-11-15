@@ -19,6 +19,8 @@ class QFrame;
 namespace kl {
 class TaskStore;
 class TaskListModel;
+class TaskListView;
+class NavigationListWidget;
 class TaskDetailWidget;
 class WindowControls;
 class WindowResizeArea;
@@ -88,8 +90,8 @@ private:
     TaskStore* m_store;
     TaskListModel* m_model = nullptr;
     TaskDetailWidget* m_detail = nullptr;
-    QListWidget* m_navigation = nullptr;
-    QListView* m_list = nullptr;
+    NavigationListWidget* m_navigation = nullptr;
+    TaskListView* m_list = nullptr;
     QLineEdit *m_search = nullptr, *m_quick = nullptr;
     QLabel* m_quickKind = nullptr;
     QComboBox* m_renderer = nullptr;
@@ -114,6 +116,7 @@ private:
     ToastIsland* m_toast = nullptr;
     ViewSpec m_filter;
     QSet<QString> m_archivedListIds;
+    QSet<QString> m_collapsedFolders;
     QString m_selectedId = QString();
     QHash<QString, TaskStatus> m_taskStates;
     int m_sidebarWidth = 232;

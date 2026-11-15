@@ -44,6 +44,7 @@ enum class EntityCommand {
 struct MenuContext {
     EntityKind kind = EntityKind::Task;
     bool completed = false;
+    bool abandoned = false;
     bool deleted = false;
     bool pinned = false;
     bool hasDate = false;
@@ -77,6 +78,7 @@ public:
 
 signals:
     void commandExecuted(kl::EntityCommand cmd, QString entityId);
+    void entityCreated(QString entityId);
     void errorOccurred(QString message);
 
 protected:

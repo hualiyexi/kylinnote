@@ -5,6 +5,10 @@
 #include <QComboBox>
 #include <QDateTimeEdit>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QElapsedTimer>
 #include <QFrame>
 #include <QHostAddress>
@@ -15,6 +19,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMenu>
+#include <QMimeData>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPixmap>
@@ -68,10 +73,12 @@
 #include "ui/DatePickerPopup.h"
 #include "ui/ColorPickerPopup.h"
 #include "ui/EmojiPickerPopup.h"
+#include "ui/FolderEditorDialog.h"
 #include "ui/ListAppearance.h"
 #include "ui/ListEditorDialog.h"
 #include "ui/ModalDialog.h"
 #include "ui/MenuComboBox.h"
+#include "ui/NavigationListWidget.h"
 #include "ui/PopupMenu.h"
 #include "ui/TaskDateController.h"
 #include "ui/SettingsDialog.h"
@@ -86,6 +93,7 @@
 #include "ui/TaskDetailWidget.h"
 #include "ui/TaskDelegate.h"
 #include "ui/TaskListModel.h"
+#include "ui/TaskListView.h"
 #include "ui/TaskPanel.h"
 #include "ui/ToastIsland.h"
 #include "ui/UpdateDialog.h"
@@ -1463,6 +1471,259 @@ private slots:
             if (navigation->item(row)->data(Qt::UserRole + 1).toString() == noteList) listStillVisible = true;
         QVERIFY(listStillVisible);
     }
+    void folderViewAggregatesAndQuickAdds() {
+        const QString folder = m_store->createFolder(QStringLiteral("项目文件夹"), QStringLiteral("🏛️"));
+        const QString tasks = m_store->createList(QStringLiteral("任务组"), folder, EntityKind::Task,
+                                                  QStringLiteral("🛠"));
+        const QString notes = m_store->createList(QStringLiteral("记录组"), folder, EntityKind::Note);
+        const QString outside = m_store->createList(QStringLiteral("文件夹外"), QString(), EntityKind::Task);
+        const QString pinned = m_store->createTask(QStringLiteral("跨清单置顶"), tasks);
+        const QString ordinary = m_store->createTask(QStringLiteral("普通任务"), tasks);
+        const QString note = m_store->createNote(QStringLiteral("文件夹笔记"), notes);
+        const QString excluded = m_store->createTask(QStringLiteral("不应出现"), outside);
+        QVERIFY(m_store->setPinnedAt(pinned, appNow()));
+
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* model = qobject_cast<TaskListModel*>(
+            panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
+        auto* quick = panel.findChild<QLineEdit*>(QStringLiteral("QuickAdd"));
+        QVERIFY(navigation && model && quick);
+        const auto folderRow = [navigation](const QString& id) {
+            for (int row = 0; row < navigation->count(); ++row)
+                if (navigation->item(row)->data(NavigationDelegate::FolderIdRole).toString() == id)
+                    return row;
+            return -1;
+        };
+        int row = folderRow(folder);
+        QVERIFY(row >= 0);
+        QCOMPARE(navigation->item(row)->data(NavigationDelegate::IconNameRole).toString(),
+                 QStringLiteral("🏛️"));
+        navigation->setCurrentRow(row);
+        QTRY_COMPARE(model->filter().scope, ViewScope::Folder);
+        QTRY_COMPARE(model->filter().folderId, folder);
+        QVERIFY(model->indexForTask(pinned).isValid());
+        QVERIFY(model->indexForTask(ordinary).isValid());
+        QVERIFY(model->indexForTask(note).isValid());
+        QVERIFY(!model->indexForTask(excluded).isValid());
+        QStringList sectionKeys;
+        for (int index = 0; index < model->rowCount(); ++index) {
+            if (!model->data(model->index(index, 0), TaskListModel::HeaderRole).toBool()) continue;
+            const QString key = model->data(model->index(index, 0), TaskListModel::SectionKeyRole).toString();
+            if (!key.isEmpty()) sectionKeys.append(key);
+        }
+        QCOMPARE(sectionKeys, QStringList({QStringLiteral("pinned"),
+                                           QStringLiteral("list:") + tasks,
+                                           QStringLiteral("list:") + notes}));
+        QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("ListHeading"))->text(),
+                 QStringLiteral("项目文件夹"));
+        QVERIFY(quick->placeholderText().contains(QStringLiteral("任务组")));
+        quick->setText(QStringLiteral("文件夹内新任务"));
+        QTest::keyClick(quick, Qt::Key_Return);
+        QString created;
+        for (const Entity& entity : m_store->entities())
+            if (entity.title == QStringLiteral("文件夹内新任务")) created = entity.id;
+        QVERIFY(isUuid(created));
+        QCOMPARE(m_store->entity(created).listId, tasks);
+        QTRY_VERIFY(model->indexForTask(created).isValid());
+
+        row = folderRow(folder);
+        const auto childIsHidden = [navigation, tasks](bool* found = nullptr) {
+            for (int index = 0; index < navigation->count(); ++index) {
+                QListWidgetItem* item = navigation->item(index);
+                if (item->data(Qt::UserRole + 1).toString() != tasks) continue;
+                if (found) *found = true;
+                return item->isHidden();
+            }
+            if (found) *found = false;
+            return false;
+        };
+        bool found = false;
+        QVERIFY(!childIsHidden(&found));
+        QVERIFY(found);
+        auto* delegate = qobject_cast<NavigationDelegate*>(navigation->itemDelegate());
+        QVERIFY(delegate);
+        QStyleOptionViewItem option;
+        option.rect = navigation->visualItemRect(navigation->item(row));
+        const QModelIndex index = navigation->model()->index(row, 0);
+        QMouseEvent toggle(QEvent::MouseButtonRelease,
+                           QPointF(option.rect.left() + 17, option.rect.center().y()),
+                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QVERIFY(delegate->editorEvent(&toggle, navigation->model(), option, index));
+        QTRY_VERIFY(childIsHidden());
+        option.rect = navigation->visualItemRect(navigation->item(folderRow(folder)));
+        QMouseEvent expand(QEvent::MouseButtonRelease,
+                           QPointF(option.rect.left() + 17, option.rect.center().y()),
+                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QVERIFY(delegate->editorEvent(&expand, navigation->model(), option,
+                                     navigation->model()->index(folderRow(folder), 0)));
+        QTRY_VERIFY(!childIsHidden());
+    }
+    void folderMergeDialogCancellationAndAcceptance() {
+        const QString source = m_store->createList(QStringLiteral("来源清单"));
+        const QString target = m_store->createList(QStringLiteral("目标清单"));
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* navigation = panel.findChild<NavigationListWidget*>(QStringLiteral("Navigation"));
+        QVERIFY(navigation);
+        const int originalFolders = m_store->folders().size();
+        const QVector<TaskList> originalLists = m_store->lists();
+        QTimer::singleShot(0, [&panel]() {
+            const auto dialogs = panel.findChildren<FolderEditorDialog*>();
+            if (!dialogs.isEmpty()) dialogs.first()->reject();
+        });
+        emit navigation->folderMergeRequested(source, target);
+        QCOMPARE(m_store->folders().size(), originalFolders);
+        // 取消只回滚组织操作；文本失焦仍遵循通用的编辑会话保存规则。
+        for (const TaskList& before : originalLists) {
+            if (before.id != source && before.id != target) continue;
+            for (const TaskList& after : m_store->lists()) {
+                if (after.id != before.id) continue;
+                QCOMPARE(after.folderId, before.folderId);
+                QCOMPARE(after.sortOrder, before.sortOrder);
+                QCOMPARE(after.revision, before.revision);
+                QCOMPARE(after.updatedAt, before.updatedAt);
+            }
+        }
+
+        QTimer::singleShot(0, [&panel]() {
+            const auto dialogs = panel.findChildren<FolderEditorDialog*>();
+            if (dialogs.isEmpty()) return;
+            FolderEditorDialog* dialog = dialogs.first();
+            dialog->findChild<QLineEdit*>(QStringLiteral("FolderNameEdit"))->setText(
+                QStringLiteral("合并后的文件夹"));
+            QTest::mouseClick(dialog->findChild<QPushButton*>(QStringLiteral("FolderEditorSave")),
+                              Qt::LeftButton);
+        });
+        emit navigation->folderMergeRequested(source, target);
+        QCOMPARE(m_store->folders().size(), originalFolders + 1);
+        QString folder;
+        for (const Folder& candidate : m_store->folders())
+            if (candidate.name == QStringLiteral("合并后的文件夹")) folder = candidate.id;
+        QVERIFY(isUuid(folder));
+        for (const TaskList& list : m_store->lists())
+            if (list.id == source || list.id == target) QCOMPARE(list.folderId, folder);
+        auto* model = qobject_cast<TaskListModel*>(
+            panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
+        QTRY_COMPARE(model->filter().scope, ViewScope::Folder);
+        QTRY_COMPARE(model->filter().folderId, folder);
+    }
+    void navigationDropTargets() {
+        NavigationListWidget navigation;
+        navigation.resize(280, 260);
+        const auto addList = [&navigation](const QString& id, const QString& folder = QString()) {
+            auto* item = new QListWidgetItem(id, &navigation);
+            item->setData(Qt::UserRole + 1, id);
+            item->setData(NavigationDelegate::ParentFolderRole, folder);
+            item->setFlags(item->flags() | Qt::ItemIsDragEnabled);
+            item->setSizeHint(QSize(200, 36));
+            return item;
+        };
+        QListWidgetItem* source = addList(QStringLiteral("source"));
+        QListWidgetItem* target = addList(QStringLiteral("target"));
+        QListWidgetItem* child = addList(QStringLiteral("child"), QStringLiteral("folder"));
+        auto* folder = new QListWidgetItem(QStringLiteral("folder"), &navigation);
+        folder->setData(NavigationDelegate::FolderIdRole, QStringLiteral("folder"));
+        folder->setSizeHint(QSize(200, 36));
+        navigation.show();
+        QTRY_VERIFY(navigation.visualItemRect(target).height() > 0);
+        QMimeData mime;
+        mime.setData(NavigationListWidget::mimeType(), QByteArray("source"));
+        QSignalSpy merges(&navigation, &NavigationListWidget::folderMergeRequested);
+        QSignalSpy reorders(&navigation, &NavigationListWidget::listReorderRequested);
+
+        QPoint center = navigation.visualItemRect(target).center();
+        QDragEnterEvent enter(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &enter);
+        QDragMoveEvent mergeMove(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &mergeMove);
+        QCOMPARE(target->data(NavigationDelegate::DropTargetRole).toString(), QStringLiteral("target"));
+        QDropEvent mergeDrop(QPointF(center), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &mergeDrop);
+        QCOMPARE(merges.count(), 1);
+        QCOMPARE(merges.first().at(0).toString(), QStringLiteral("source"));
+        QCOMPARE(merges.first().at(1).toString(), QStringLiteral("target"));
+        QVERIFY(target->data(NavigationDelegate::DropTargetRole).isNull());
+
+        const QPoint before(navigation.visualItemRect(target).center().x(),
+                            navigation.visualItemRect(target).top() + 2);
+        QDragMoveEvent beforeMove(before, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QDragEnterEvent beforeEnter(before, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &beforeEnter);
+        QApplication::sendEvent(navigation.viewport(), &beforeMove);
+        QCOMPARE(target->data(NavigationDelegate::DropLineRole).toString(), QStringLiteral("before"));
+        QDropEvent beforeDrop(QPointF(before), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &beforeDrop);
+        QCOMPARE(reorders.count(), 1);
+        QCOMPARE(reorders.last().at(1).toString(), QString());
+        QCOMPARE(reorders.last().at(2).toString(), QStringLiteral("target"));
+        QCOMPARE(reorders.last().at(3).toBool(), false);
+
+        center = navigation.visualItemRect(child).center();
+        QDragEnterEvent childEnter(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &childEnter);
+        QDragMoveEvent childMove(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &childMove);
+        QDropEvent childDrop(QPointF(center), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &childDrop);
+        QCOMPARE(reorders.count(), 2);
+        QCOMPARE(reorders.last().at(1).toString(), QStringLiteral("folder"));
+        QCOMPARE(reorders.last().at(2).toString(), QStringLiteral("child"));
+        QCOMPARE(reorders.last().at(3).toBool(), false); // 中心落在文件夹内清单之前。
+
+        center = navigation.visualItemRect(folder).center();
+        QDragEnterEvent folderEnter(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &folderEnter);
+        QDragMoveEvent folderMove(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &folderMove);
+        QDropEvent folderDrop(QPointF(center), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &folderDrop);
+        QCOMPARE(reorders.count(), 3);
+        QCOMPARE(reorders.last().at(1).toString(), QStringLiteral("folder"));
+        QCOMPARE(reorders.last().at(2).toString(), QString());
+
+        center = navigation.visualItemRect(source).center();
+        QDragMoveEvent selfMove(center, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &selfMove);
+        QVERIFY(source->data(NavigationDelegate::DropTargetRole).isNull());
+        QCOMPARE(merges.count(), 1);
+        QCOMPARE(reorders.count(), 3);
+
+        // 组织区末尾和可见空白是顶层末尾落点，文件夹中的最后一个清单也能拖出。
+        auto* end = new QListWidgetItem(&navigation);
+        end->setFlags(Qt::NoItemFlags);
+        end->setData(NavigationDelegate::DividerRole, true);
+        end->setData(NavigationDelegate::OrganizationEndRole, true);
+        end->setSizeHint(QSize(200, 33));
+        QMimeData childMime;
+        childMime.setData(NavigationListWidget::mimeType(), QByteArray("child"));
+        const QPoint endPoint = navigation.visualItemRect(end).center();
+        QDragEnterEvent endEnter(endPoint, Qt::MoveAction, &childMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &endEnter);
+        QDragMoveEvent endMove(endPoint, Qt::MoveAction, &childMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &endMove);
+        QCOMPARE(end->data(NavigationDelegate::DropLineRole).toString(), QStringLiteral("after"));
+        QDropEvent endDrop(QPointF(endPoint), Qt::MoveAction, &childMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &endDrop);
+        QCOMPARE(reorders.count(), 4);
+        QCOMPARE(reorders.last().at(0).toString(), QStringLiteral("child"));
+        QCOMPARE(reorders.last().at(1).toString(), QString());
+        QCOMPARE(reorders.last().at(2).toString(), QString());
+
+        navigation.resize(280, 360); QApplication::processEvents();
+        const QPoint blankPoint(100, navigation.viewport()->height() - 8);
+        QDragEnterEvent blankEnter(blankPoint, Qt::MoveAction, &childMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &blankEnter);
+        QDragMoveEvent blankMove(blankPoint, Qt::MoveAction, &childMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &blankMove);
+        QVERIFY(blankMove.isAccepted());
+        QDropEvent blankDrop(QPointF(blankPoint), Qt::MoveAction, &childMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation.viewport(), &blankDrop);
+        QVERIFY(blankDrop.isAccepted());
+        QCOMPARE(reorders.count(), 5);
+        QCOMPARE(reorders.last().at(0).toString(), QStringLiteral("child"));
+        QCOMPARE(reorders.last().at(1).toString(), QString());
+        QCOMPARE(reorders.last().at(2).toString(), QString());
+    }
     void hiddenSmartListDoesNotBlockExplicitTaskNavigation() {
         const QString id = m_store->createTask(QStringLiteral("隐藏垃圾桶中的实体"));
         QVERIFY(m_store->trashTask(id));
@@ -2010,7 +2271,8 @@ private slots:
         QModelIndex overdueHeader;
         for (int row = 0; row < model.rowCount(); ++row) {
             const QModelIndex index = model.index(row, 0);
-            if (model.data(index, TaskListModel::SectionKeyRole).toString() == QLatin1String("overdue"))
+            if (model.data(index, TaskListModel::HeaderRole).toBool()
+                && model.data(index, TaskListModel::SectionKeyRole).toString() == QLatin1String("overdue"))
                 overdueHeader = index;
         }
         QVERIFY(overdueHeader.isValid());
@@ -2047,10 +2309,408 @@ private slots:
         bool postponeHidden = true;
         for (int row = 0; row < model.rowCount(); ++row) {
             const QModelIndex index = model.index(row, 0);
-            if (model.data(index, TaskListModel::SectionKeyRole).toString() == QLatin1String("overdue"))
+            if (model.data(index, TaskListModel::HeaderRole).toBool()
+                && model.data(index, TaskListModel::SectionKeyRole).toString() == QLatin1String("overdue"))
                 postponeHidden = model.data(index, TaskListModel::HeaderActionRole).toString().isEmpty();
         }
         QVERIFY(postponeHidden);
+    }
+    void taskHierarchyGeometryAndCollapsing() {
+        const QString list = m_store->createList(QStringLiteral("层级清单"), QString(),
+            EntityKind::Task, QString(), QStringLiteral("#4CA1FF"));
+        const QString parent = m_store->createTask(QStringLiteral("父任务"), list);
+        Entity parentValue = m_store->entity(parent);
+        parentValue.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(parentValue));
+        const QString child = m_store->createSubtask(QStringLiteral("子任务"), parent);
+        Entity childValue = m_store->entity(child);
+        childValue.allDayDate = toAppTime(appNow()).date().addDays(1);
+        QVERIFY(m_store->saveTask(childValue));
+        m_store->createTask(QStringLiteral("独立任务"), list);
+
+        TaskListModel model(m_store.get());
+        QModelIndex parentIndex = model.indexForTask(parent);
+        QModelIndex childIndex = model.indexForTask(child);
+        QVERIFY(parentIndex.isValid() && childIndex.isValid());
+        QCOMPARE(childIndex.row(), parentIndex.row() + 1);
+        QCOMPARE(model.data(parentIndex, TaskListModel::HasChildrenRole).toBool(), true);
+        QCOMPARE(model.data(childIndex, TaskListModel::DepthRole).toInt(), 1);
+        QCOMPARE(model.data(childIndex, TaskListModel::SectionKeyRole).toString(),
+                 model.data(parentIndex, TaskListModel::SectionKeyRole).toString());
+        const int entityCount = model.entityCount();
+        QVERIFY(m_store->setPinnedAt(parent, appNow()));
+        QTRY_COMPARE(model.data(model.indexForTask(parent), TaskListModel::SectionKeyRole).toString(),
+                     QStringLiteral("pinned"));
+        int childOccurrences = 0;
+        for (int row = 0; row < model.rowCount(); ++row)
+            if (model.entityId(model.index(row, 0)) == child) ++childOccurrences;
+        QCOMPARE(childOccurrences, 1);
+        QCOMPARE(model.data(model.indexForTask(child), TaskListModel::SectionKeyRole).toString(),
+                 QStringLiteral("pinned"));
+        QCOMPARE(model.entityCount(), entityCount);
+        parentIndex = model.indexForTask(parent);
+        childIndex = model.indexForTask(child);
+        QCOMPARE(childIndex.row(), parentIndex.row() + 1);
+        model.toggleChildren(parent);
+        QVERIFY(!model.indexForTask(child).isValid());
+        QCOMPARE(model.entityCount(), entityCount);
+        model.toggleChildren(parent);
+        parentIndex = model.indexForTask(parent);
+        childIndex = model.indexForTask(child);
+        QVERIFY(childIndex.isValid());
+
+        TaskDelegate delegate;
+        const auto render = [&delegate](const QModelIndex& index) {
+            QImage image(560, 40, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, 0, 560, 40);
+            option.state = QStyle::State_Enabled | QStyle::State_MouseOver;
+            delegate.paint(&painter, option, index);
+            painter.end();
+            return image;
+        };
+        const QImage parentImage = render(parentIndex);
+        const QImage childImage = render(childIndex);
+        const QColor hover = AppStyle::color(AppStyle::Color::Hover);
+        QCOMPARE(QColor::fromRgba(parentImage.pixel(21, 20)), hover);
+        QCOMPARE(QColor::fromRgba(childImage.pixel(45, 20)), hover);
+        QCOMPARE(qAlpha(childImage.pixel(43, 20)), 0);
+        const QColor listColor(QStringLiteral("#4CA1FF"));
+        QCOMPARE(QColor::fromRgba(parentImage.pixel(16, 20)), listColor);
+        QCOMPARE(QColor::fromRgba(childImage.pixel(16, 20)), listColor);
+
+        const int originalEntityCount = model.entityCount();
+        parentValue = m_store->entity(parent);
+        parentValue.allDayDate = toAppTime(appNow()).date().addDays(1);
+        QVERIFY(m_store->saveTask(parentValue));
+        childValue = m_store->entity(child);
+        childValue.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(childValue));
+        QVERIFY(m_store->setPinnedAt(parent, QDateTime()));
+        ViewSpec next7; next7.scope = ViewScope::Next7Days; next7.renderer = ViewRenderer::Time;
+        model.setFilter(next7);
+        QTRY_COMPARE(model.data(model.indexForTask(parent), TaskListModel::SectionKeyRole).toString(),
+                     QStringLiteral("tomorrow"));
+        QCOMPARE(model.data(model.indexForTask(child), TaskListModel::SectionKeyRole).toString(),
+                 QStringLiteral("tomorrow"));
+        childOccurrences = 0;
+        for (int row = 0; row < model.rowCount(); ++row)
+            if (model.entityId(model.index(row, 0)) == child) ++childOccurrences;
+        QCOMPARE(childOccurrences, 1); // 子段排在父段之前也只能放进父级子树一次。
+        const int filteredEntityCount = model.entityCount();
+        QCOMPARE(filteredEntityCount, 2); // 无日期的独立任务不进入最近 7 天。
+
+        const QDateTime childPin = appNow();
+        QVERIFY(m_store->setPinnedAt(child, childPin));
+        QCOMPARE(model.data(model.indexForTask(child), TaskListModel::SectionKeyRole).toString(),
+                 QStringLiteral("tomorrow")); // 独立置顶的孩子仍归属于可见父级，不重复显示。
+        QCOMPARE(model.indexForTask(child).row(), model.indexForTask(parent).row() + 1);
+        childOccurrences = 0;
+        for (int row = 0; row < model.rowCount(); ++row)
+            if (model.entityId(model.index(row, 0)) == child) ++childOccurrences;
+        QCOMPARE(childOccurrences, 1);
+        QCOMPARE(model.entityCount(), filteredEntityCount);
+
+        const QString tomorrowPeer = m_store->createTask(QStringLiteral("明日独立任务"), list);
+        Entity peerValue = m_store->entity(tomorrowPeer);
+        peerValue.allDayDate = toAppTime(appNow()).date().addDays(1);
+        QVERIFY(m_store->saveTask(peerValue));
+        const int parentRow = model.indexForTask(parent).row();
+        const int childRow = model.indexForTask(child).row();
+        QVERIFY(parentRow >= 0 && childRow > parentRow);
+        model.setDragActive(true, parent);
+        QCOMPARE(model.indexForTask(parent).row(), parentRow); // 空的“今天”不能在归组后插回父级之前。
+        QCOMPARE(model.indexForTask(child).row(), childRow);
+        model.setDragActive(false);
+        QCOMPARE(model.indexForTask(parent).row(), parentRow);
+        QCOMPARE(model.indexForTask(child).row(), childRow);
+    }
+    void taskViewDropCommands() {
+        const QDate today = toAppTime(appNow()).date();
+        const QString list = m_store->createList(QStringLiteral("时间拖动"));
+        const QString todayTask = m_store->createTask(QStringLiteral("今天任务"), list);
+        const QString pinCandidate = m_store->createTask(QStringLiteral("待置顶"), list);
+        const auto setDate = [this](const QString& id, const QDate& date) {
+            Entity value = m_store->entity(id); value.allDayDate = date;
+            return m_store->saveTask(value);
+        };
+        QVERIFY(setDate(todayTask, today));
+        QVERIFY(setDate(pinCandidate, today.addDays(1)));
+
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(navigation && view && model);
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (navigation->item(row)->data(Qt::UserRole).toInt()
+                == static_cast<int>(ViewScope::Next7Days)) {
+                navigation->setCurrentRow(row);
+                break;
+            }
+        }
+        QTRY_COMPARE(model->filter().scope, ViewScope::Next7Days);
+        QTRY_COMPARE(model->filter().renderer, ViewRenderer::Time);
+        const auto headerFor = [model](const QString& key) {
+            for (int row = 0; row < model->rowCount(); ++row) {
+                const QModelIndex index = model->index(row, 0);
+                if (model->data(index, TaskListModel::HeaderRole).toBool()
+                    && model->data(index, TaskListModel::SectionKeyRole).toString() == key)
+                    return index;
+            }
+            return QModelIndex();
+        };
+        const auto drop = [view, model, headerFor](const QString& sourceId, const QModelIndex& target,
+                                                    bool before = false, bool after = false) {
+            QMimeData mime;
+            QSignalSpy drops(view, &TaskListView::entityDropRequested);
+            mime.setData(TaskListView::mimeType(), sourceId.toUtf8());
+            const bool header = target.data(TaskListModel::HeaderRole).toBool();
+            const QString targetId = target.data(TaskListModel::IdRole).toString();
+            const QString targetKey = target.data(TaskListModel::SectionKeyRole).toString();
+            const QPoint enterPoint = view->visualRect(model->indexForTask(sourceId)).center();
+            QDragEnterEvent enter(enterPoint, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &enter);
+            // 拖动入口会重置模型；按 ID/分区重新解析目标，不保留旧 QModelIndex。
+            const QModelIndex currentTarget = header ? headerFor(targetKey) : model->indexForTask(targetId);
+            if (!currentTarget.isValid()) {
+                QDragLeaveEvent leave; QApplication::sendEvent(view->viewport(), &leave);
+                return false;
+            }
+            view->scrollTo(currentTarget, QAbstractItemView::EnsureVisible);
+            QApplication::processEvents();
+            const QRect rect = view->visualRect(currentTarget);
+            const QPoint point(rect.center().x(),
+                               before ? rect.top() + 2 : after ? rect.bottom() - 2 : rect.center().y());
+            QDragMoveEvent move(point, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &move);
+            QDropEvent event(QPointF(point), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &event);
+            const bool delivered = drops.count() == 1 && drops.first().at(2).toString() == targetKey;
+            if (!delivered)
+                qDebug() << "unresolved drop" << sourceId << targetKey << targetId
+                         << view->indexAt(point).data(TaskListModel::SectionKeyRole)
+                         << move.isAccepted() << drops.count();
+            return delivered;
+        };
+        const auto dropOnHeader = [view, model, headerFor](const QString& sourceId, const QString& key) {
+            QMimeData mime;
+            QSignalSpy drops(view, &TaskListView::entityDropRequested);
+            mime.setData(TaskListView::mimeType(), sourceId.toUtf8());
+            const QPoint enterPoint = view->visualRect(model->indexForTask(sourceId)).center();
+            QDragEnterEvent enter(enterPoint, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &enter);
+            const QModelIndex header = headerFor(key);
+            if (!header.isValid()) {
+                QDragLeaveEvent leave; QApplication::sendEvent(view->viewport(), &leave);
+                return false;
+            }
+            view->scrollTo(header, QAbstractItemView::EnsureVisible);
+            QApplication::processEvents();
+            const QPoint point = view->visualRect(header).center();
+            QDragMoveEvent move(point, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &move);
+            if (!move.isAccepted()) {
+                QDragLeaveEvent leave; QApplication::sendEvent(view->viewport(), &leave);
+                return false;
+            }
+            QDropEvent event(QPointF(point), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &event);
+            return drops.count() == 1;
+        };
+        QTRY_VERIFY(!headerFor(QStringLiteral("pinned")).isValid());
+        QVERIFY(dropOnHeader(todayTask, QStringLiteral("pinned")));
+        QTRY_VERIFY(m_store->entity(todayTask).pinnedAt.isValid());
+        QCOMPARE(m_store->entity(todayTask).allDayDate, today);
+        QVERIFY(!headerFor(QStringLiteral("today")).isValid());
+        QVERIFY(dropOnHeader(todayTask, QStringLiteral("today")));
+        QTRY_VERIFY(!m_store->entity(todayTask).pinnedAt.isValid());
+        QCOMPARE(m_store->entity(todayTask).allDayDate, today);
+
+        const QString pinAnchor = m_store->createTask(QStringLiteral("置顶锚点"), list);
+        QVERIFY(setDate(pinAnchor, today));
+        QVERIFY(m_store->setPinnedAt(pinAnchor, appNow()));
+        const QString overdueTask = m_store->createTask(QStringLiteral("过期锚点"), list);
+        const QString day4 = m_store->createTask(QStringLiteral("第四天"), list);
+        const QString day5 = m_store->createTask(QStringLiteral("第五天"), list);
+        QVERIFY(setDate(overdueTask, today.addDays(-1)));
+        QVERIFY(setDate(day4, today.addDays(4)));
+        QVERIFY(setDate(day5, today.addDays(5)));
+        QTRY_VERIFY(model->indexForTask(day5).isValid());
+        QVERIFY(drop(todayTask, headerFor(QStringLiteral("overdue"))));
+        QTRY_COMPARE(m_store->entity(todayTask).allDayDate, today.addDays(-1));
+
+        const QString secondToday = m_store->createTask(QStringLiteral("第二个今天"), list);
+        QVERIFY(setDate(secondToday, today));
+        QTRY_VERIFY(model->indexForTask(secondToday).isValid());
+        QVERIFY(drop(secondToday, headerFor(QStringLiteral("next7days"))));
+        QTRY_COMPARE(m_store->entity(secondToday).allDayDate, today.addDays(2));
+
+        QTRY_VERIFY(model->indexForTask(day5).isValid());
+        QVERIFY(drop(day5, model->indexForTask(day4), true));
+        QTRY_COMPARE(m_store->entity(day5).allDayDate, today.addDays(5));
+        QCOMPARE(m_store->entity(day4).allDayDate, today.addDays(4));
+        QTRY_VERIFY(model->indexForTask(day5).row() < model->indexForTask(day4).row());
+
+        QVERIFY(drop(pinCandidate, model->indexForTask(pinAnchor)));
+        QTRY_VERIFY(m_store->entity(pinCandidate).pinnedAt.isValid());
+        QCOMPARE(m_store->entity(pinCandidate).allDayDate, today.addDays(1));
+        // 今天已空，dragEnter 应临时提供空分区落点。
+        QVERIFY(!headerFor(QStringLiteral("today")).isValid());
+        QMimeData emptyMime;
+        emptyMime.setData(TaskListView::mimeType(), pinCandidate.toUtf8());
+        const QPoint enterPoint = view->visualRect(model->indexForTask(pinCandidate)).center();
+        QDragEnterEvent emptyEnter(enterPoint, Qt::MoveAction, &emptyMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &emptyEnter);
+        const QModelIndex emptyToday = headerFor(QStringLiteral("today"));
+        QVERIFY(emptyToday.isValid());
+        const QPoint emptyPoint = view->visualRect(emptyToday).center();
+        QDragMoveEvent emptyMove(emptyPoint, Qt::MoveAction, &emptyMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &emptyMove);
+        QDropEvent emptyDrop(QPointF(emptyPoint), Qt::MoveAction, &emptyMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &emptyDrop);
+        QVERIFY(emptyDrop.isAccepted());
+        QTRY_VERIFY(!m_store->entity(pinCandidate).pinnedAt.isValid());
+        QCOMPARE(m_store->entity(pinCandidate).allDayDate, today);
+
+        // 子任务虽随父级显示在今天，真实日期为明天；脱离父级后必须按目标段落到今天。
+        const QString datedParent = m_store->createTask(QStringLiteral("今日层级父任务"), list);
+        QVERIFY(setDate(datedParent, today));
+        const QString datedChild = m_store->createSubtask(QStringLiteral("实际日期为明天的子任务"), datedParent);
+        QVERIFY(setDate(datedChild, today.addDays(1)));
+        const QString todayAnchor = m_store->createTask(QStringLiteral("今日独立锚点"), list);
+        QVERIFY(setDate(todayAnchor, today));
+        QTRY_VERIFY(model->indexForTask(todayAnchor).isValid());
+        QCOMPARE(model->indexForTask(datedChild).data(TaskListModel::SectionKeyRole).toString(),
+                 QStringLiteral("today"));
+        QCOMPARE(model->indexForTask(datedChild).data(TaskListModel::UnpinnedSectionRole).toString(),
+                 QStringLiteral("tomorrow"));
+        QVERIFY(drop(datedChild, model->indexForTask(todayAnchor), false, true));
+        QTRY_VERIFY(m_store->entity(datedChild).parentId.isEmpty());
+        QCOMPARE(m_store->entity(datedChild).allDayDate, today);
+        QTRY_COMPARE(model->indexForTask(datedChild).data(TaskListModel::SectionKeyRole).toString(),
+                     QStringLiteral("today"));
+
+        const QString singleList = m_store->createList(QStringLiteral("仅置顶清单"));
+        const QString onlyPinned = m_store->createTask(QStringLiteral("唯一的置顶任务"), singleList);
+        QVERIFY(m_store->setPinnedAt(onlyPinned, appNow()));
+        ViewSpec direct; direct.scope = ViewScope::List; direct.listId = singleList;
+        model->setFilter(direct);
+        QVERIFY(dropOnHeader(onlyPinned, QStringLiteral("undated")));
+        QTRY_VERIFY(!m_store->entity(onlyPinned).pinnedAt.isValid());
+        QVERIFY(!m_store->entity(onlyPinned).allDayDate.isValid());
+        QCOMPARE(m_store->entity(onlyPinned).sortOrder, 0);
+        QVERIFY(!headerFor(QStringLiteral("pinned")).isValid());
+        int undatedHeaders = 0;
+        for (int row = 0; row < model->rowCount(); ++row) {
+            const QModelIndex index = model->index(row, 0);
+            if (index.data(TaskListModel::HeaderRole).toBool()
+                && index.data(TaskListModel::SectionKeyRole).toString() == QLatin1String("undated"))
+                ++undatedHeaders;
+        }
+        QCOMPARE(undatedHeaders, 1); // 正常无日期分区保留，临时投放副本消失。
+        QCOMPARE(model->indexForTask(onlyPinned).data(TaskListModel::SectionKeyRole).toString(),
+                 QStringLiteral("undated"));
+
+        direct.listId = list;
+        model->setFilter(direct);
+        // 同父排序不能由父任务的显示 pinned 分区推断孩子的实际置顶状态。
+        const QString parent = m_store->createTask(QStringLiteral("置顶层级父任务"), list);
+        QVERIFY(m_store->setPinnedAt(parent, appNow()));
+        const QString child = m_store->createSubtask(QStringLiteral("普通兄弟一"), parent);
+        const QString sibling = m_store->createSubtask(QStringLiteral("普通兄弟二"), parent);
+        QVERIFY(!child.isEmpty() && !sibling.isEmpty());
+        QTRY_VERIFY(model->indexForTask(child).isValid() && model->indexForTask(sibling).isValid());
+        QCOMPARE(model->indexForTask(child).data(TaskListModel::SectionKeyRole).toString(),
+                 QStringLiteral("pinned"));
+        QVERIFY(drop(child, model->indexForTask(sibling), false, true));
+        QTRY_VERIFY(!m_store->entity(child).pinnedAt.isValid());
+        QCOMPARE(m_store->entity(child).parentId, parent);
+        QVERIFY(m_store->entity(parent).pinnedAt.isValid());
+        QVERIFY(model->indexForTask(child).row() > model->indexForTask(sibling).row());
+
+        // 文件夹聚合视图禁止把置顶任务误投进另一清单。
+        const QString folder = m_store->createFolder(QStringLiteral("拖动落点校验"));
+        const QString second = m_store->createList(QStringLiteral("第二清单"), folder);
+        const QString foreign = m_store->createTask(QStringLiteral("第二清单锚点"), second);
+        QVERIFY(m_store->moveList(list, folder));
+        ViewSpec folderFilter; folderFilter.scope = ViewScope::Folder; folderFilter.folderId = folder;
+        model->setFilter(folderFilter);
+        QVERIFY(dropOnHeader(parent, QStringLiteral("pinned"))); // 进入拖动后关闭临时空置顶段。
+        QMimeData folderMime;
+        QSignalSpy folderDrops(view, &TaskListView::entityDropRequested);
+        folderMime.setData(TaskListView::mimeType(), parent.toUtf8());
+        const QModelIndex target = model->indexForTask(foreign);
+        QVERIFY(target.isValid());
+        const QPoint targetPoint = view->visualRect(target).center();
+        QDragEnterEvent folderEnter(targetPoint, Qt::MoveAction, &folderMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &folderEnter);
+        QDragMoveEvent folderMove(targetPoint, Qt::MoveAction, &folderMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &folderMove);
+        QVERIFY(!folderMove.isAccepted());
+        QDragLeaveEvent folderLeave; QApplication::sendEvent(view->viewport(), &folderLeave);
+        QCOMPARE(m_store->entity(parent).listId, list);
+        const qint64 foreignOrder = m_store->entity(foreign).sortOrder;
+        QDropEvent folderDrop(QPointF(targetPoint), Qt::MoveAction, &folderMime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &folderDrop);
+        QVERIFY(!folderDrop.isAccepted());
+        QCOMPARE(folderDrops.count(), 0);
+        QCOMPARE(m_store->entity(parent).listId, list);
+        QCOMPARE(m_store->entity(foreign).sortOrder, foreignOrder);
+    }
+    void taskContextMenuAddsSubtask() {
+        const QDate today = toAppTime(appNow()).date();
+        const QString parent = m_store->createTask(QStringLiteral("右键父任务"));
+        Entity parentValue = m_store->entity(parent); parentValue.allDayDate = today;
+        QVERIFY(m_store->saveTask(parentValue));
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* view = panel.findChild<QListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(view && model);
+        const QModelIndex parentIndex = model->indexForTask(parent);
+        QVERIFY(parentIndex.isValid());
+
+        QTimer::singleShot(0, []() {
+            QMenu* entityMenu = nullptr;
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* candidate = qobject_cast<QMenu*>(widget);
+                if (candidate && candidate->objectName() == QLatin1String("EntityContextMenu"))
+                    entityMenu = candidate;
+            }
+            if (!entityMenu) return;
+            QStringList commands;
+            QAction* add = nullptr;
+            for (QAction* action : entityMenu->actions()) {
+                commands.append(action->objectName());
+                if (action->objectName() == QLatin1String("addSubtask")) add = action;
+            }
+            QVERIFY(!commands.contains(QStringLiteral("editTags")));
+            QVERIFY(!commands.contains(QStringLiteral("copyLink")));
+            QVERIFY(!commands.contains(QStringLiteral("setDateNextPeriod")));
+            QVERIFY(add);
+            QTimer::singleShot(0, []() {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                if (auto* edit = dialog->findChild<QLineEdit*>())
+                    edit->setText(QStringLiteral("右键子任务"));
+                dialog->accept();
+            });
+            add->trigger();
+            entityMenu->close();
+        });
+        emit view->customContextMenuRequested(view->visualRect(parentIndex).center());
+        QString child;
+        for (const Entity& entity : m_store->entities())
+            if (entity.parentId == parent) child = entity.id;
+        QVERIFY(isUuid(child));
+        QCOMPARE(m_store->entity(child).title, QStringLiteral("右键子任务"));
+        QCOMPARE(m_store->entity(child).allDayDate, today);
+        QTRY_VERIFY(model->indexForTask(child).isValid());
+        QCOMPARE(model->data(model->indexForTask(child), TaskListModel::DepthRole).toInt(), 1);
+        QCOMPARE(model->data(model->indexForTask(parent), TaskListModel::HasChildrenRole).toBool(), true);
     }
     void listEditorAndAppearancePickers() {
         const QString folder = m_store->createFolder(QStringLiteral("表单文件夹"));
@@ -2921,7 +3581,114 @@ private slots:
         QCOMPARE(m_store->entity(id).body, finalText); QVERIFY(!m_store->desktopNote(id).open); // 关闭路径 flush 后结束会话，不丢最后修改
     }
 
+    void organizationDragVisualPreview() {
+        const QString dir = qEnvironmentVariable("KYLINLIST_SCREENSHOT_DIR");
+        if (dir.isEmpty()) return;
+        QVERIFY(QDir().mkpath(dir));
+        const QDate today = toAppTime(appNow()).date();
+        const QString folder = m_store->createFolder(QStringLiteral("设计项目"), QStringLiteral("🏛️"));
+        const QString first = m_store->createList(QStringLiteral("数字检察"), folder, EntityKind::Task,
+                                                  QStringLiteral("🛠"), QStringLiteral("#4CA1FF"));
+        const QString second = m_store->createList(QStringLiteral("生活"), folder, EntityKind::Task,
+                                                   QStringLiteral("👶"), QStringLiteral("#FFAC38"));
+        const QString parent = m_store->createTask(QStringLiteral("工作网服务维护"), first);
+        Entity parentValue = m_store->entity(parent); parentValue.allDayDate = today;
+        QVERIFY(m_store->saveTask(parentValue));
+        const QString child = m_store->createSubtask(QStringLiteral("可视化平台代码研究"), parent);
+        QVERIFY(!child.isEmpty());
+        const QString ordinary = m_store->createTask(QStringLiteral("电子数据分析工作台开发"), first);
+        const QString other = m_store->createTask(QStringLiteral("互联网门户网站运维合同到期"), second);
+        Entity otherValue = m_store->entity(other); otherValue.allDayDate = today.addDays(1);
+        QVERIFY(m_store->saveTask(otherValue));
+        QVERIFY(m_store->setPinnedAt(parent, appNow()));
+
+        TaskPanel panel(m_store.get()); panel.resize(1240, 820); panel.show();
+        auto* navigation = panel.findChild<NavigationListWidget*>(QStringLiteral("Navigation"));
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(navigation && view && model);
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (navigation->item(row)->data(NavigationDelegate::FolderIdRole).toString() == folder) {
+                navigation->setCurrentRow(row);
+                break;
+            }
+        }
+        QTRY_COMPARE(model->filter().scope, ViewScope::Folder);
+        QTRY_VERIFY(model->indexForTask(child).isValid());
+        QTest::mouseMove(view->viewport(), view->visualRect(model->indexForTask(child)).center());
+        QApplication::processEvents();
+        const auto saveHierarchyDetail = [&panel, view, model, parent, dir](const QString& name) {
+            const QPixmap frame = panel.grab();
+            const qreal dpr = frame.devicePixelRatio();
+            const QPoint origin = view->viewport()->mapTo(&panel, QPoint(0, 0));
+            const QRect cropRect(qRound(origin.x() * dpr),
+                qRound((origin.y() + view->visualRect(model->indexForTask(parent)).top()) * dpr),
+                qRound(view->viewport()->width() * dpr), qRound(80 * dpr));
+            QImage crop = frame.toImage().copy(cropRect);
+            crop.setDevicePixelRatio(1.0); // copy 保留源 DPR；合成与放大必须使用物理像素。
+            QImage onSurface(crop.size(), QImage::Format_ARGB32_Premultiplied);
+            onSurface.fill(panel.palette().color(QPalette::Window));
+            QPainter painter(&onSurface);
+            painter.drawImage(0, 0, crop);
+            painter.end();
+            return onSurface.scaled(onSurface.width() * 2, onSurface.height() * 2,
+                                    Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(dir + QLatin1Char('/') + name);
+        };
+        QVERIFY(panel.grab().save(dir + QStringLiteral("/folder-hierarchy-light.png")));
+        QVERIFY(view->grab().save(dir + QStringLiteral("/folder-task-rows.png")));
+        QVERIFY(saveHierarchyDetail(QStringLiteral("task-hierarchy-detail.png")));
+
+        QListWidgetItem* sourceItem = nullptr;
+        QListWidgetItem* targetItem = nullptr;
+        for (int row = 0; row < navigation->count(); ++row) {
+            QListWidgetItem* item = navigation->item(row);
+            if (item->data(Qt::UserRole + 1).toString() == first) sourceItem = item;
+            if (item->data(Qt::UserRole + 1).toString() == second) targetItem = item;
+        }
+        QVERIFY(sourceItem && targetItem);
+        QMimeData navMime;
+        navMime.setData(NavigationListWidget::mimeType(), first.toUtf8());
+        const QPoint navPoint = navigation->visualItemRect(targetItem).center();
+        QDragEnterEvent navEnter(navPoint, Qt::MoveAction, &navMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation->viewport(), &navEnter);
+        QDragMoveEvent navMove(navPoint, Qt::MoveAction, &navMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(navigation->viewport(), &navMove);
+        QApplication::processEvents();
+        QCOMPARE(targetItem->data(NavigationDelegate::DropTargetRole).toString(), QStringLiteral("target"));
+        QVERIFY(navigation->grab().save(dir + QStringLiteral("/navigation-merge-outline.png")));
+        QDragLeaveEvent navLeave;
+        QApplication::sendEvent(navigation->viewport(), &navLeave);
+
+        ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+        QApplication::processEvents();
+        QVERIFY(panel.grab().save(dir + QStringLiteral("/folder-hierarchy-dark.png")));
+        QVERIFY(saveHierarchyDetail(QStringLiteral("task-hierarchy-detail-dark.png")));
+        ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
+        QApplication::processEvents();
+
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (navigation->item(row)->data(Qt::UserRole).toInt()
+                == static_cast<int>(ViewScope::Next7Days)) {
+                navigation->setCurrentRow(row);
+                break;
+            }
+        }
+        QTRY_COMPARE(model->filter().renderer, ViewRenderer::Time);
+        QMimeData taskMime;
+        taskMime.setData(TaskListView::mimeType(), parent.toUtf8());
+        const QPoint taskPoint = view->visualRect(model->indexForTask(parent)).center();
+        QDragEnterEvent taskEnter(taskPoint, Qt::MoveAction, &taskMime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &taskEnter);
+        QApplication::processEvents();
+        QVERIFY(view->grab().save(dir + QStringLiteral("/time-empty-drop-sections.png")));
+        QDragLeaveEvent taskLeave;
+        QApplication::sendEvent(view->viewport(), &taskLeave);
+        QVERIFY(!ordinary.isEmpty());
+    }
     void visualPreview() {
+        if (QGuiApplication::platformName() != QLatin1String("windows"))
+            QSKIP("需要原生 Windows 窗口验收浮层与截图");
         const QString group = m_store->createList(QStringLiteral("工作安排"), QString(), EntityKind::Task,
                                                   QStringLiteral("💼"), QStringLiteral("#4CA1FF"));
         const QDate today = toAppTime(appNow()).date();

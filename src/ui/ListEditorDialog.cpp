@@ -18,6 +18,7 @@
 #include "AppIcons.h"
 #include "ColorPickerPopup.h"
 #include "EmojiPickerPopup.h"
+#include "GlyphButton.h"
 #include "ListAppearance.h"
 #include "MenuComboBox.h"
 #include "design/ThemeManager.h"
@@ -141,38 +142,6 @@ protected:
     }
 };
 
-// 名称框内的图标按钮：与侧栏和任务行共用 ListAppearance，避免按钮样式干预 SVG 尺寸。
-class ListGlyphButton : public QToolButton {
-public:
-    explicit ListGlyphButton(QWidget* parent) : QToolButton(parent) {}
-    void setGlyph(const QString& glyph) { m_glyph = glyph; update(); }
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        const QRectF frame = QRectF(rect()).adjusted(1, 1, -1, -1);
-        if (underMouse()) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(token(ds::ColorToken::Hover));
-            painter.drawRoundedRect(frame, 6, 6);
-        }
-        if (hasFocus()) {
-            painter.setBrush(Qt::NoBrush);
-            painter.setPen(QPen(token(ds::ColorToken::FocusRing), 1.0));
-            painter.drawRoundedRect(frame, 6, 6);
-        }
-        TaskList list;
-        list.icon = m_glyph;
-        ListAppearance::paint(&painter, list,
-                              QRectF(rect().center().x() - 9, rect().center().y() - 9, 18, 18),
-                              token(ds::ColorToken::TextSecondary));
-    }
-
-private:
-    QString m_glyph;
-};
-
 // ---------------------------------------------------------------------------
 ListEditorDialog::ListEditorDialog(const QVector<TaskList>& lists,
                                    const QVector<Folder>& folders, QWidget* parent)
@@ -211,7 +180,7 @@ void ListEditorDialog::buildUi()
     auto* nameLayout = new QHBoxLayout(nameField);
     nameLayout->setContentsMargins(2, 2, 8, 2);
     nameLayout->setSpacing(4);
-    m_iconButton = new ListGlyphButton(nameField);
+    m_iconButton = new GlyphButton(nameField);
     m_iconButton->setObjectName(QStringLiteral("ListIconButton"));
     m_iconButton->setFixedSize(30, 30);
     m_iconButton->setIconSize(QSize(18, 18));
@@ -389,7 +358,11 @@ void ListEditorDialog::setList(const TaskList& existing)
 
 void ListEditorDialog::updateIconButton()
 {
-    if (auto* button = static_cast<ListGlyphButton*>(m_iconButton)) button->setGlyph(m_icon);
+    if (auto* button = static_cast<GlyphButton*>(m_iconButton)) {
+        button->setGlyph(m_icon);
+        button->setDefaultIconName(m_newKind == EntityKind::Note
+            ? QStringLiteral("note-list") : QStringLiteral("normal-list"));
+    }
     m_iconButton->setAccessibleName(m_icon.isEmpty()
                                         ? QStringLiteral("清单图标（未设置）")
                                         : QStringLiteral("清单图标 %1").arg(m_icon));

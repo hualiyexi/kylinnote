@@ -30,6 +30,7 @@ signals:
     void dateActivated(QString entityId, QRect anchor);
     void listActivated(QString listId);
     void postponeActivated(QStringList entityIds);
+    void childrenToggleActivated(QString entityId);
 };
 
 // 侧栏导航行：分区标题、SVG 图标、独立右对齐数量。
@@ -46,7 +47,12 @@ public:
         ListColorRole = Qt::UserRole + 8,
         IndentRole = Qt::UserRole + 9,
         ListKindRole = Qt::UserRole + 10,
-        DividerRole = Qt::UserRole + 11
+        DividerRole = Qt::UserRole + 11,
+        ParentFolderRole = Qt::UserRole + 12,
+        DropTargetRole = Qt::UserRole + 13,
+        DropLineRole = Qt::UserRole + 14,
+        FolderExpandedRole = Qt::UserRole + 15,
+        OrganizationEndRole = Qt::UserRole + 16
     };
     explicit NavigationDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {
     }
@@ -56,5 +62,9 @@ public:
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     bool helpEvent(QHelpEvent* event, QAbstractItemView* view,
                    const QStyleOptionViewItem& option, const QModelIndex& index) override;
+    bool editorEvent(QEvent* event, QAbstractItemModel* model,
+                     const QStyleOptionViewItem& option, const QModelIndex& index) override;
+signals:
+    void folderToggleActivated(QString folderId);
 };
 }  // namespace kl
