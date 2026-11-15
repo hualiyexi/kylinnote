@@ -2433,10 +2433,28 @@ private slots:
                 + NavigationGeometry::DisclosureGlyphSize < iconLeft);
         int arrowInk = 0;
         for (int y = 12; y < 25; ++y)
-            for (int x = 0; x < 10; ++x)
+            for (int x = NavigationGeometry::DisclosureLeft;
+                 x < NavigationGeometry::DisclosureLeft
+                     + NavigationGeometry::DisclosureGlyphSize; ++x)
                 if (folderIcon.pixelColor(x, y).alpha() > 0) ++arrowInk;
         QVERIFY(arrowInk > 0);
-        QVERIFY(QRectF(10, 10, 16, 16).contains(QPointF(17, 18)));
+        QVERIFY(QRectF(NavigationGeometry::RowHorizontalInset, 10,
+                       NavigationGeometry::FolderDisclosureWidth, 16)
+                    .contains(QPointF(17, 18)));
+        const QImage hovered = render(folder);
+        QCOMPARE(hovered.pixelColor(NavigationGeometry::DisclosureLeft + 1, 18).alpha(), 0);
+        QStyleOptionViewItem hoverOption;
+        hoverOption.rect = QRect(0, 0, 220, 36);
+        hoverOption.state = QStyle::State_Enabled | QStyle::State_MouseOver;
+        QImage hoverRow(220, 36, QImage::Format_ARGB32_Premultiplied);
+        hoverRow.fill(Qt::white);
+        QPainter hoverPainter(&hoverRow);
+        delegate.paint(&hoverPainter, hoverOption, navigation.model()->index(navigation.row(folder), 0));
+        hoverPainter.end();
+        QCOMPARE(hoverRow.pixelColor(NavigationGeometry::DisclosureLeft + 1, 18),
+                 ThemeManager::instance().color(ds::ColorToken::RowHover));
+        QCOMPARE(hoverRow.pixelColor(NavigationGeometry::DisclosureLeft + 1, 18),
+                 ThemeManager::instance().color(ds::ColorToken::RowHover));
 
         // 子清单缩进 22px，使用 16px 图形；所有导航图标下移 1px。
         QCOMPARE(NavigationGeometry::FolderChildIndent, 26 - 4);
@@ -2500,25 +2518,41 @@ private slots:
         auto* disclosure = header->disclosureButton();
         QVERIFY(disclosure);
         QCOMPARE(disclosure->x(), NavigationGeometry::DisclosureLeft);
-        const auto organizationVisible = [navigation]() {
+        const auto organizationVisible = [this, navigation]() {
             for (int row = 0; row < navigation->count(); ++row) {
                 const auto* item = navigation->item(row);
                 if (item->data(NavigationDelegate::SectionRole).toBool()
                     || item->data(NavigationDelegate::DividerRole).toBool()) continue;
                 const auto scope = static_cast<ViewScope>(item->data(Qt::UserRole).toInt());
-                if (scope == ViewScope::List || scope == ViewScope::Folder)
+                const QString listId = item->data(Qt::UserRole + 1).toString();
+                bool inbox = false;
+                for (const TaskList& list : m_store->lists()) inbox |= list.id == listId && list.inbox;
+                if (!inbox && (scope == ViewScope::List || scope == ViewScope::Folder))
                     if (!item->isHidden()) return true;
             }
             return false;
         };
+        const auto inboxVisible = [this, navigation]() {
+            for (int row = 0; row < navigation->count(); ++row) {
+                const auto* item = navigation->item(row);
+                const QString listId = item->data(Qt::UserRole + 1).toString();
+                for (const TaskList& list : m_store->lists())
+                    if (list.id == listId && list.inbox) return !item->isHidden();
+            }
+            return false;
+        };
         QVERIFY(organizationVisible());
+        QVERIFY(inboxVisible());
         header->setExpanded(true);
         QTest::mouseClick(disclosure, Qt::LeftButton);
         QTRY_VERIFY(!organizationVisible());
-        disclosure = panel.findChild<SidebarSectionHeader*>(
-            QStringLiteral("ListSectionHeader"))->disclosureButton();
-        QTest::mouseClick(disclosure, Qt::LeftButton);
+        QVERIFY(inboxVisible());
+        header = panel.findChild<SidebarSectionHeader*>(QStringLiteral("ListSectionHeader"));
+        // 标题整行都可折叠，不需要命中箭头；右侧添加按钮是独立控件。
+        QTest::mouseClick(header, Qt::LeftButton, Qt::NoModifier,
+                          QPoint(header->width() / 2, header->height() / 2));
         QTRY_VERIFY(organizationVisible());
+        QVERIFY(inboxVisible());
     }
     void sidebarSectionHeaderUsesOrdinaryRowHover() {
         TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();

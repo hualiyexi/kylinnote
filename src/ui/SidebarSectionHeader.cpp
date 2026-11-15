@@ -17,13 +17,12 @@ SidebarSectionHeader::SidebarSectionHeader(const QString& title, const QString& 
     setObjectName(objectName);
     setFixedHeight(36);
     auto* outer = new QHBoxLayout(this);
-    outer->setContentsMargins(NavigationGeometry::RowHorizontalInset, 3,
-                              NavigationGeometry::RowHorizontalInset, 3);
+    outer->setContentsMargins(0, 3, 0, 3);
     outer->setSpacing(0);
     m_card = new QFrame(this);
     m_card->setObjectName(QStringLiteral("SidebarSectionCard"));
     auto* layout = new QHBoxLayout(m_card);
-    layout->setContentsMargins(NavigationGeometry::ListIconOffset, 0, 4, 0);
+    layout->setContentsMargins(NavigationGeometry::TitleLeft, 0, 4, 0);
     layout->setSpacing(4);
     m_title = new QLabel(title, m_card);
     m_title->setFont(ds::qfont(ds::FontScene::Caption));
@@ -76,14 +75,16 @@ void SidebarSectionHeader::setDisclosureEnabled(bool enabled) {
     if (enabled && !m_disclosure) {
         m_disclosure = new QToolButton(this);
         m_disclosure->setObjectName(objectName() + QStringLiteral("Disclosure"));
-        m_disclosure->setFixedSize(14, 20);
-        m_disclosure->setIconSize(QSize(10, 10));
+        m_disclosure->setFixedSize(12, 20);
+        m_disclosure->setIconSize(QSize(NavigationGeometry::DisclosureGlyphSize,
+                                       NavigationGeometry::DisclosureGlyphSize));
         m_disclosure->setFocusPolicy(Qt::StrongFocus);
         m_disclosure->setAutoRaise(true);
         m_disclosure->setCursor(Qt::PointingHandCursor);
         m_disclosure->setToolTip(QStringLiteral("展开或收起清单区域"));
         m_disclosure->setAccessibleName(m_disclosure->toolTip());
-        m_disclosure->setStyleSheet(QStringLiteral("QToolButton{padding:0;border:0;}"));
+        m_disclosure->setStyleSheet(QStringLiteral(
+            "QToolButton{padding:0;border:0;background:transparent;}"));
         m_disclosure->move(NavigationGeometry::DisclosureLeft,
                            (height() - m_disclosure->height()) / 2);
         m_disclosure->installEventFilter(this);
@@ -115,8 +116,7 @@ void SidebarSectionHeader::leaveEvent(QEvent* event) {
 }
 
 void SidebarSectionHeader::mouseReleaseEvent(QMouseEvent* event) {
-    if (m_disclosureEnabled && event->button() == Qt::LeftButton
-        && event->pos().x() < NavigationGeometry::RowHorizontalInset) {
+    if (m_disclosureEnabled && event->button() == Qt::LeftButton) {
         emit disclosureToggled();
         event->accept();
         return;
@@ -166,9 +166,11 @@ void SidebarSectionHeader::applyTheme() {
 
 void SidebarSectionHeader::updateHover(bool hovered) {
     m_hovered = hovered;
-    m_card->setProperty("hovered", hovered);
-    m_card->style()->unpolish(m_card);
-    m_card->style()->polish(m_card);
+    if (m_disclosureEnabled) {
+        m_card->setProperty("hovered", hovered);
+        m_card->style()->unpolish(m_card);
+        m_card->style()->polish(m_card);
+    }
     applyTheme();
 }
 

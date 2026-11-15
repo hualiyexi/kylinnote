@@ -117,7 +117,8 @@ struct NavigationLayout {
 NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
     const QRectF row = option.rect;
     NavigationLayout layout;
-    layout.background = row.adjusted(10.0, 1.0, -10.0, -1.0);
+    layout.background = row.adjusted(0.0, 1.0,
+                                     -NavigationGeometry::RowHorizontalInset, -1.0);
     const int indent = index.data(NavigationDelegate::IndentRole).toInt();
     const bool folder = !index.data(NavigationDelegate::FolderIdRole).toString().isEmpty();
     // 文件夹箭头独立占位；图标与分区标题对齐，子清单图标盒再对齐文件夹文字。
@@ -125,8 +126,7 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
         layout.disclosure = QRectF(layout.background.left(),
                                    layout.background.center().y() - 8.0,
                                    NavigationGeometry::FolderDisclosureWidth, 16.0);
-    layout.icon = QRectF(layout.background.left()
-                             + NavigationGeometry::ListIconOffset + indent,
+    layout.icon = QRectF(NavigationGeometry::TitleLeft + indent,
                          layout.background.center().y() - NavigationGeometry::IconBoxSize / 2.0,
                          NavigationGeometry::IconBoxSize, NavigationGeometry::IconBoxSize);
     layout.count = index.data(NavigationDelegate::CountRole).toString();
@@ -474,8 +474,7 @@ bool NavigationDelegate::editorEvent(QEvent* event, QAbstractItemModel*,
     if (event->type() != QEvent::MouseButtonRelease) return false;
     auto* mouse = static_cast<QMouseEvent*>(event);
     const QString folderId = index.data(FolderIdRole).toString();
-    if (mouse->button() == Qt::LeftButton && !folderId.isEmpty()
-        && navigationLayout(option, index).disclosure.contains(mouse->pos())) {
+    if (mouse->button() == Qt::LeftButton && !folderId.isEmpty()) {
         emit folderToggleActivated(folderId);
         return true;
     }

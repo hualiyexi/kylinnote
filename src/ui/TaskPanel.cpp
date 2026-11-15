@@ -832,11 +832,9 @@ void TaskPanel::rebuildNavigation() {
     add(QStringLiteral("最近7天"), ViewScope::Next7Days, QString(), nullptr,
         QStringLiteral("next7days"));
     for (const TaskList& list : m_store->lists())
-        if (list.inbox) {
-            auto* inbox = add(QStringLiteral("收集箱"), ViewScope::List, list.id, &list,
-                              QStringLiteral("inbox"));
-            if (inbox) inbox->setHidden(m_listSectionCollapsed);
-        }
+        if (list.inbox)
+            add(QStringLiteral("收集箱"), ViewScope::List, list.id, &list,
+                QStringLiteral("inbox"));
 
     divider();
     auto* listSection = interactiveSection(QStringLiteral("清单"), QStringLiteral("ListSectionHeader"),

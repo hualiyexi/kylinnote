@@ -5,12 +5,12 @@ namespace NavigationGeometry {
 
 // 顶层图标对齐“清单”标题的 14px 左边距；箭头在更靠左的独立区域。
 enum : int {
-    RowHorizontalInset = 10,
-    TitleLeft = 14,
+    RowHorizontalInset = 4,
+    TitleLeft = 16,
+    DisclosureLeft = 2,
     ListIconOffset = TitleLeft - RowHorizontalInset,
     FolderDisclosureWidth = 16,
-    DisclosureLeft = 0,
-    DisclosureGlyphSize = 10,
+    DisclosureGlyphSize = 12,
     IconBoxSize = 20,
     IconLabelGap = 6,
     IconGlyphVerticalOffset = 1,
