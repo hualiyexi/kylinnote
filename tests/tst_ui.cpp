@@ -1855,7 +1855,7 @@ private slots:
         longTask.allDayDate = toAppTime(appNow()).date().addDays(4);
         QVERIFY(m_store->saveTask(longTask));
         AppToolTip::hideText();
-        const QPoint datePos(540, 20);
+        const QPoint datePos(525, 20);
         QHelpEvent dateEvent(QEvent::ToolTip, datePos, tasks.viewport()->mapToGlobal(datePos));
         QVERIFY(taskDelegate.helpEvent(&dateEvent, &tasks, option, model.indexForTask(id)));
         QTRY_VERIFY(AppToolTip::isVisible());
@@ -2349,6 +2349,67 @@ private slots:
         QTRY_VERIFY((listItem = itemFor(QString(), list)) != nullptr);
         QTRY_VERIFY(!listItem->isHidden());
     }
+    void rowStatesUseSoftBackgroundsWithoutBorders() {
+        const QString list = m_store->createList(QStringLiteral("状态样式"), QString(),
+                                                 EntityKind::Task, QStringLiteral("💼"),
+                                                 QStringLiteral("#4CA1FF"));
+        QVERIFY(!list.isEmpty());
+        const QString selectedId = m_store->createTask(QStringLiteral("选中样式"), list);
+        Entity selectedTask = m_store->entity(selectedId);
+        selectedTask.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(selectedTask));
+        const QString hoveredId = m_store->createTask(QStringLiteral("悬浮样式"), list);
+        QVERIFY(!hoveredId.isEmpty());
+
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        QVERIFY(view && model && navigation);
+        auto* taskDelegate = qobject_cast<TaskDelegate*>(view->itemDelegate());
+        auto* navDelegate = qobject_cast<NavigationDelegate*>(navigation->itemDelegate());
+        QVERIFY(taskDelegate && navDelegate);
+        const QColor selectedColor = ThemeManager::instance().color(ds::ColorToken::RowSelected);
+        const QColor hoverColor = ThemeManager::instance().color(ds::ColorToken::RowHover);
+        const auto render = [](QAbstractItemDelegate* delegate, const QModelIndex& index,
+                               const QSize& size, QStyle::State state) {
+            QImage image(size, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::white);
+            QPainter painter(&image);
+            QStyleOptionViewItem option;
+            option.rect = QRect(QPoint(0, 0), size);
+            option.state = QStyle::State_Enabled | state;
+            delegate->paint(&painter, option, index);
+            painter.end();
+            return image;
+        };
+
+        const QModelIndex selectedIndex = model->indexForTask(selectedId);
+        QVERIFY(selectedIndex.isValid());
+        QImage image = render(taskDelegate, selectedIndex, QSize(600, 44), QStyle::State_Selected);
+        // 任务行背景从左侧 20px 开始；左边缘与内部都是选中底色，没有强调色边框。
+        QCOMPARE(image.pixelColor(21, 22), selectedColor);
+        QCOMPARE(image.pixelColor(30, 4), selectedColor);
+        image = render(taskDelegate, model->indexForTask(hoveredId), QSize(600, 44),
+                       QStyle::State_MouseOver);
+        QCOMPARE(image.pixelColor(21, 22), hoverColor);
+        QCOMPARE(image.pixelColor(30, 4), hoverColor);
+
+        int allRow = -1;
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (!navigation->item(row)->data(NavigationDelegate::SectionRole).toBool()
+                && navigation->item(row)->data(Qt::UserRole).toInt()
+                       == static_cast<int>(ViewScope::AllLists)) allRow = row;
+        }
+        QVERIFY(allRow >= 0);
+        const QModelIndex navIndex = navigation->model()->index(allRow, 0);
+        QVERIFY(navIndex.isValid());
+        QImage navImage = render(navDelegate, navIndex, QSize(220, 36), QStyle::State_Selected);
+        QCOMPARE(navImage.pixelColor(11, 18), selectedColor);
+        QCOMPARE(navImage.pixelColor(30, 4), selectedColor);
+        navImage = render(navDelegate, navIndex, QSize(220, 36), QStyle::State_MouseOver);
+        QCOMPARE(navImage.pixelColor(11, 18), hoverColor);
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,
@@ -2577,7 +2638,7 @@ private slots:
         };
         const QImage parentImage = render(parentIndex);
         const QImage childImage = render(childIndex);
-        const QColor hover = AppStyle::color(AppStyle::Color::Hover);
+        const QColor hover = ThemeManager::instance().color(ds::ColorToken::RowHover);
         QCOMPARE(QColor::fromRgba(parentImage.pixel(21, 20)), hover);
         QCOMPARE(QColor::fromRgba(childImage.pixel(45, 20)), hover);
         QCOMPARE(qAlpha(childImage.pixel(43, 20)), 0);

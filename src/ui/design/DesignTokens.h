@@ -51,6 +51,8 @@ constexpr QRgb L_MenuHover = 0xFFF2F4F8;
 constexpr QRgb L_Disabled = 0xFFA8A8A8;  // 考据 disabled #a8a8a8
 constexpr QRgb L_Scrollbar = 0xFFD9DFEA;
 constexpr QRgb L_ScrollbarHover = 0xFFC2CCDD;
+constexpr QRgb L_RowHover = 0xFFF5F5F5;
+constexpr QRgb L_RowSelected = 0xFFF0F4FF;  // 极淡主题色
 constexpr QRgb L_TooltipBg = 0xE6191919;
 // 深色中性阶（KylinList 自定）
 constexpr QRgb D_Text = 0xFFE8EAED;
@@ -70,6 +72,8 @@ constexpr QRgb D_MenuHover = 0xFF2E333B;
 constexpr QRgb D_Disabled = 0xFF5A5F68;
 constexpr QRgb D_Scrollbar = 0xFF3A3F49;
 constexpr QRgb D_ScrollbarHover = 0xFF4A505C;
+constexpr QRgb D_RowHover = 0xFF222222;
+constexpr QRgb D_RowSelected = 0xFF2B2B2B;
 constexpr QRgb D_TooltipBg = 0xFF2C2C2C;
 constexpr QRgb D_PrimarySoft = 0xFF2A3350;  // 深色选中底
 }  // namespace raw
@@ -94,6 +98,7 @@ enum class ColorToken : int {
     DetailDivider,
     HighlightYellow, HighlightGreen, HighlightBlue, HighlightPink, HighlightPurple,
     WindowBorder, Shadow,
+    RowHover, RowSelected,
     Count
 };
 

@@ -56,6 +56,8 @@ ColorTable makeLight() {
     set(ColorToken::HighlightPurple, 0xFFE7DAF7);
     set(ColorToken::WindowBorder, 0xFFADB3BC);
     set(ColorToken::Shadow, Black);
+    set(ColorToken::RowHover, L_RowHover);
+    set(ColorToken::RowSelected, L_RowSelected);
     return t;
 }
 
@@ -111,6 +113,8 @@ ColorTable makeDark() {
     set(ColorToken::HighlightPurple, 0xFF514167);
     set(ColorToken::WindowBorder, 0xFF555B65);
     set(ColorToken::Shadow, Black);
+    set(ColorToken::RowHover, D_RowHover);
+    set(ColorToken::RowSelected, D_RowSelected);
     return t;
 }
 

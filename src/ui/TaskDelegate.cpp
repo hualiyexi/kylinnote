@@ -24,8 +24,9 @@ QRectF headerActionRect(const QRect& row) {
 }
 
 // 与滴答分区头一致：左侧 20px 起画 12px 三角，标题从 36px 起排。
+// 箭头比几何中心略低 2px，与中文字面视觉中线对齐。
 QRectF sectionArrowRect(const QRect& row) {
-    return QRectF(row.left() + 20.0, row.center().y() - 6.0, 12.0, 12.0);
+    return QRectF(row.left() + 20.0, row.center().y() - 4.0, 12.0, 12.0);
 }
 constexpr qreal kSectionTitleLeft = 36.0;
 
@@ -50,7 +51,6 @@ struct TaskLayout {
     QRectF title;
     QRectF list;
     QRectF date;
-    QRectF pin;
 };
 
 TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
@@ -58,7 +58,6 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     const QFontMetrics smallMetrics(AppStyle::font(AppStyle::Font::Small));
     const int depth = qMax(0, index.data(TaskListModel::DepthRole).toInt());
     const qreal indent = depth * 24.0;
-    const bool pinned = index.data(TaskListModel::PinnedRole).toBool();
     const bool deleted = index.data(TaskListModel::DeletedRole).toBool();
     const QString listName = index.data(TaskListModel::ListNameRole).toString();
     const QString date = index.data(TaskListModel::ScheduleRole).toString();
@@ -75,17 +74,13 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     layout.checkBox = QRectF(row.left() + 34.0 + indent, row.center().y() - 8.0, 16.0, 16.0);
     const qreal left = row.left() + 58.0 + indent;
     const qreal titleFloor = qMin(160.0, qMax(0.0, row.width() - 56.0) * 0.5);
-    const qreal metadataWidth = qMax(0.0, row.width() - 56.0 - titleFloor - (pinned ? 24.0 : 0.0));
-    qreal right = row.right() - 12.0;
-    if (pinned) {
-        layout.pin = QRectF(right - 18.0, row.center().y() - 7.0, 14.0, 14.0);
-        right -= 24.0;
-    }
+    const qreal metadataWidth = qMax(0.0, row.width() - 56.0 - titleFloor);
+    // 行背景右侧留 18px；元信息再向内 8px，避免清单/日期贴住右边缘。
+    qreal right = row.right() - 26.0;
     if (!deleted && !date.isEmpty()) {
         const qreal width = qMin(qMin(112.0, smallMetrics.horizontalAdvance(date) + 8.0),
                                 metadataWidth * 0.55);
-        layout.date = QRectF(right - width, row.top(), width, row.height());
-        right -= width + 8.0;
+        layout.date = QRectF(right - width, row.top(), width, row.height());        right -= width + 8.0;
     }
     if (!deleted && !listName.isEmpty()) {
         const qreal nameWidth = qMin(72.0, smallMetrics.horizontalAdvance(listName) + 0.0);
@@ -128,7 +123,7 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
     if (folder)
         layout.disclosure = QRectF(layout.background.left(),
                                    layout.background.center().y() - 8.0, 16.0, 16.0);
-    layout.icon = QRectF(layout.background.left() + 12.0 + indent,
+    layout.icon = QRectF(layout.background.left() + (folder ? 14.0 : 12.0) + indent,
                          layout.background.center().y() - 10.0, 20.0, 20.0);
     layout.count = index.data(NavigationDelegate::CountRole).toString();
     const QFont countFont = AppStyle::font(AppStyle::Font::Small);
@@ -198,7 +193,8 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
 
     if (selected || hovered) {
         p->setPen(Qt::NoPen);
-        p->setBrush(AppStyle::color(selected ? Color::Selection : Color::Hover));
+        p->setBrush(ThemeManager::instance().color(
+            selected ? ds::ColorToken::RowSelected : ds::ColorToken::RowHover));
         p->drawRoundedRect(background, radius, radius);
     } else {
         p->setPen(QPen(AppStyle::color(Color::Separator), 1.0));
@@ -260,14 +256,7 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
                     p->fontMetrics().elidedText(i.data(TaskListModel::ScheduleRole).toString(),
                                                 Qt::ElideRight, qRound(layout.date.width())));
     }
-    if (!layout.pin.isNull())
-        AppIcons::paint(p, IconId::Pin, layout.pin, AppStyle::color(Color::Accent));
 
-    if (o.state & QStyle::State_HasFocus) {
-        p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(AppStyle::color(Color::Accent), 1.0));
-        p->drawRoundedRect(background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
-    }
     p->restore();
 }
 
@@ -399,10 +388,11 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const qreal radius = 10.0;
     if (selected || hovered) {
         p->setPen(Qt::NoPen);
-        p->setBrush(AppStyle::color(selected ? Color::Selection : Color::SidebarHover));
+        p->setBrush(ThemeManager::instance().color(
+            selected ? ds::ColorToken::RowSelected : ds::ColorToken::RowHover));
         p->drawRoundedRect(layout.background, radius, radius);
     }
-    const QColor iconColor = AppStyle::color(selected ? Color::Accent : Color::Muted);
+    const QColor iconColor = AppStyle::color(Color::Muted);
     const QString iconName = i.data(IconNameRole).toString();
     if (!iconName.isEmpty()) {
         TaskList list;
@@ -417,7 +407,7 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 
     QFont labelFont = AppStyle::font(folderId.isEmpty() ? AppStyle::Font::Body
                                                         : AppStyle::Font::Small);
-    if (selected || !folderId.isEmpty()) labelFont.setWeight(QFont::DemiBold);
+    if (!folderId.isEmpty()) labelFont.setWeight(QFont::DemiBold);
     p->setFont(labelFont);
     p->setPen(AppStyle::color(folderId.isEmpty() ? Color::Text : Color::Muted));
     p->drawText(layout.label, Qt::AlignLeft | Qt::AlignVCenter,
@@ -425,18 +415,13 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
                                             qMax(0, qRound(layout.label.width()))));
 
     p->setFont(AppStyle::font(AppStyle::Font::Small));
-    p->setPen(AppStyle::color(selected ? Color::Muted : Color::Faint));
+    p->setPen(AppStyle::color(Color::Faint));
     p->drawText(QRectF(layout.background.left(), row.top(), layout.background.width() - 12.0,
                        row.height()), Qt::AlignRight | Qt::AlignVCenter, layout.count);
     if (!folderId.isEmpty()) {
         paintTriangle(p, layout.disclosure.adjusted(2.0, 2.0, -2.0, -2.0),
                       i.data(FolderExpandedRole).toBool(),
                       AppStyle::color(hovered ? Color::Muted : Color::Faint));
-    }
-    if (o.state & QStyle::State_HasFocus) {
-        p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(AppStyle::color(Color::Accent), 1.0));
-        p->drawRoundedRect(layout.background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
     }
     if (!i.data(DropTargetRole).toString().isEmpty()) {
         p->setBrush(Qt::NoBrush);
