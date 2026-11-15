@@ -2,6 +2,7 @@
 #define KYLINLIST_TASKSTORE_H
 
 #include "../db/TaskRepository.h"
+#include "../domain/TaskDrop.h"
 #include "AttachmentStore.h"
 #include "Journal.h"
 #include "UsageStatistics.h"
@@ -30,6 +31,11 @@ public:
     Entity entity(const QString &id) const;
     QString createTask(const QString &title, const QString &listId = QString(),
                        const QString &sectionId = QString(), const QString &parentId = QString());
+    // 在 parentId 下创建子任务：父项必须是存在、未删除、active 的任务。
+    // 子任务继承 listId/sectionId/allDayDate/startAt/dueAt/timeZone（时间视图立即可见），
+    // 不继承置顶、提醒、重复与完成状态；sortOrder 为同级末尾 max+1。
+    // 复用 createTask 的 prepareSave/commit 与父子校验，失败返回空 id。
+    QString createSubtask(const QString &title, const QString &parentId);
     QString createNote(const QString &title, const QString &listId = QString(),
                        const QString &sectionId = QString());
     bool saveTask(Entity task);
@@ -43,13 +49,30 @@ public:
     bool restoreTask(const QString &id);
     bool deletePermanently(const QString &id);
 
-    QString createFolder(const QString &name);
+    QString createFolder(const QString &name, const QString &icon = QString());
     bool renameFolder(const QString &id, const QString &name);
+    // 文件夹完整编辑入口：name trim 后 1..64（未改名的原名更新保留旧库原文）、icon（空或
+    // ≤16 个 UTF-16 码元）、sortOrder；草稿 revision 必须与当前快照一致，repository 再作 CAS。
+    bool saveFolder(const Folder &folder);
     bool deleteFolder(const QString &id);
     QString createList(const QString &name, const QString &folderId = QString(), EntityKind kind = EntityKind::Task,
                        const QString &icon = QString(), const QString &color = QString());
     bool renameList(const QString &id, const QString &name);
     bool setListFolder(const QString &id, const QString &folderId);
+    // 清单组织原子命令：把 source 移到 targetFolderId（空 = 平铺）内 targetListId 之前/之后；
+    // targetListId 空 = 容器末尾（顶层为“平铺清单+文件夹”混合序列的末尾）。source/target 都从
+    // 当前快照重读；拒绝 inbox、已归档、不存在、锚点不属于目标文件夹。整批一次 EntityChanges + commit，
+    // 受影响容器规范为非负连续 sortOrder（0..n-1）：顶层规范化混合序列（含文件夹，文件夹仅在
+    // sortOrder 变化时保存），文件夹容器规范化纯清单序列；跨容器移动后源容器同样规范化。
+    bool moveList(const QString &sourceId, const QString &targetFolderId,
+                  const QString &targetListId = QString(), bool after = false);
+    // 从两个清单建文件夹：target 必须是平铺普通未归档清单，source 可以是其他普通未归档清单
+    // （不能是 inbox）。同一事务内创建文件夹并把顶层混合序列规范化，使新文件夹精确占据
+    // target 原 UI 位置；两清单移入新文件夹并保持原相对顺序；source 原文件夹的剩余清单规范化。
+    // 旧全 0 数据按旧 UI 口径（平铺清单在前、文件夹在后、各自 (sortOrder,id)）确定初始顺序。
+    // 失败无半成品。返回新文件夹 id。
+    QString createFolderFromLists(const QString &name, const QString &icon,
+                                  const QString &sourceId, const QString &targetId);
     // 完整清单一事务更新：新建/改名 trim 后 1..64，旧长名称未改名时保留；
     // icon（空或 ≤16 个 UTF-16 码元的 emoji 文本）、color（空或 #RRGGBB）、
     // folderId（空 = 无文件夹）。不能改变 inbox/kind/归档状态。
@@ -71,6 +94,21 @@ public:
     // 带时刻的值在应用时区下保留时刻和跨日跨度；提醒及其余字段不动。
     // 单事务提交，失败不产生部分成功；返回 false 时可用 lastError() 查原因。
     bool postponeOverdueTasks(const QStringList &ids, const QDate &today);
+    // 拖放落点的原子命令：把 sourceId 放进 targetSection 的 orderedIds 顺序。
+    // orderedIds 是目标段当前显示顺序（已含 source 在目标位置）；store 逐 ID 从当前
+    // 快照重读并校验存在、无重复、必含 source，禁止用公开 Entity 的陈旧草稿。
+    // 一次 EntityChanges + commit 把 orderedIds 的 sortOrder 规范为 0..n-1，只保存
+    // 实际变化的行；source 额外按参量更新：pinned 置位时未置顶取当前时刻、已置顶
+    // 保持原值，清除时清空 pinnedAt；detachParent 清 parentId。
+    // 时间分区（TaskDrop::isTimeSection）要求 targetDate 与 TaskDrop::dateForSection
+    // 的映射一致，并按 source effectiveDate 到 targetDate 平移 allDayDate/startAt/dueAt
+    // （应用时区下保留时刻与跨度，提醒/重复不动）；无有效原日期的时间分区拖入拒绝。
+    // 非时间分区要求 targetDate 无效，不暗改日期。targetSection="pinned" 时 pinned
+    // 必须为 true（明显矛盾拒绝）。adjustDate=false 用于同段手动排序：targetDate 必须无效，
+    // 保留“最近7天”段内原有的后天以后日期。失败整批无部分成功；幂等返回 true。
+    bool moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
+                           const QString &targetSection, const QDate &targetDate,
+                           bool pinned, bool detachParent, bool adjustDate = true);
     QString createSection(const QString &listId, const QString &name);
     bool renameSection(const QString &id, const QString &name);
     bool deleteSection(const QString &id);
@@ -136,6 +174,8 @@ private:
     const TaskReminder *findReminder(const QString &id) const;
     const ChecklistItem *findChecklistItem(const QString &id) const;
     int nextAttachmentSortOrder(const QString &entityId) const;
+    int nextListSortOrder(const QString &folderId) const;   // 容器尾部；顶层同时考虑文件夹共用序列
+    int nextFolderSortOrder() const;                        // 顶层清单/文件夹共用序列尾部
     bool hasGroup(const QString &id) const;
     bool hasFolder(const QString &id) const;
     bool hasSection(const QString &id) const;

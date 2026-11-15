@@ -4,6 +4,7 @@
 #include "db/TaskRepository.h"
 #include "domain/AttachmentCodec.h"
 #include "domain/BackupCodec.h"
+#include "domain/TaskDrop.h"
 #include "domain/ViewSpec.h"
 
 #include <QBuffer>
@@ -22,6 +23,7 @@
 #include <QTemporaryDir>
 #include <QtEndian>
 #include <QtTest>
+#include <algorithm>
 #include <memory>
 
 using namespace kl;
@@ -283,7 +285,8 @@ private slots:
     void cleanup();
     void freshSchemaNeverMigratesLegacy();
     void rejectsWrongIdentityAndFutureVersion();
-    void migratesV5ToV6Atomically();
+    void migratesV5ToV7Atomically();
+    void migratesV6ToV7Atomically();
     void completeModelAndUuidCrud();
     void inboxAndOrganizationIntegrity();
     void entityKindAndParentConstraints();
@@ -310,6 +313,12 @@ private slots:
     void entityCodecAndBackupRoundTrip();
     void listAppearanceArchiveAndAtomicUpdate();
     void listUpdatesRejectStaleRevisions();
+    void folderIconEditAndStaleRevisionGuard();
+    void listAndFolderTailSortOrder();
+    void listOrganizationMoveCommands();
+    void folderFromListsAtomicCommand();
+    void legacyAllZeroTopLevelOrder();
+    void mixedTopLevelOrderAndCrossFolderMoves();
     void legacyLongListNamesRemainEditable_data();
     void legacyLongListNamesRemainEditable();
     void deleteListMovesContentToTrashAtomically();
@@ -317,6 +326,11 @@ private slots:
     void archivedListsSuppressReminders();
     void postponeOverdueTasksShiftsDates();
     void postponePreservesDateSpansAndReminders();
+    void taskDropSectionRules();
+    void taskDropShiftsDatesAcrossSections();
+    void taskDropReorderPinnedAndParentDetach();
+    void taskDropAtomicFailuresAndIdempotence();
+    void createSubtaskInheritsDatesOnly();
     void backupRoundTripAndLegacyRejection();
     void backupValidationAndSqlRollbackAreAtomic();
     void backupContainerLimitsAndStreaming();
@@ -365,8 +379,8 @@ void TaskTests::freshSchemaNeverMigratesLegacy()
     QString error;
     QVERIFY2(Database::instance().open(&error), qPrintable(error));
     QCOMPARE(Database::instance().path(), dbPath());
-    QCOMPARE(Database::schemaVersion(), 6);
-    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 6);
+    QCOMPARE(Database::schemaVersion(), 7);
+    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 7);
     QCOMPARE(scalar(QStringLiteral("PRAGMA application_id")).toInt(), Database::applicationId());
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM entities")).toInt(), 0);
     QCOMPARE(inspect(legacy, QStringLiteral("SELECT title FROM notes")).toString(), QStringLiteral("旧数据"));
@@ -386,6 +400,12 @@ void TaskTests::freshSchemaNeverMigratesLegacy()
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name='kind'")).toInt(), 1);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name IN ('icon','color','archived_at_utc_ms')")).toInt(), 3);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name IN ('icon','color','archived_at_utc_ms') AND \"notnull\"=1")).toInt(), 3);
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name='icon'")).toInt(), 1);       // v7：文件夹图标
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name='icon' AND \"notnull\"=1")).toInt(), 1);
+    QSqlQuery invalidFolderIcon(Database::instance().connection());
+    invalidFolderIcon.prepare(QStringLiteral("INSERT INTO folders(id,name,icon,created_at_utc_ms,updated_at_utc_ms) VALUES(?,'超长文件夹图标','%1',1,1)")
+                                .arg(QString(17, QChar(0x4E2D))));
+    invalidFolderIcon.addBindValue(newUuid()); QVERIFY(!invalidFolderIcon.exec());
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='prevent_inbox_archive'")).toInt(), 1);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'prevent_inbox%'")).toInt(), 3);
     QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('reminders') WHERE name='kind'")).toInt(), 0);
@@ -464,17 +484,17 @@ void TaskTests::rejectsWrongIdentityAndFutureVersion()
     QCOMPARE(inspect(v4, QStringLiteral("PRAGMA user_version")).toInt(), 4);
     QCOMPARE(inspect(v4, QStringLiteral("SELECT id FROM tasks")).toString(), QStringLiteral("legacy"));
     const QString future = m_directory->filePath(QStringLiteral("future.db"));
-    QVERIFY(seed(future, {QStringLiteral("CREATE TABLE future_data(id TEXT)"), QStringLiteral("PRAGMA user_version=7"),
+    QVERIFY(seed(future, {QStringLiteral("CREATE TABLE future_data(id TEXT)"), QStringLiteral("PRAGMA user_version=8"),
                           QStringLiteral("PRAGMA application_id=%1").arg(Database::applicationId())}));
     QVERIFY(!Database::instance().openAt(future, &error));
-    QVERIFY(error.contains(QStringLiteral("v6")));
-    QCOMPARE(inspect(future, QStringLiteral("PRAGMA user_version")).toInt(), 7);
+    QVERIFY(error.contains(QStringLiteral("v7")));
+    QCOMPARE(inspect(future, QStringLiteral("PRAGMA user_version")).toInt(), 8);
     QVERIFY(!Database::instance().openAt(QString(), &error));
     QVERIFY(open());
 }
 
-// 真实 v5 库升级 v6：字段默认、其他数据保留、失败回滚。
-void TaskTests::migratesV5ToV6Atomically()
+// 真实 v5 库升级 v7：字段默认、其他数据保留、失败回滚。
+void TaskTests::migratesV5ToV7Atomically()
 {
     const QString inboxId = newUuid();
     const QString folder = newUuid(), list = newUuid(), section = newUuid();
@@ -499,8 +519,10 @@ void TaskTests::migratesV5ToV6Atomically()
     QVERIFY(seed(v5, statements));
     QString error;
     QVERIFY2(Database::instance().openAt(v5, &error), qPrintable(error));   // 打开即迁移
-    QCOMPARE(inspect(v5, QStringLiteral("PRAGMA user_version")).toInt(), 6);
+    QCOMPARE(inspect(v5, QStringLiteral("PRAGMA user_version")).toInt(), 7);
     QCOMPARE(inspect(v5, QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name IN ('icon','color','archived_at_utc_ms')")).toInt(), 3);
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name='icon'")).toInt(), 1);
+    QCOMPARE(inspect(v5, QStringLiteral("SELECT icon FROM folders")).toString(), QString());
     QCOMPARE(inspect(v5, QStringLiteral("SELECT icon FROM lists")).toString(), QString());
     QCOMPARE(inspect(v5, QStringLiteral("SELECT color FROM lists")).toString(), QString());
     QCOMPARE(inspect(v5, QStringLiteral("SELECT archived_at_utc_ms FROM lists")).toLongLong(), qint64(0));
@@ -540,6 +562,54 @@ void TaskTests::migratesV5ToV6Atomically()
     QCOMPARE(inspect(broken, QStringLiteral("PRAGMA user_version")).toInt(), 5);
     QCOMPARE(inspect(broken, QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name='icon'")).toInt(), 0);
     QCOMPARE(inspect(broken, QStringLiteral("SELECT name FROM lists WHERE is_inbox=1")).toString(), QStringLiteral("收集箱"));
+    QVERIFY(!Database::instance().isOpen());
+}
+
+// 真实 v6 库升级 v7：folders 补 icon、lists 外观与既有数据保留、失败回滚。
+void TaskTests::migratesV6ToV7Atomically()
+{
+    const QString inboxId = newUuid();
+    const QString folder = newUuid(), list = newUuid();
+    const qint64 now = 1770000000000LL;
+    const QString v6 = m_directory->filePath(QStringLiteral("v6.db"));
+    QStringList statements = v5SchemaStatements(inboxId, QString::number(now));
+    statements.removeAll(QStringLiteral("PRAGMA user_version=5"));
+    statements.append(QStringLiteral("ALTER TABLE lists ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)"));
+    statements.append(QStringLiteral("ALTER TABLE lists ADD COLUMN color TEXT NOT NULL DEFAULT ''"));
+    statements.append(QStringLiteral("ALTER TABLE lists ADD COLUMN archived_at_utc_ms INTEGER NOT NULL DEFAULT 0"));
+    statements.append(QStringLiteral("CREATE TRIGGER prevent_inbox_archive BEFORE UPDATE OF archived_at_utc_ms ON lists "
+                                     "WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"));
+    statements.append(QStringLiteral("INSERT INTO folders(id,name,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES('%1','v6 文件夹',3,%2,%2)").arg(folder).arg(now));
+    statements.append(QStringLiteral("INSERT INTO lists(id,folder_id,kind,name,is_inbox,icon,color,sort_order,created_at_utc_ms,updated_at_utc_ms) "
+                                     "VALUES('%1','%2','task','v6 清单',0,'🏠','#112233',4,%3,%3)").arg(list, folder).arg(now));
+    statements.append(QStringLiteral("PRAGMA user_version=6"));
+    QVERIFY(seed(v6, statements));
+    QString error;
+    QVERIFY2(Database::instance().openAt(v6, &error), qPrintable(error));   // 打开即迁移
+    QCOMPARE(inspect(v6, QStringLiteral("PRAGMA user_version")).toInt(), 7);
+    QCOMPARE(inspect(v6, QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name='icon'")).toInt(), 1);
+    QCOMPARE(inspect(v6, QStringLiteral("SELECT icon FROM folders WHERE id='%1'").arg(folder)).toString(), QString());
+    QCOMPARE(inspect(v6, QStringLiteral("SELECT icon FROM lists WHERE id='%1'").arg(list)).toString(), QStringLiteral("🏠"));
+    QCOMPARE(inspect(v6, QStringLiteral("SELECT color FROM lists WHERE id='%1'").arg(list)).toString(), QStringLiteral("#112233"));
+    QCOMPARE(inspect(v6, QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(list)).toInt(), 4);
+    TaskStore store(Database::instance().connection()); QVERIFY2(store.load(), qPrintable(store.lastError()));
+    Folder loaded;
+    for (const Folder &candidate : store.folders()) if (candidate.id == folder) loaded = candidate;
+    QCOMPARE(loaded.name, QStringLiteral("v6 文件夹")); QVERIFY(loaded.icon.isEmpty()); QCOMPARE(loaded.sortOrder, 3);
+    Database::instance().close();
+
+    // 迁移失败整体回滚：畸形 v6（folders 已带 icon 列），ALTER 重复列失败。
+    const QString broken = m_directory->filePath(QStringLiteral("broken-v6.db"));
+    QStringList rebuilt;
+    rebuilt.append(QStringLiteral("CREATE TABLE folders(id TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL DEFAULT '')"));
+    rebuilt.append(QStringLiteral("CREATE TABLE local_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)"));
+    rebuilt.append(QStringLiteral("INSERT INTO local_meta VALUES('inbox_list_id','%1')").arg(inboxId));
+    rebuilt.append(QStringLiteral("PRAGMA user_version=6"));
+    rebuilt.append(QStringLiteral("PRAGMA application_id=%1").arg(Database::applicationId()));
+    QVERIFY(seed(broken, rebuilt));
+    QVERIFY(!Database::instance().openAt(broken, &error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(inspect(broken, QStringLiteral("PRAGMA user_version")).toInt(), 6);
     QVERIFY(!Database::instance().isOpen());
 }
 
@@ -1572,7 +1642,7 @@ void TaskTests::dateOnlyAndMidnightBackup()
     const QList<QVariantList> before = queryRows(QStringLiteral("SELECT * FROM entities ORDER BY id"));
     QVERIFY2(store.exportBackup(backupPath()), qPrintable(store.lastError()));
     const QJsonObject root = readMetadata(backupPath());
-    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 3);
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 4);
     const QJsonArray entities = root.value(QStringLiteral("entities")).toArray();
     QCOMPARE(entities.size(), 1);
     const QJsonObject exported = entities.first().toObject();
@@ -1588,7 +1658,7 @@ void TaskTests::dateOnlyAndMidnightBackup()
     QCOMPARE(store.entity(id).allDayDate, allDayDate);
     QCOMPARE(store.entity(id).startAt, startAt);
     QCOMPARE(store.entity(id).dueAt, dueAt);
-    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 6);
+    QCOMPARE(scalar(QStringLiteral("PRAGMA user_version")).toInt(), 7);
 }
 
 void TaskTests::entityCodecAndBackupRoundTrip()
@@ -1622,6 +1692,9 @@ void TaskTests::entityCodecAndBackupRoundTrip()
     invalid = note; invalid.kind = EntityKind::Task; invalid.completed = false; QVERIFY(!entitycodec::validate(invalid, &error));
 
     EntitySnapshot snapshot;
+    Folder homeFolder; homeFolder.id = newUuid(); homeFolder.name = QStringLiteral("家庭");
+    homeFolder.icon = QStringLiteral("🏡"); homeFolder.createdAt = created; homeFolder.updatedAt = created;
+    snapshot.folders.append(homeFolder);
     TaskList inbox; inbox.id = note.listId; inbox.name = QStringLiteral("收集箱"); inbox.inbox = true;
     inbox.icon = QStringLiteral("👨‍👩‍👧‍👦"); inbox.color = QStringLiteral("#FF8800");
     inbox.createdAt = created; inbox.updatedAt = created; snapshot.lists.append(inbox);
@@ -1638,7 +1711,7 @@ void TaskTests::entityCodecAndBackupRoundTrip()
     const QVector<EntityEvent> events{first, second};
     const QJsonObject root = backupcodec::toJson(snapshot, events);
     QCOMPARE(root.value(QStringLiteral("format")).toString(), QStringLiteral("KylinList.Entities"));
-    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 3);
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 4);
     QCOMPARE(root.value(QStringLiteral("defaultTimezone")).toString(), QStringLiteral("UTC"));
     QCOMPARE(root.value(QStringLiteral("entities")).toArray().size(), 1);
     QCOMPARE(root.value(QStringLiteral("events")).toArray().size(), 2);
@@ -1648,10 +1721,14 @@ void TaskTests::entityCodecAndBackupRoundTrip()
         QCOMPARE(exportedList.value(QStringLiteral("icon")).toString(), QStringLiteral("👨‍👩‍👧‍👦"));
         QCOMPARE(exportedList.value(QStringLiteral("color")).toString(), QStringLiteral("#FF8800"));
         QCOMPARE(exportedList.value(QStringLiteral("archivedAtUtcMs")).toInt(), 0);
+        const QJsonObject exportedFolder = root.value(QStringLiteral("folders")).toArray().first().toObject();
+        QCOMPARE(exportedFolder.value(QStringLiteral("icon")).toString(), QStringLiteral("🏡"));   // v4：文件夹图标
     }
     EntitySnapshot restored; QVector<EntityEvent> restoredEvents; QString restoredTimezone;
     QVERIFY2(backupcodec::fromJson(root, &restored, &restoredEvents, &restoredTimezone, &error), qPrintable(error));
     QCOMPARE(restoredTimezone, QStringLiteral("UTC")); QCOMPARE(restored.entities.size(), 1); QCOMPARE(restored.localMeta.size(), 0);
+    QCOMPARE(restored.folders.size(), 1); QCOMPARE(restored.folders.first().icon, QStringLiteral("🏡"));
+    QCOMPARE(restored.folders.first().name, QStringLiteral("家庭"));
     QCOMPARE(restored.lists.first().icon, QStringLiteral("👨‍👩‍👧‍👦"));
     QCOMPARE(restored.lists.first().color, QStringLiteral("#FF8800"));
     QCOMPARE(restored.lists.first().archivedAtUtcMs, qint64(0));
@@ -1683,21 +1760,47 @@ void TaskTests::entityCodecAndBackupRoundTrip()
     invalidReference.remove(QStringLiteral("serverRevision")); invalidEntities.replace(0, invalidReference); old.insert(QStringLiteral("entities"), invalidEntities);
     QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
 
-    // v2 备份没有 icon/color/archivedAtUtcMs：读入补默认值（无图标、无颜色、未归档）。
+    // v2 备份没有 icon/color/archivedAtUtcMs，folders 也没有 icon：读入补默认值。
     QJsonObject v2Root = root;
     {
         QJsonArray v2Lists = v2Root.value(QStringLiteral("lists")).toArray();
         QJsonObject v2List = v2Lists.first().toObject();
         v2List.remove(QStringLiteral("icon")); v2List.remove(QStringLiteral("color")); v2List.remove(QStringLiteral("archivedAtUtcMs"));
         v2Lists.replace(0, v2List); v2Root.insert(QStringLiteral("lists"), v2Lists);
+        QJsonArray v2Folders = v2Root.value(QStringLiteral("folders")).toArray();
+        QJsonObject v2Folder = v2Folders.first().toObject();
+        v2Folder.remove(QStringLiteral("icon"));
+        v2Folders.replace(0, v2Folder); v2Root.insert(QStringLiteral("folders"), v2Folders);
         v2Root.insert(QStringLiteral("version"), 2);
     }
     EntitySnapshot v2Restored;
     QVERIFY2(backupcodec::fromJson(v2Root, &v2Restored, &restoredEvents, &restoredTimezone, &error), qPrintable(error));
     QVERIFY(v2Restored.lists.first().icon.isEmpty()); QVERIFY(v2Restored.lists.first().color.isEmpty());
     QCOMPARE(v2Restored.lists.first().archivedAtUtcMs, qint64(0));
-    // 未来版本与非法外观拒绝（旧程序同样拒绝 v3）。
-    old = root; old.insert(QStringLiteral("version"), 4);
+    QVERIFY(v2Restored.folders.first().icon.isEmpty());       // v2/v3 文件夹无 icon，补空
+    // v3 备份 folders 无 icon：同样补默认值。
+    QJsonObject v3Root = v2Root; v3Root.insert(QStringLiteral("version"), 3);
+    {
+        QJsonArray v3Lists = v3Root.value(QStringLiteral("lists")).toArray();
+        QJsonObject v3List = v3Lists.first().toObject();
+        v3List.insert(QStringLiteral("icon"), QStringLiteral("👨‍👩‍👧‍👦")); v3List.insert(QStringLiteral("color"), QStringLiteral("#FF8800"));
+        v3List.insert(QStringLiteral("archivedAtUtcMs"), 0);
+        v3Lists.replace(0, v3List); v3Root.insert(QStringLiteral("lists"), v3Lists);
+    }
+    EntitySnapshot v3Restored;
+    QVERIFY2(backupcodec::fromJson(v3Root, &v3Restored, &restoredEvents, &restoredTimezone, &error), qPrintable(error));
+    QCOMPARE(v3Restored.lists.first().icon, QStringLiteral("👨‍👩‍👧‍👦"));
+    QVERIFY(v3Restored.folders.first().icon.isEmpty());
+    // 未来版本与非法外观拒绝（旧程序同样拒绝 v4）。
+    old = root; old.insert(QStringLiteral("version"), 5);
+    QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+    old = root; QJsonArray badFolders = old.value(QStringLiteral("folders")).toArray();
+    QJsonObject badFolder = badFolders.first().toObject(); badFolder.insert(QStringLiteral("icon"), QString(17, QChar(0x4E2D)));
+    badFolders.replace(0, badFolder); old.insert(QStringLiteral("folders"), badFolders);
+    QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
+    old = root; badFolders = old.value(QStringLiteral("folders")).toArray();
+    badFolder = badFolders.first().toObject(); badFolder.insert(QStringLiteral("icon"), 7);
+    badFolders.replace(0, badFolder); old.insert(QStringLiteral("folders"), badFolders);
     QVERIFY(!backupcodec::fromJson(old, &rejected, &restoredEvents, &restoredTimezone, &error));
     old = root; QJsonArray badLists = old.value(QStringLiteral("lists")).toArray();
     QJsonObject badList = badLists.first().toObject(); badList.insert(QStringLiteral("color"), QStringLiteral("#ZZZZZZ"));
@@ -1847,6 +1950,477 @@ void TaskTests::listUpdatesRejectStaleRevisions()
     QVERIFY(!store.isListArchived(list));
     QCOMPARE(currentList(list).name, QStringLiteral("重新加载后修改"));
     QCOMPARE(currentList(list).color, QStringLiteral("#ABCDEF"));
+}
+
+// 文件夹完整编辑入口：icon 校验、name trim 1..64、快照 revision 与数据库 CAS 双层保护。
+void TaskTests::folderIconEditAndStaleRevisionGuard()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString folder = store.createFolder(QStringLiteral(" 旅行 "), QStringLiteral("🧳"));
+    QVERIFY2(isUuid(folder), qPrintable(store.lastError()));
+    QCOMPARE(scalar(QStringLiteral("SELECT name FROM folders WHERE id='%1'").arg(folder)).toString(), QStringLiteral("旅行"));
+    QCOMPARE(scalar(QStringLiteral("SELECT icon FROM folders WHERE id='%1'").arg(folder)).toString(), QStringLiteral("🧳"));
+    QVERIFY(store.createFolder(QStringLiteral("")).isEmpty());                       // 名称 trim 后为空
+    QVERIFY(store.createFolder(QString(65, QChar(0x540D))).isEmpty());               // 名称超长
+    QVERIFY(store.createFolder(QStringLiteral("坏图标"), QString(17, QChar(0x56FE))).isEmpty());
+    QVERIFY(store.createFolder(QStringLiteral("控制字符"), QStringLiteral("a\tb")).isEmpty());
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM folders")).toInt(), 1);     // 失败不落半成品
+
+    const auto currentFolder = [&store, &folder]() {
+        for (const Folder &row : store.folders()) if (row.id == folder) return row;
+        return Folder();
+    };
+    Folder edited = currentFolder();
+    edited.name = QStringLiteral("  家庭旅行  "); edited.icon = QStringLiteral("🏡");
+    const qint64 revisionBefore = scalar(QStringLiteral("SELECT revision FROM folders WHERE id='%1'").arg(folder)).toLongLong();
+    QVERIFY2(store.saveFolder(edited), qPrintable(store.lastError()));
+    Folder saved = currentFolder();
+    QCOMPARE(saved.name, QStringLiteral("家庭旅行")); QCOMPARE(saved.icon, QStringLiteral("🏡"));
+    QCOMPARE(scalar(QStringLiteral("SELECT revision FROM folders WHERE id='%1'").arg(folder)).toLongLong(), revisionBefore + 1);
+    QVERIFY(store.saveFolder(saved));                                                // 幂等：无变化不再推进
+    QCOMPARE(scalar(QStringLiteral("SELECT revision FROM folders WHERE id='%1'").arg(folder)).toLongLong(), revisionBefore + 1);
+    Folder invalid = saved; invalid.icon = QString(17, QChar(0x56FE));
+    QVERIFY(!store.saveFolder(invalid));
+    invalid = saved; invalid.name = QStringLiteral("  ");
+    QVERIFY(!store.saveFolder(invalid));
+    invalid = saved; invalid.name = QString(65, QChar(0x65B0));
+    QVERIFY(!store.saveFolder(invalid));
+
+    // 陈旧草稿：快照 revision 不一致直接拒绝；绕过门面由 repository CAS 拒绝并整体回滚。
+    Folder stale = saved;
+    Folder committed = saved; committed.name = QStringLiteral("已推进"); committed.icon = QStringLiteral("🗺");
+    QVERIFY(store.saveFolder(committed));
+    const auto folderRows = queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id"));
+    QVERIFY(!store.saveFolder(stale));
+    QVERIFY(store.lastError().contains(QStringLiteral("修改")));
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id")), folderRows);
+    QVERIFY2(store.renameFolder(folder, QStringLiteral("  新名字  ")), qPrintable(store.lastError()));
+    QCOMPARE(currentFolder().name, QStringLiteral("新名字"));
+    QCOMPARE(currentFolder().icon, QStringLiteral("🗺"));                            // 未提供的字段保持不变
+
+    TaskRepository repository(Database::instance().connection());
+    EntityChanges changes; EntitySnapshot after; QString error;
+    Folder bypass = currentFolder(); bypass.name = QStringLiteral("应回滚");
+    changes.folderSaves.append(bypass);
+    Folder staleRow = bypass; staleRow.revision = currentFolder().revision - 1; staleRow.name = QStringLiteral("陈旧CAS");
+    changes.folderSaves.append(staleRow);
+    const auto renamedRows = queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id"));
+    QVERIFY(!repository.apply(&changes, &after, &error));                             // 同批先写的也回滚
+    QVERIFY(error.contains(QStringLiteral("修改")));
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id")), renamedRows);
+
+    // 重载后可继续编辑，图标持久化。
+    TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+    Folder reloadedFolder;
+    for (const Folder &row : reloaded.folders()) if (row.id == folder) reloadedFolder = row;
+    QCOMPARE(reloadedFolder.name, QStringLiteral("新名字")); QCOMPARE(reloadedFolder.icon, QStringLiteral("🗺"));
+    reloadedFolder.icon = QString();
+    QVERIFY(reloaded.saveFolder(reloadedFolder));
+    QCOMPARE(scalar(QStringLiteral("SELECT icon FROM folders WHERE id='%1'").arg(folder)).toString(), QString());
+}
+
+// createList/createFolder 落在所在容器尾部；顶层清单与文件夹共用排序序列。
+void TaskTests::listAndFolderTailSortOrder()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString folderA = store.createFolder(QStringLiteral("文件夹A"), QStringLiteral("📁"));
+    QVERIFY(isUuid(folderA));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(folderA)).toInt(), 1);  // inbox 占 0
+    const QString listA = store.createList(QStringLiteral("清单A"));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(listA)).toInt(), 2);       // 顶层共用序列尾部
+    const QString folderB = store.createFolder(QStringLiteral("文件夹B"));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(folderB)).toInt(), 3);
+    const QString inFolder = store.createList(QStringLiteral("文件夹内清单"), folderA);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(inFolder)).toInt(), 0);   // 文件夹容器独立从 0 开始
+    const QString inFolderSecond = store.createList(QStringLiteral("第二"), folderA);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(inFolderSecond)).toInt(), 1);
+    // 手工把顶层序列拉高后，新清单/文件夹仍落在共用尾部。
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=40 WHERE id='%1'").arg(listA)));
+    QVERIFY(store.load());
+    const QString tailList = store.createList(QStringLiteral("尾部清单"));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(tailList)).toInt(), 41);
+    const QString tailFolder = store.createFolder(QStringLiteral("尾部文件夹"));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(tailFolder)).toInt(), 42);   // 共用序列再往后
+}
+
+// moveList：同容器重排、跨容器移动、目标空=末尾、非法输入零写入、容器规范化、持久化重载。
+void TaskTests::listOrganizationMoveCommands()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString folder = store.createFolder(QStringLiteral("工作"));
+    const QString a = store.createList(QStringLiteral("A"));
+    const QString b = store.createList(QStringLiteral("B"));
+    const QString c = store.createList(QStringLiteral("C"));
+    const QString inner1 = store.createList(QStringLiteral("内一"), folder);
+    const QString inner2 = store.createList(QStringLiteral("内二"), folder);
+    QVERIFY(isUuid(folder) && isUuid(a) && isUuid(b) && isUuid(c) && isUuid(inner1) && isUuid(inner2));
+    const auto topLevelOrder = [&store]() {
+        QStringList ids;
+        QVector<TaskList> rows;
+        for (const TaskList &row : store.lists()) if (row.folderId.isEmpty()) rows.append(row);
+        std::sort(rows.begin(), rows.end(), [](const TaskList &x, const TaskList &y) {
+            return x.sortOrder != y.sortOrder ? x.sortOrder < y.sortOrder : x.id < y.id;
+        });
+        for (const TaskList &row : rows) ids.append(row.name);
+        return ids.join(QStringLiteral(","));
+    };
+    const auto folderOrder = [&store, &folder]() {
+        QStringList ids;
+        QVector<TaskList> rows;
+        for (const TaskList &row : store.lists()) if (row.folderId == folder) rows.append(row);
+        std::sort(rows.begin(), rows.end(), [](const TaskList &x, const TaskList &y) {
+            return x.sortOrder != y.sortOrder ? x.sortOrder < y.sortOrder : x.id < y.id;
+        });
+        for (const TaskList &row : rows) ids.append(row.name);
+        return ids.join(QStringLiteral(","));
+    };
+    QCOMPARE(folderOrder(), QStringLiteral("内一,内二"));
+
+    // 同容器重排：把 C 移到 A 之前；顶层混合序列（平铺清单+文件夹）规范为 0..n-1。
+    QVERIFY2(store.moveList(c, QString(), a, false), qPrintable(store.lastError()));
+    QCOMPARE(topLevelOrder(), QStringLiteral("收集箱,C,A,B"));
+    QList<QVariantList> mergedRows = queryRows(QStringLiteral(
+        "SELECT sort_order FROM (SELECT sort_order FROM lists WHERE folder_id IS NULL "
+        "UNION ALL SELECT sort_order FROM folders) ORDER BY sort_order"));
+    QCOMPARE(mergedRows.size(), 5);
+    for (int i = 0; i < mergedRows.size(); ++i) QCOMPARE(mergedRows.at(i).first().toInt(), i);   // 混合序列非负连续
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(folder)).toInt(), 1);   // 文件夹仍在 inbox 与 C 之间
+    // after=true 放到锚点之后。
+    QVERIFY(store.moveList(c, QString(), a, true));
+    QCOMPARE(topLevelOrder(), QStringLiteral("收集箱,A,C,B"));
+    // 目标空 = 容器末尾。
+    QVERIFY(store.moveList(a, QString()));
+    QCOMPARE(topLevelOrder(), QStringLiteral("收集箱,C,B,A"));
+    // 无位移的移动是幂等成功，不产生写入。
+    const qint64 aRevision = scalar(QStringLiteral("SELECT revision FROM lists WHERE id='%1'").arg(a)).toLongLong();
+    QVERIFY(store.moveList(a, QString()));
+    QCOMPARE(scalar(QStringLiteral("SELECT revision FROM lists WHERE id='%1'").arg(a)).toLongLong(), aRevision);
+
+    // 跨容器：顶层 B 移入文件夹内一之前；源容器（顶层）同步规范化。
+    QVERIFY2(store.moveList(b, folder, inner1, false), qPrintable(store.lastError()));
+    QCOMPARE(folderOrder(), QStringLiteral("B,内一,内二"));
+    QCOMPARE(topLevelOrder(), QStringLiteral("收集箱,C,A"));
+    // 文件夹移回平铺末尾。
+    QVERIFY(store.moveList(inner2, QString()));
+    QCOMPARE(folderOrder(), QStringLiteral("B,内一"));
+    QCOMPARE(topLevelOrder(), QStringLiteral("收集箱,C,A,内二"));
+    // 文件夹内重排到末尾。
+    QVERIFY(store.moveList(b, folder));
+    QCOMPARE(folderOrder(), QStringLiteral("内一,B"));
+
+    // 非法输入零写入（先备好归档清单再快照，保证对照完整）。
+    const QString archived = store.createList(QStringLiteral("归档"));
+    QVERIFY(store.setListArchived(archived, true));
+    const auto listsSnapshot = queryRows(QStringLiteral("SELECT * FROM lists ORDER BY id"));
+    const auto foldersSnapshot = queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id"));
+    QVERIFY(!store.moveList(store.inboxListId(), folder));                    // inbox 不可移动
+    QVERIFY(!store.moveList(newUuid(), folder));                              // 不存在
+    QVERIFY(!store.moveList(a, newUuid()));                                   // 目标文件夹不存在
+    QVERIFY(!store.moveList(a, folder, newUuid()));                           // 锚点不存在
+    QVERIFY(!store.moveList(a, folder, a));                                   // 相对自身
+    QVERIFY(!store.moveList(a, folder, c));                                   // 锚点在顶层而目标为文件夹
+    QVERIFY(!store.moveList(a, QString(), inner1));                           // 锚点属于文件夹而目标为平铺
+    QVERIFY(!store.moveList(a, QString(), store.inboxListId()));              // inbox 不可作锚点
+    QVERIFY(!store.moveList(archived, folder));                               // 已归档不可移动
+    QVERIFY(!store.moveList(a, folder, archived));                            // 已归档不可作锚点
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM lists ORDER BY id")), listsSnapshot);
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id")), foldersSnapshot);
+
+    // 持久化重载后顺序保持。
+    QVERIFY(store.load());
+    QCOMPARE(folderOrder(), QStringLiteral("内一,B"));
+    QCOMPARE(topLevelOrder(), QStringLiteral("收集箱,C,A,内二,归档"));
+    TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+    QStringList reloadedTop;
+    {
+        QVector<TaskList> rows;
+        for (const TaskList &row : reloaded.lists()) if (row.folderId.isEmpty()) rows.append(row);
+        std::sort(rows.begin(), rows.end(), [](const TaskList &x, const TaskList &y) {
+            return x.sortOrder != y.sortOrder ? x.sortOrder < y.sortOrder : x.id < y.id;
+        });
+        for (const TaskList &row : rows) reloadedTop.append(row.name);
+    }
+    QCOMPARE(reloadedTop.join(QStringLiteral(",")), QStringLiteral("收集箱,C,A,内二,归档"));
+}
+
+// createFolderFromLists：合法路径原子建夹并移入；非法源/目标无半成品。
+void TaskTests::folderFromListsAtomicCommand()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString other = store.createFolder(QStringLiteral("既有文件夹"));
+    const QString top1 = store.createList(QStringLiteral("顶层一"));
+    const QString top2 = store.createList(QStringLiteral("顶层二"));
+    const QString top3 = store.createList(QStringLiteral("顶层三"));
+    const QString inFolder = store.createList(QStringLiteral("夹内清单"), other);
+    QVERIFY(isUuid(other) && isUuid(top1) && isUuid(top2) && isUuid(top3) && isUuid(inFolder));
+
+    // 非法输入：无文件夹、无移动（先备好归档清单再快照，保证对照完整）。
+    const QString archived = store.createList(QStringLiteral("归档源"));
+    QVERIFY(store.setListArchived(archived, true));
+    const auto listsSnapshot = queryRows(QStringLiteral("SELECT * FROM lists ORDER BY id"));
+    const auto foldersSnapshot = queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id"));
+    QVERIFY(store.createFolderFromLists(QStringLiteral(""), QString(), top1, top2).isEmpty());
+    QVERIFY(store.createFolderFromLists(QString(65, QChar(0x540D)), QString(), top1, top2).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("坏图标"), QString(17, QChar(0x56FE)), top1, top2).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("源不存在"), QString(), newUuid(), top2).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("目标不存在"), QString(), top1, newUuid()).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("源是inbox"), QString(), store.inboxListId(), top2).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("目标是inbox"), QString(), top1, store.inboxListId()).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("目标在文件夹"), QString(), top1, inFolder).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("同名"), QString(), top1, top1).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("归档源"), QString(), archived, top2).isEmpty());
+    QVERIFY(store.createFolderFromLists(QStringLiteral("归档目标"), QString(), top1, archived).isEmpty());
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM lists ORDER BY id")), listsSnapshot);
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM folders ORDER BY id")), foldersSnapshot);
+
+    // 合法：target 平铺、source 在其他文件夹；folder 占 target 原顶层位置，两清单保持相对顺序。
+    const int targetOrder = scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(top2)).toInt();
+    const QString created = store.createFolderFromLists(QStringLiteral("  新家庭  "), QStringLiteral("🏡"), inFolder, top2);
+    QVERIFY2(isUuid(created), qPrintable(store.lastError()));
+    QCOMPARE(scalar(QStringLiteral("SELECT name FROM folders WHERE id='%1'").arg(created)).toString(), QStringLiteral("新家庭"));
+    QCOMPARE(scalar(QStringLiteral("SELECT icon FROM folders WHERE id='%1'").arg(created)).toString(), QStringLiteral("🏡"));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(created)).toInt(), targetOrder);
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(top2)).toString(), created);
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(inFolder)).toString(), created);
+    // 源（夹内 0）在前、目标（顶层 3）在后：保持相对顺序进入新文件夹。
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(inFolder)).toInt(), 0);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(top2)).toInt(), 1);
+    // 顶层其余清单原位不动（folder 恰好占住 top2 的旧位置）。
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(top1)).toInt(), 2);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(top3)).toInt(), 4);
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(top1)).toString(), QString());
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(top3)).toString(), QString());
+    // 源容器（other 文件夹）清空。
+    QCOMPARE(scalar(QStringLiteral("SELECT COUNT(*) FROM lists WHERE folder_id='%1'").arg(other)).toInt(), 0);
+
+    // 顶层平铺 source 同样合法。
+    const QString created2 = store.createFolderFromLists(QStringLiteral("第二夹"), QString(), top3, top1);
+    QVERIFY2(isUuid(created2), qPrintable(store.lastError()));
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(top1)).toString(), created2);
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(top3)).toString(), created2);
+
+    // 持久化重载保持。
+    QVERIFY(store.load());
+    bool found = false;
+    for (const Folder &row : store.folders()) if (row.id == created) found = row.name == QStringLiteral("新家庭") && row.icon == QStringLiteral("🏡");
+    QVERIFY(found);
+    TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+    int folderLists = 0;
+    for (const TaskList &row : reloaded.lists()) if (row.folderId == created) ++folderLists;
+    QCOMPARE(folderLists, 2);
+}
+
+// 全 0 旧数据（v7 之前历史库）：初始顺序按旧 UI 口径 = 平铺清单在前、文件夹在后、各自 (sortOrder,id)；
+// moveList 与 createFolderFromLists 都基于该口径计算位置。
+void TaskTests::legacyAllZeroTopLevelOrder()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString fWork = store.createFolder(QStringLiteral("工作"));
+    const QString fHome = store.createFolder(QStringLiteral("家"));
+    const QString lA = store.createList(QStringLiteral("A"));
+    const QString lB = store.createList(QStringLiteral("B"));
+    const QString lC = store.createList(QStringLiteral("C"));
+    const QString lD = store.createList(QStringLiteral("D"));
+    QVERIFY(isUuid(fWork) && isUuid(fHome) && isUuid(lA) && isUuid(lB) && isUuid(lC) && isUuid(lD));
+    // 旧库全 0：压平后重载，模拟升级前的历史数据。
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=0 WHERE folder_id IS NULL")));
+    QVERIFY(execute(QStringLiteral("UPDATE folders SET sort_order=0")));
+    QVERIFY(store.load());
+    const auto mergedNames = []() {
+        QStringList names;
+        const QList<QVariantList> rows = queryRows(QStringLiteral(
+            "SELECT name FROM (SELECT sort_order,0 AS k,id,name FROM lists WHERE folder_id IS NULL "
+            "UNION ALL SELECT sort_order,1 AS k,id,name FROM folders) ORDER BY sort_order,k,id"));
+        for (const QVariantList &row : rows) names.append(row.first().toString());
+        return names;
+    };
+    using IdName = QPair<QString, QString>;                   // (id, name)
+    const auto legacyLists = [&store]() {
+        QVector<IdName> rows;
+        for (const TaskList &row : store.lists()) if (row.folderId.isEmpty()) rows.append(IdName{row.id, row.name});
+        std::sort(rows.begin(), rows.end(), [](const IdName &a, const IdName &b) { return a.first < b.first; });
+        return rows;
+    };
+    const auto legacyFolders = [&store]() {
+        QVector<IdName> rows;
+        for (const Folder &row : store.folders()) rows.append(IdName{row.id, row.name});
+        std::sort(rows.begin(), rows.end(), [](const IdName &a, const IdName &b) { return a.first < b.first; });
+        return rows;
+    };
+    const auto namesOf = [](const QVector<IdName> &rows) {
+        QStringList names; for (const IdName &row : rows) names.append(row.second); return names;
+    };
+    const auto indexOfId = [](const QVector<IdName> &rows, const QString &id) {
+        for (int i = 0; i < rows.size(); ++i) if (rows.at(i).first == id) return i;
+        return -1;
+    };
+    QVector<IdName> listBlock = legacyLists(), folderBlock = legacyFolders();
+    QCOMPARE(listBlock.size(), 5); QCOMPARE(folderBlock.size(), 2);
+    QStringList expected = namesOf(listBlock) + namesOf(folderBlock);
+    QCOMPARE(mergedNames(), expected);                        // 全 0：清单块在前、文件夹块在后
+
+    // 全 0 数据上带锚点重排：D 移到 B 之前。
+    QVector<IdName> reordered = listBlock;
+    reordered.remove(indexOfId(reordered, lD));
+    reordered.insert(indexOfId(reordered, lB), listBlock.at(indexOfId(listBlock, lD)));
+    QVERIFY2(store.moveList(lD, QString(), lB, false), qPrintable(store.lastError()));
+    QCOMPARE(mergedNames(), namesOf(reordered) + namesOf(folderBlock));
+    const QList<QVariantList> mergedRows = queryRows(QStringLiteral(
+        "SELECT sort_order FROM (SELECT sort_order FROM lists WHERE folder_id IS NULL "
+        "UNION ALL SELECT sort_order FROM folders) ORDER BY sort_order"));
+    QCOMPARE(mergedRows.size(), 7);
+    for (int i = 0; i < mergedRows.size(); ++i) QCOMPARE(mergedRows.at(i).first().toInt(), i);   // 混合序列连续
+    QVERIFY(store.load());
+    QCOMPARE(mergedNames(), namesOf(reordered) + namesOf(folderBlock));   // 持久化重载
+
+    // 恢复全 0 后从两清单建夹：新夹精确占据 target(C) 原旧 UI 位置。
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=0 WHERE folder_id IS NULL")));
+    QVERIFY(execute(QStringLiteral("UPDATE folders SET sort_order=0")));
+    QVERIFY(store.load());
+    const int aIndex = indexOfId(listBlock, lA), cIndex = indexOfId(listBlock, lC);
+    const QString created = store.createFolderFromLists(QStringLiteral("新夹"), QStringLiteral("📁"), lA, lC);
+    QVERIFY2(isUuid(created), qPrintable(store.lastError()));
+    const int expectedSlot = cIndex - (aIndex < cIndex ? 1 : 0);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(created)).toInt(), expectedSlot);
+    // 两清单保持旧 UI 相对顺序进入新夹。
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lA)).toInt(), aIndex < cIndex ? 0 : 1);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lC)).toInt(), aIndex < cIndex ? 1 : 0);
+    // 合并序列 = 清单块去 A/C + 新夹@slot + 文件夹块，且连续 0..n-1。
+    QVector<IdName> remaining = listBlock;
+    remaining.remove(indexOfId(remaining, lC));
+    remaining.remove(indexOfId(remaining, lA));
+    QStringList createdExpectation = namesOf(remaining);
+    createdExpectation.insert(expectedSlot, QStringLiteral("新夹"));
+    createdExpectation += namesOf(folderBlock);
+    QCOMPARE(mergedNames(), createdExpectation);
+    const QList<QVariantList> createdRows = queryRows(QStringLiteral(
+        "SELECT sort_order FROM (SELECT sort_order FROM lists WHERE folder_id IS NULL "
+        "UNION ALL SELECT sort_order FROM folders) ORDER BY sort_order"));
+    QCOMPARE(createdRows.size(), 6);
+    for (int i = 0; i < createdRows.size(); ++i) QCOMPARE(createdRows.at(i).first().toInt(), i);
+    TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+    bool restored = false;
+    for (const Folder &row : reloaded.folders())
+        if (row.id == created) restored = row.sortOrder == expectedSlot && row.icon == QStringLiteral("📁");
+    QVERIFY(restored);
+}
+
+// 显式顺序数据：createFolderFromLists 占据 target 中位（source 在前/在后两种方向），
+// 清单跨越已有文件夹移动后顶层混合序列规范化、文件夹仅在顺序变化时保存恰一次。
+void TaskTests::mixedTopLevelOrderAndCrossFolderMoves()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QString fWork = store.createFolder(QStringLiteral("工作"));
+    const QString fHome = store.createFolder(QStringLiteral("家"));
+    const QString lA = store.createList(QStringLiteral("A"));
+    const QString lB = store.createList(QStringLiteral("B"));
+    const QString lC = store.createList(QStringLiteral("C"));
+    const QString lD = store.createList(QStringLiteral("D"));
+    const QString lE = store.createList(QStringLiteral("E"));
+    const QString inbox = store.inboxListId();
+    QVERIFY(isUuid(fWork) && isUuid(fHome) && isUuid(lA) && isUuid(lB) && isUuid(lC) && isUuid(lD) && isUuid(lE));
+    // 显式混合顺序：收集箱,A,B,C,D,E,工作,家 → 0..7。
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=0 WHERE id='%1'").arg(inbox)));
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=1 WHERE id='%1'").arg(lA)));
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=2 WHERE id='%1'").arg(lB)));
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=3 WHERE id='%1'").arg(lC)));
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=4 WHERE id='%1'").arg(lD)));
+    QVERIFY(execute(QStringLiteral("UPDATE lists SET sort_order=5 WHERE id='%1'").arg(lE)));
+    QVERIFY(execute(QStringLiteral("UPDATE folders SET sort_order=6 WHERE id='%1'").arg(fWork)));
+    QVERIFY(execute(QStringLiteral("UPDATE folders SET sort_order=7 WHERE id='%1'").arg(fHome)));
+    QVERIFY(store.load());
+    const auto mergedNames = []() {
+        QStringList names;
+        const QList<QVariantList> rows = queryRows(QStringLiteral(
+            "SELECT name FROM (SELECT sort_order,0 AS k,id,name FROM lists WHERE folder_id IS NULL "
+            "UNION ALL SELECT sort_order,1 AS k,id,name FROM folders) ORDER BY sort_order,k,id"));
+        for (const QVariantList &row : rows) names.append(row.first().toString());
+        return names;
+    };
+    const auto revisionOf = [](const QString &table, const QString &id) {
+        return scalar(QStringLiteral("SELECT revision FROM %1 WHERE id='%2'").arg(table, id)).toLongLong();
+    };
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("A"), QStringLiteral("B"),
+               QStringLiteral("C"), QStringLiteral("D"), QStringLiteral("E"),
+               QStringLiteral("工作"), QStringLiteral("家")}));
+
+    // source(A) 在 target(C) 之前：新夹占据 C 的原 UI 位置（中位），后续项依次前移恰一格。
+    const qint64 inboxRev = revisionOf(QStringLiteral("lists"), inbox);
+    const qint64 bRev = revisionOf(QStringLiteral("lists"), lB);
+    const qint64 workRev = revisionOf(QStringLiteral("folders"), fWork);
+    const QString folderOne = store.createFolderFromLists(QStringLiteral("夹一"), QString(), lA, lC);
+    QVERIFY2(isUuid(folderOne), qPrintable(store.lastError()));
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("B"), QStringLiteral("夹一"),
+               QStringLiteral("D"), QStringLiteral("E"), QStringLiteral("工作"), QStringLiteral("家")}));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(folderOne)).toInt(), 2);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lA)).toInt(), 0);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lC)).toInt(), 1);
+    // 每个被移动的行恰保存一次（revision +1），未动的收集箱不变：无 CAS 重复保存。
+    QCOMPARE(revisionOf(QStringLiteral("lists"), inbox), inboxRev);
+    QCOMPARE(revisionOf(QStringLiteral("lists"), lB), bRev + 1);
+    QCOMPARE(revisionOf(QStringLiteral("folders"), fWork), workRev + 1);
+
+    // source(D) 在 target(B) 之后：夹二仍占据 B 的位置（source 在后不前移槽位）。
+    const QString folderTwo = store.createFolderFromLists(QStringLiteral("夹二"), QString(), lD, lB);
+    QVERIFY2(isUuid(folderTwo), qPrintable(store.lastError()));
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("夹二"), QStringLiteral("夹一"),
+               QStringLiteral("E"), QStringLiteral("工作"), QStringLiteral("家")}));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM folders WHERE id='%1'").arg(folderTwo)).toInt(), 1);
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lB)).toInt(), 0);   // B 在前
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lD)).toInt(), 1);   // D 在后
+
+    // setListFolder 转调 moveList：进入已有内容的容器分配末尾顺序，不保留旧 sortOrder。
+    QVERIFY2(store.setListFolder(lC, folderTwo), qPrintable(store.lastError()));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lC)).toInt(), 2);   // 夹二尾部
+    QCOMPARE(scalar(QStringLiteral("SELECT folder_id FROM lists WHERE id='%1'").arg(lC)).toString(), folderTwo);
+
+    // 制造顶层间隙（工作被挪到 8），清单跨入已有文件夹后顶层混合序列规范化，后续文件夹前移恰一次。
+    QVERIFY(execute(QStringLiteral("UPDATE folders SET sort_order=8 WHERE id='%1'").arg(fWork)));
+    QVERIFY(store.load());
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("夹二"), QStringLiteral("夹一"),
+               QStringLiteral("E"), QStringLiteral("家"), QStringLiteral("工作")}));
+    const qint64 homeRev = revisionOf(QStringLiteral("folders"), fHome);
+    const qint64 workRevLate = revisionOf(QStringLiteral("folders"), fWork);
+    QVERIFY2(store.moveList(lE, folderOne, lA, true), qPrintable(store.lastError()));   // E 进夹一（A 之后）
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("夹二"), QStringLiteral("夹一"),
+               QStringLiteral("家"), QStringLiteral("工作")}));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lE)).toInt(), 1);   // 夹一内 A 前 0、E 后 1
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lA)).toInt(), 0);
+    QCOMPARE(revisionOf(QStringLiteral("folders"), fHome), homeRev + 1);                // 家 5→3 保存一次
+    QCOMPARE(revisionOf(QStringLiteral("folders"), fWork), workRevLate + 1);            // 工作 8→4 保存一次
+
+    // 文件夹 → 顶层末尾；顶层 → 已有文件夹（setListFolder 尾部）。
+    QVERIFY2(store.moveList(lD, QString()), qPrintable(store.lastError()));
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("夹二"), QStringLiteral("夹一"),
+               QStringLiteral("家"), QStringLiteral("工作"), QStringLiteral("D")}));
+    QVERIFY2(store.setListFolder(lD, fWork), qPrintable(store.lastError()));
+    QCOMPARE(scalar(QStringLiteral("SELECT sort_order FROM lists WHERE id='%1'").arg(lD)).toInt(), 0);   // 工作 内 0
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("夹二"), QStringLiteral("夹一"),
+               QStringLiteral("家"), QStringLiteral("工作")}));                           // D 移出后顶层已连续，无额外写入
+
+    // 持久化重载：合并序列与文件夹内顺序保持。
+    QVERIFY(store.load());
+    QCOMPARE(mergedNames(), (QStringList{QStringLiteral("收集箱"), QStringLiteral("夹二"), QStringLiteral("夹一"),
+               QStringLiteral("家"), QStringLiteral("工作")}));
+    TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
+    QStringList reloadedInOne, reloadedInTwo, reloadedInWork;
+    {
+        QVector<TaskList> rows;
+        for (const TaskList &row : reloaded.lists()) if (row.folderId == folderOne) rows.append(row);
+        std::sort(rows.begin(), rows.end(), [](const TaskList &a, const TaskList &b) { return a.sortOrder < b.sortOrder; });
+        for (const TaskList &row : rows) reloadedInOne.append(row.name);
+        rows.clear();
+        for (const TaskList &row : reloaded.lists()) if (row.folderId == folderTwo) rows.append(row);
+        std::sort(rows.begin(), rows.end(), [](const TaskList &a, const TaskList &b) { return a.sortOrder < b.sortOrder; });
+        for (const TaskList &row : rows) reloadedInTwo.append(row.name);
+        rows.clear();
+        for (const TaskList &row : reloaded.lists()) if (row.folderId == fWork) rows.append(row);
+        std::sort(rows.begin(), rows.end(), [](const TaskList &a, const TaskList &b) { return a.sortOrder < b.sortOrder; });
+        for (const TaskList &row : rows) reloadedInWork.append(row.name);
+    }
+    QCOMPARE(reloadedInOne, (QStringList{QStringLiteral("A"), QStringLiteral("E")}));
+    QCOMPARE(reloadedInTwo, (QStringList{QStringLiteral("B"), QStringLiteral("C")}));     // D 已移去工作
+    QCOMPARE(reloadedInWork, (QStringList{QStringLiteral("D")}));
 }
 
 void TaskTests::legacyLongListNamesRemainEditable_data()
@@ -2313,10 +2887,317 @@ void TaskTests::postponePreservesDateSpansAndReminders()
     QVERIFY(store.isReminderDelivered(delivered.id));
 }
 
+// 拖放分区纯规则：固定 today 的四时间分区映射、非法 key/非法 today 的无效值。
+void TaskTests::taskDropSectionRules()
+{
+    QVERIFY(TaskDrop::isTimeSection(QStringLiteral("overdue")));
+    QVERIFY(TaskDrop::isTimeSection(QStringLiteral("today")));
+    QVERIFY(TaskDrop::isTimeSection(QStringLiteral("tomorrow")));
+    QVERIFY(TaskDrop::isTimeSection(QStringLiteral("next7days")));
+    const char *nonTime[] = {"pinned", "upcoming", "undated", "notes", "list:x",
+        "date:2026-11-15", "", "今天", "Today", "OVERDUE", "next7"};
+    for (const char *key : nonTime) QVERIFY(!TaskDrop::isTimeSection(QString::fromUtf8(key)));
+
+    const QDate today(2026, 11, 15);
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("overdue"), today), QDate(2026, 11, 14));
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("today"), today), QDate(2026, 11, 15));
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("tomorrow"), today), QDate(2026, 11, 16));
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("next7days"), today), QDate(2026, 11, 17));
+    const char *invalidKeys[] = {"", "pinned", "upcoming", "undated", "notes", "yesterday",
+        "date:2026-11-15", "今天", "next7", "Today"};
+    for (const char *key : invalidKeys) {
+        QVERIFY(!TaskDrop::dateForSection(QString::fromUtf8(key), today).isValid());  // 非法 key
+        QVERIFY(!TaskDrop::dateForSection(QString::fromUtf8(key), QDate()).isValid());
+    }
+    const char *timeKeys[] = {"overdue", "today", "tomorrow", "next7days"};
+    for (const char *key : timeKeys)
+        QVERIFY(!TaskDrop::dateForSection(QString::fromUtf8(key), QDate()).isValid()); // 非法 today
+    // 映射只做日偏移，跨月/跨年/闰年边界正确。
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("tomorrow"), QDate(2026, 12, 31)), QDate(2027, 1, 1));
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("overdue"), QDate(2026, 3, 1)), QDate(2026, 2, 28));
+    QCOMPARE(TaskDrop::dateForSection(QStringLiteral("next7days"), QDate(2024, 2, 27)), QDate(2024, 2, 29));
+}
+
+// 跨分区拖动的日期语义：纯日期、明确 00:00、带时刻与起止跨度，提醒原样；重载后顺序与日期保持。
+void TaskTests::taskDropShiftsDatesAcrossSections()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today = toAppTime(appNow()).date();
+    QVERIFY(today.isValid());
+    const QDate yesterday = today.addDays(-1), tomorrow = today.addDays(1), dayAfter = today.addDays(2);
+    const QString list = store.createList(QStringLiteral("拖放清单"));
+
+    const QString a = store.createTask(QStringLiteral("甲"), list);
+    const QString b = store.createTask(QStringLiteral("乙"), list);
+    const QString c = store.createTask(QStringLiteral("丙"), list);
+    for (const QString &id : QStringList{a, b, c}) {
+        Entity value = store.entity(id); value.allDayDate = today; QVERIFY(store.saveTask(value));
+    }
+    QCOMPARE(store.entity(a).sortOrder, 0);                          // 新任务默认全 0
+    // 同段重排：甲拖到段尾，sortOrder 规范为 0..n-1，日期不动。
+    QVERIFY2(store.moveEntityForDrop(a, QStringList{b, c, a}, QStringLiteral("today"), today, false, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(store.entity(b).sortOrder, 0);
+    QCOMPARE(store.entity(c).sortOrder, 1);
+    QCOMPARE(store.entity(a).sortOrder, 2);
+    for (const QString &id : QStringList{a, b, c}) QCOMPARE(store.entity(id).allDayDate, today);
+    // 幂等：同一顺序再拖一次零写入（revision/updated_at 都不动）。
+    const QString rowsSql = QStringLiteral("SELECT * FROM entities ORDER BY id");
+    const auto rows = queryRows(rowsSql);
+    QVERIFY(store.moveEntityForDrop(a, QStringList{b, c, a}, QStringLiteral("today"), today, false, false));
+    QCOMPARE(queryRows(rowsSql), rows);
+
+    QVERIFY2(store.moveEntityForDrop(b, QStringList{b}, QStringLiteral("tomorrow"), tomorrow, false, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(store.entity(b).allDayDate, tomorrow);                  // 今天 -> 明天
+    QVERIFY2(store.moveEntityForDrop(a, QStringList{a}, QStringLiteral("overdue"), yesterday, false, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(store.entity(a).allDayDate, yesterday);                 // 今天 -> 过期昨天
+    QVERIFY2(store.moveEntityForDrop(a, QStringList{a}, QStringLiteral("today"), today, false, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(store.entity(a).allDayDate, today);                     // 过期 -> 今天
+    QVERIFY2(store.moveEntityForDrop(c, QStringList{c}, QStringLiteral("next7days"), dayAfter, false, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(store.entity(c).allDayDate, dayAfter);                  // 今天 -> 最近7天（后天）
+
+    // “最近7天”段内仅排序：第4/5天不能被错误归一为后天。
+    const QString day4 = store.createTask(QStringLiteral("第四天"), list);
+    const QString day5 = store.createTask(QStringLiteral("第五天"), list);
+    Entity day4Value = store.entity(day4); day4Value.allDayDate = today.addDays(4);
+    Entity day5Value = store.entity(day5); day5Value.allDayDate = today.addDays(5);
+    QVERIFY(store.saveTask(day4Value)); QVERIFY(store.saveTask(day5Value));
+    QVERIFY2(store.moveEntityForDrop(day5, QStringList{day5, day4}, QStringLiteral("next7days"),
+                                     QDate(), false, false, false), qPrintable(store.lastError()));
+    QCOMPARE(store.entity(day4).allDayDate, today.addDays(4));
+    QCOMPARE(store.entity(day5).allDayDate, today.addDays(5));
+    QCOMPARE(store.entity(day5).sortOrder, 0);
+    QCOMPARE(store.entity(day4).sortOrder, 1);
+
+    // 明确 00:00 的定时任务跨区仍保持午夜整点，不伪造成全天。
+    const QString midnight = store.createTask(QStringLiteral("零点截止"), list);
+    {
+        Entity value = store.entity(midnight);
+        value.dueAt = fromAppTime(QDateTime(today, QTime(0, 0)));
+        QVERIFY(store.saveTask(value));
+    }
+    QVERIFY2(store.moveEntityForDrop(midnight, QStringList{midnight}, QStringLiteral("tomorrow"), tomorrow, false, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(toAppTime(store.entity(midnight).dueAt).date(), tomorrow);
+    QCOMPARE(toAppTime(store.entity(midnight).dueAt).time(), QTime(0, 0));
+    QVERIFY(!store.entity(midnight).allDayDate.isValid());
+
+    // 带时刻和起止跨度跨区：应用时区下保留时刻与跨度，提醒原样。
+    // effectiveDate 以 dueAt 日期为锚（昨天 22:15 -> 今天 07:30 的跨午夜跨度）。
+    const QString span = store.createTask(QStringLiteral("跨日跨度"), list);
+    {
+        Entity value = store.entity(span);
+        value.startAt = fromAppTime(QDateTime(yesterday, QTime(22, 15, 25, 123)));
+        value.dueAt = fromAppTime(QDateTime(today, QTime(7, 30, 40, 456)));
+        TaskReminder early; early.triggerAt = fromAppTime(QDateTime(yesterday, QTime(21, 0)));
+        TaskReminder late; late.triggerAt = fromAppTime(QDateTime(today, QTime(1, 30)));
+        value.reminders.append(early); value.reminders.append(late);
+        QVERIFY(store.saveTask(value));
+    }
+    const auto reminderRows = queryRows(QStringLiteral("SELECT * FROM reminders ORDER BY id"));
+    const Entity spanBefore = store.entity(span);
+    QVERIFY2(store.moveEntityForDrop(span, QStringList{span}, QStringLiteral("overdue"), yesterday, false, false),
+             qPrintable(store.lastError()));
+    const Entity spanAfter = store.entity(span);
+    QCOMPARE(toAppTime(spanAfter.startAt).date(), today.addDays(-2));   // 锚点平移 -1 天
+    QCOMPARE(toAppTime(spanAfter.startAt).time(), QTime(22, 15, 25, 123));
+    QCOMPARE(toAppTime(spanAfter.dueAt).date(), yesterday);
+    QCOMPARE(toAppTime(spanAfter.dueAt).time(), QTime(7, 30, 40, 456));
+    QCOMPARE(spanAfter.startAt.msecsTo(spanAfter.dueAt), spanBefore.startAt.msecsTo(spanBefore.dueAt));
+    QCOMPARE(spanAfter.reminders.size(), 2);
+    QCOMPARE(spanAfter.reminders.first().triggerAt, spanBefore.reminders.first().triggerAt);
+    QCOMPARE(queryRows(QStringLiteral("SELECT * FROM reminders ORDER BY id")), reminderRows);
+
+    // 重载后 sortOrder 与日期全部保持。
+    QVERIFY(store.load());
+    QCOMPARE(store.entity(a).allDayDate, today);
+    QCOMPARE(store.entity(b).allDayDate, tomorrow);
+    QCOMPARE(store.entity(c).allDayDate, dayAfter);
+    QCOMPARE(toAppTime(store.entity(midnight).dueAt).time(), QTime(0, 0));
+    QCOMPARE(toAppTime(store.entity(span).startAt).date(), today.addDays(-2));
+    QCOMPARE(store.entity(a).sortOrder, 0);
+    QCOMPARE(store.entity(b).sortOrder, 0);
+}
+
+// 置顶互相拖动与子任务拖出：日期、顺序、置顶、parent detach 同批更新。
+void TaskTests::taskDropReorderPinnedAndParentDetach()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today = toAppTime(appNow()).date();
+    const QDate tomorrow = today.addDays(1);
+    const QString list = store.createList(QStringLiteral("置顶拖放清单"));
+    const QString anchor = store.createTask(QStringLiteral("明日锚点"), list);
+    {
+        Entity value = store.entity(anchor); value.allDayDate = tomorrow; QVERIFY(store.saveTask(value));
+    }
+    const QString parent = store.createTask(QStringLiteral("父任务"), list);
+    {
+        Entity value = store.entity(parent); value.allDayDate = today; QVERIFY(store.saveTask(value));
+    }
+    const QString child = store.createSubtask(QStringLiteral("子任务"), parent);
+    QVERIFY2(isUuid(child), qPrintable(store.lastError()));
+    QCOMPARE(store.entity(child).allDayDate, today);
+
+    const QString first = store.createTask(QStringLiteral("先置顶"), list);
+    const QString second = store.createTask(QStringLiteral("后置顶"), list);
+    QVERIFY(store.setPinnedAt(first, utc(2026, 1, 1, 8)));
+    QVERIFY(store.setPinnedAt(second, utc(2026, 1, 2, 9)));
+    const QDateTime firstPin = store.entity(first).pinnedAt, secondPin = store.entity(second).pinnedAt;
+
+    // 置顶段内互相拖动：只重排 sortOrder，已置顶保持原 pinnedAt，无日期任务不暗改日期。
+    QVERIFY2(store.moveEntityForDrop(second, QStringList{second, first}, QStringLiteral("pinned"), QDate(), true, false),
+             qPrintable(store.lastError()));
+    QCOMPARE(store.entity(second).sortOrder, 0);
+    QCOMPARE(store.entity(first).sortOrder, 1);
+    QCOMPARE(store.entity(first).pinnedAt, firstPin);
+    QCOMPARE(store.entity(second).pinnedAt, secondPin);
+    QVERIFY(!store.entity(first).allDayDate.isValid());
+
+    // 置顶子任务拖到明天段顶部：日期平移、顺序、parent detach 一次完成；新置顶取当前时刻。
+    QVERIFY2(store.moveEntityForDrop(child, QStringList{child, anchor}, QStringLiteral("tomorrow"), tomorrow, true, true),
+             qPrintable(store.lastError()));
+    const Entity moved = store.entity(child);
+    QCOMPARE(moved.allDayDate, tomorrow);
+    QVERIFY(moved.parentId.isEmpty());
+    QVERIFY(moved.pinnedAt.isValid());
+    QCOMPARE(store.entity(anchor).sortOrder, 1);
+    QVERIFY(!store.entity(parent).pinnedAt.isValid());
+    QVERIFY(!store.entity(parent).deleted);
+
+    // 同位再拖但取消置顶：仅清空 pinnedAt，日期与父子关系不动。
+    const QString rowsSql = QStringLiteral("SELECT id,all_day_date,parent_id,sort_order FROM entities WHERE id='%1'");
+    const auto beforeUnpin = queryRows(rowsSql.arg(child));
+    QVERIFY2(store.moveEntityForDrop(child, QStringList{child, anchor}, QStringLiteral("tomorrow"), tomorrow, false, false),
+             qPrintable(store.lastError()));
+    QVERIFY(!store.entity(child).pinnedAt.isValid());
+    QCOMPARE(queryRows(rowsSql.arg(child)), beforeUnpin);
+}
+
+// 原子失败：非法 ID、重复、缺 source、错误目标日期、矛盾置顶、无日期入时间分区、陈旧 revision 全部零写入。
+void TaskTests::taskDropAtomicFailuresAndIdempotence()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today = toAppTime(appNow()).date();
+    const QDate tomorrow = today.addDays(1);
+    const QString list = store.createList(QStringLiteral("原子清单"));
+    const QString a = store.createTask(QStringLiteral("原子甲"), list);
+    const QString b = store.createTask(QStringLiteral("原子乙"), list);
+    const QString noDate = store.createTask(QStringLiteral("无日期"), list);
+    for (const QString &id : QStringList{a, b}) {
+        Entity value = store.entity(id); value.allDayDate = today; QVERIFY(store.saveTask(value));
+    }
+    const QString rowsSql = QStringLiteral("SELECT * FROM entities ORDER BY id");
+    const auto rows = queryRows(rowsSql);
+
+    QVERIFY(!store.moveEntityForDrop(newUuid(), QStringList{a, b}, QStringLiteral("today"), today, false, false));    // source 不存在
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{a, b, newUuid()}, QStringLiteral("today"), today, false, false)); // 段内未知 id
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{a, b, b}, QStringLiteral("today"), today, false, false));         // 重复
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{b}, QStringLiteral("today"), today, false, false));               // 缺 source
+    QVERIFY(!store.moveEntityForDrop(a, QStringList(), QStringLiteral("today"), today, false, false));                // 空目标段
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("today"), tomorrow, false, false));         // 错误目标日期
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("today"), QDate(), false, false));          // 时间分区缺日期
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("upcoming"), today, false, false));         // 非时间分区带日期
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("pinned"), QDate(), false, false));         // 置顶分区必须置顶
+    QVERIFY(!store.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("yesterday"), today.addDays(-1), false, false)); // 非法分区 key
+    QVERIFY(!store.moveEntityForDrop(noDate, QStringList{noDate}, QStringLiteral("today"), today, false, false));     // 无日期入时间分区
+    QVERIFY(!store.lastError().isEmpty());
+    QCOMPARE(queryRows(rowsSql), rows);                              // 全部零写入
+
+    // 陈旧 revision：落后快照的 store 被 repository CAS 整批拒绝；重载后同一命令成功。
+    TaskStore stale(Database::instance().connection()); QVERIFY(stale.load());
+    {
+        Entity value = store.entity(a); value.priority = 2; QVERIFY(store.saveTask(value));
+    }
+    const auto fresh = queryRows(rowsSql);
+    QVERIFY(!stale.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("today"), today, false, false));
+    QVERIFY(stale.lastError().contains(QStringLiteral("修改")));
+    QCOMPARE(queryRows(rowsSql), fresh);                             // 无部分成功
+    QVERIFY(stale.load());
+    QVERIFY2(stale.moveEntityForDrop(a, QStringList{b, a}, QStringLiteral("today"), today, false, false),
+             qPrintable(stale.lastError()));
+    QCOMPARE(stale.entity(b).sortOrder, 0);
+    QCOMPARE(stale.entity(a).sortOrder, 1);
+    QCOMPARE(stale.entity(a).allDayDate, today);
+}
+
+// 子任务创建：继承日期/时区/清单/段落，不继承置顶、提醒、重复、完成状态；非法父项拒绝。
+void TaskTests::createSubtaskInheritsDatesOnly()
+{
+    QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
+    const QDate today = toAppTime(appNow()).date();
+    const QString list = store.createList(QStringLiteral("子任务清单"));
+    const QString section = store.createSection(list, QStringLiteral("段落"));
+    const QString parent = store.createTask(QStringLiteral("父任务"), list, section);
+    {
+        Entity value = store.entity(parent);
+        value.allDayDate = today;
+        value.startAt = fromAppTime(QDateTime(today, QTime(9, 0)));
+        value.dueAt = fromAppTime(QDateTime(today, QTime(18, 0)));
+        value.recurrence = QStringLiteral("daily");
+        value.reminderAt = fromAppTime(QDateTime(today, QTime(8, 30)));
+        QVERIFY(store.saveTask(value));
+    }
+    QVERIFY(store.setPinnedAt(parent, utc(2026, 5, 1, 6)));
+    const Entity parentEntity = store.entity(parent);
+    QVERIFY(parentEntity.pinnedAt.isValid());
+    QVERIFY(!parentEntity.rrule.isEmpty());
+    QCOMPARE(parentEntity.reminders.size(), 1);
+
+    const QString child = store.createSubtask(QStringLiteral("子任务"), parent);
+    QVERIFY2(isUuid(child), qPrintable(store.lastError()));
+    const Entity value = store.entity(child);
+    QCOMPARE(value.parentId, parent);
+    QCOMPARE(value.listId, list);
+    QCOMPARE(value.sectionId, section);
+    QCOMPARE(value.allDayDate, today);                               // 继承日期语义
+    QCOMPARE(toAppTime(value.startAt).time(), QTime(9, 0));
+    QCOMPARE(toAppTime(value.dueAt).time(), QTime(18, 0));
+    QCOMPARE(value.timeZone, parentEntity.timeZone);
+    QVERIFY(!value.pinnedAt.isValid());                              // 不继承置顶
+    QCOMPARE(value.reminders.size(), 0);                             // 不继承提醒
+    QVERIFY(!value.reminderAt.isValid());
+    QCOMPARE(value.recurrence, QStringLiteral("none"));              // 不继承重复
+    QVERIFY(value.rrule.isEmpty());
+    QVERIFY(value.recurrenceSeriesId.isEmpty());
+    QCOMPARE(value.status, TaskStatus::Active);
+    QVERIFY(!value.completed);
+    QCOMPARE(value.sortOrder, 0);                                    // 同级末尾 max+1（尚无兄弟）
+    ViewSpec todaySpec; todaySpec.scope = ViewScope::Today; todaySpec.renderer = ViewRenderer::Time;
+    QVERIFY(contains(store.entity(child), todaySpec, today));        // 时间视图立即可见
+
+    const QString grandchild = store.createSubtask(QStringLiteral("孙任务"), child);
+    QVERIFY(isUuid(grandchild));                                    // 活动任务链可以继续嵌套
+    QCOMPARE(store.entity(grandchild).sortOrder, 0);
+    {
+        Entity draft = store.entity(child); draft.sortOrder = 5; QVERIFY(store.saveTask(draft));
+    }
+    const QString second = store.createSubtask(QStringLiteral("二子"), parent);
+    QCOMPARE(store.entity(second).sortOrder, 6);                     // 同级末尾取兄弟 max+1
+
+    const QString done = store.createTask(QStringLiteral("完成父"));
+    QVERIFY(store.setCompleted(done, true));
+    QVERIFY(store.createSubtask(QStringLiteral("无效"), done).isEmpty());
+    const QString abandoned = store.createTask(QStringLiteral("放弃父"));
+    QVERIFY(store.abandonTask(abandoned));
+    QVERIFY(store.createSubtask(QStringLiteral("无效"), abandoned).isEmpty());
+    const QString trashed = store.createTask(QStringLiteral("回收父"));
+    QVERIFY(store.trashTask(trashed));
+    QVERIFY(store.createSubtask(QStringLiteral("无效"), trashed).isEmpty());
+    const QString note = store.createNote(QStringLiteral("笔记父"), list);
+    QVERIFY(store.createSubtask(QStringLiteral("无效"), note).isEmpty());
+    QVERIFY(store.createSubtask(QStringLiteral("无效"), newUuid()).isEmpty());
+    QVERIFY(store.createSubtask(QStringLiteral("无效"), QString()).isEmpty());
+    QVERIFY(store.createSubtask(QStringLiteral("   "), parent).isEmpty());   // 空标题由 prepareSave 拒绝
+}
+
 void TaskTests::backupRoundTripAndLegacyRejection()
 {
     QVERIFY(open()); TaskStore store(Database::instance().connection()); QVERIFY(store.load());
-    const QString folder = store.createFolder(QStringLiteral("文件夹 Ω")); const QString list = store.createList(QStringLiteral("清单 🐱"), folder);
+    const QString folder = store.createFolder(QStringLiteral("文件夹 Ω"), QStringLiteral("🗂")); const QString list = store.createList(QStringLiteral("清单 🐱"), folder);
     QVERIFY2(store.updateList(list, QStringLiteral(" 清单 🐱 "), QStringLiteral("🏠"), QStringLiteral("#AA33CC"), folder), qPrintable(store.lastError()));
     const QString archivedList = store.createList(QStringLiteral("归档清单"));
     QVERIFY(store.setListArchived(archivedList, true));
@@ -2364,7 +3245,7 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     QCOMPARE(QString::fromLatin1(bytes.left(4)), QStringLiteral("KLB1"));
     QVector<attachmentcodec::BackupFrame> frames; const QJsonObject root = readMetadata(backupPath(), &frames);
     QCOMPARE(root.value(QStringLiteral("format")).toString(), QStringLiteral("KylinList.Entities"));
-    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 3); QCOMPARE(frames.size(), 1);
+    QCOMPARE(root.value(QStringLiteral("version")).toInt(), 4); QCOMPARE(frames.size(), 1);
     QCOMPARE(root.value(QStringLiteral("defaultTimezone")).toString(), QStringLiteral("Asia/Shanghai"));
     QCOMPARE(root.value(QStringLiteral("events")).toArray().size(), expectedEvents.size());
     QCOMPARE(root.value(QStringLiteral("checklistItems")).toArray().size(), 1);
@@ -2388,6 +3269,11 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     }
     QCOMPARE(exportedArchived, 1);
     QCOMPARE(exportedIcon, QStringLiteral("🏠")); QCOMPARE(exportedColor, QStringLiteral("#AA33CC"));
+    QString exportedFolderIcon;
+    for (const QJsonValue &value : root.value(QStringLiteral("folders")).toArray())
+        if (value.toObject().value(QStringLiteral("id")).toString() == folder)
+            exportedFolderIcon = value.toObject().value(QStringLiteral("icon")).toString();
+    QCOMPARE(exportedFolderIcon, QStringLiteral("🗂"));
     QJsonObject exportedTask;
     for (const QJsonValue &value : root.value(QStringLiteral("entities")).toArray())
         if (value.toObject().value(QStringLiteral("id")).toString() == id) exportedTask = value.toObject();
@@ -2419,6 +3305,10 @@ void TaskTests::backupRoundTripAndLegacyRejection()
         if (candidate.id == archivedList) restoredArchived = candidate.archivedAtUtcMs > 0;
     }
     QVERIFY(restoredAppearance); QVERIFY(restoredArchived);   // 覆盖恢复保留外观与归档状态
+    bool restoredFolderIcon = false;
+    for (const Folder &candidate : store.folders())
+        if (candidate.id == folder) restoredFolderIcon = candidate.icon == QStringLiteral("🗂");
+    QVERIFY(restoredFolderIcon);                              // 覆盖恢复保留文件夹图标
     QCOMPARE(store.entity(id).id, id); QCOMPARE(store.entity(id).body, task.body); QCOMPARE(store.entity(target).title, QStringLiteral("内链目标"));
     QCOMPARE(store.entity(id).listId, list); QCOMPARE(store.entity(id).sectionId, section); QCOMPARE(store.entity(id).folderId, task.folderId);
     QCOMPARE(store.entity(id).sortOrder, qint64(23)); QCOMPARE(store.entity(id).pinnedAt, task.pinnedAt);
@@ -2455,7 +3345,7 @@ void TaskTests::backupRoundTripAndLegacyRejection()
     QJsonObject oldList = oldLists.first().toObject(); oldList.remove(QStringLiteral("kind"));
     oldLists.replace(0, oldList); oldMetadata.insert(QStringLiteral("lists"), oldLists);
     QVERIFY(writeContainer(legacy, oldMetadata, frames)); QVERIFY(!store.importBackup(legacy)); QCOMPARE(store.entities().size(), 2);
-    // v2 容器（无 icon/color/archivedAtUtcMs）：读入成功并补默认值。
+    // v2 容器（无 icon/color/archivedAtUtcMs，folders 无 icon）：读入成功并补默认值。
     QJsonObject v2Metadata = root;
     {
         QJsonArray v2Lists = v2Metadata.value(QStringLiteral("lists")).toArray();
@@ -2464,7 +3354,14 @@ void TaskTests::backupRoundTripAndLegacyRejection()
             object.remove(QStringLiteral("icon")); object.remove(QStringLiteral("color")); object.remove(QStringLiteral("archivedAtUtcMs"));
             v2Lists.replace(i, object);
         }
-        v2Metadata.insert(QStringLiteral("lists"), v2Lists); v2Metadata.insert(QStringLiteral("version"), 2);
+        QJsonArray v2Folders = v2Metadata.value(QStringLiteral("folders")).toArray();
+        for (int i = 0; i < v2Folders.size(); ++i) {
+            QJsonObject object = v2Folders.at(i).toObject();
+            object.remove(QStringLiteral("icon"));
+            v2Folders.replace(i, object);
+        }
+        v2Metadata.insert(QStringLiteral("lists"), v2Lists);
+        v2Metadata.insert(QStringLiteral("folders"), v2Folders); v2Metadata.insert(QStringLiteral("version"), 2);
     }
     QVERIFY(writeContainer(legacy, v2Metadata, frames));
     QVERIFY2(store.importBackup(legacy), qPrintable(store.lastError()));
@@ -2473,6 +3370,7 @@ void TaskTests::backupRoundTripAndLegacyRejection()
         QVERIFY(candidate.icon.isEmpty()); QVERIFY(candidate.color.isEmpty());
         QCOMPARE(candidate.archivedAtUtcMs, qint64(0));       // v2 无归档语义，一律未归档
     }
+    for (const Folder &candidate : store.folders()) QVERIFY(candidate.icon.isEmpty());
     TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load()); QCOMPARE(reloaded.attachments(id).size(), 1);
 }
 

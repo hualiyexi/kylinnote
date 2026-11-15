@@ -32,6 +32,7 @@ bool searchMatches(const Entity &entity, const QString &search)
 void sortPinned(QVector<Entity> *items)
 {
     std::sort(items->begin(), items->end(), [](const Entity &a, const Entity &b) {
+        if (a.sortOrder != b.sortOrder) return a.sortOrder < b.sortOrder;
         if (a.pinnedAt != b.pinnedAt) return a.pinnedAt > b.pinnedAt;
         return a.id < b.id;
     });
@@ -39,6 +40,7 @@ void sortPinned(QVector<Entity> *items)
 void sortByDate(QVector<Entity> *items)
 {
     std::sort(items->begin(), items->end(), [](const Entity &a, const Entity &b) {
+        if (a.sortOrder != b.sortOrder) return a.sortOrder < b.sortOrder;
         const QDate ad = effectiveDate(a), bd = effectiveDate(b);
         if (ad != bd) return ad < bd;
         return a.id < b.id;
@@ -47,6 +49,7 @@ void sortByDate(QVector<Entity> *items)
 void sortByCreated(QVector<Entity> *items)
 {
     std::sort(items->begin(), items->end(), [](const Entity &a, const Entity &b) {
+        if (a.sortOrder != b.sortOrder) return a.sortOrder < b.sortOrder;
         if (a.createdAt != b.createdAt) return a.createdAt > b.createdAt;
         return a.id < b.id;
     });
@@ -83,7 +86,8 @@ QDate effectiveDate(const Entity &entity)
     return toAppTime(entity.startAt).date();
 }
 
-bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today, const QSet<QString> &archivedListIds)
+bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today, const QSet<QString> &archivedListIds,
+              const QSet<QString> &folderListIds)
 {
     if (!today.isValid()) return false;
     if (spec.renderer == ViewRenderer::Time && !timeScope(spec.scope)) return false;
@@ -97,13 +101,16 @@ bool contains(const Entity &entity, const ViewSpec &spec, const QDate &today, co
             return entity.kind == EntityKind::Task && entity.status == TaskStatus::Abandoned && searchMatches(entity, spec.search);
         // 活动视图（AllLists/Today/Tomorrow/Next7Days/Overdue）排除归档清单的活动实体；
         // 显式 List 作用域允许查看归档清单，Completed/Abandoned/Trash 保留历史可见性。
-        if (spec.scope != ViewScope::List && !archivedListIds.isEmpty() && archivedListIds.contains(entity.listId)) return false;
+        if (spec.scope != ViewScope::List && spec.scope != ViewScope::Folder
+            && !archivedListIds.isEmpty() && archivedListIds.contains(entity.listId)) return false;
         if (entity.kind == EntityKind::Note) {
             // 笔记保留的 status 不影响普通清单可见性，也永不进入任务时间/归档视图。
-            if (spec.scope != ViewScope::AllLists && spec.scope != ViewScope::List) return false;
+            if (spec.scope != ViewScope::AllLists && spec.scope != ViewScope::List
+                && spec.scope != ViewScope::Folder) return false;
         } else if (entity.status != TaskStatus::Active) return false;
     }
     if (spec.scope == ViewScope::List && entity.listId != spec.listId) return false;
+    if (spec.scope == ViewScope::Folder && !folderListIds.contains(entity.listId)) return false;
     if (timeScope(spec.scope)) {
         if (entity.kind != EntityKind::Task) return false;
         const QDate date = effectiveDate(entity);
@@ -156,6 +163,46 @@ QVector<ViewSection> buildSections(const QVector<Entity> &entities, const ViewSp
         appendSection(&sections, QStringLiteral("notes"), QStringLiteral("笔记"), notes);
     }
     return sections;
+}
+
+QSet<QString> folderListIds(const QVector<TaskList> &lists, const QString &folderId)
+{
+    QSet<QString> result;
+    for (const TaskList &list : lists)
+        if (list.folderId == folderId) result.insert(list.id);
+    return result;
+}
+
+QVector<ViewSection> buildFolderSections(const QVector<Entity> &entities, const QVector<TaskList> &lists,
+                                         const ViewSpec &spec, const QDate &today,
+                                         const QSet<QString> &archivedListIds)
+{
+    QVector<ViewSection> result;
+    if (spec.scope != ViewScope::Folder || spec.folderId.isEmpty()) return result;
+    const QSet<QString> members = folderListIds(lists, spec.folderId);
+    QVector<Entity> pinned;
+    for (const Entity &entity : entities)
+        if (entity.pinnedAt.isValid() && contains(entity, spec, today, archivedListIds, members))
+            pinned.append(entity);
+    sortPinned(&pinned);
+    appendSection(&result, QStringLiteral("pinned"), QStringLiteral("已置顶"), pinned);
+
+    for (const TaskList &list : lists) {
+        if (list.folderId != spec.folderId || list.archivedAtUtcMs > 0) continue;
+        ViewSpec listSpec = spec;
+        listSpec.scope = ViewScope::List;
+        listSpec.listId = list.id;
+        listSpec.folderId.clear();
+        listSpec.renderer = ViewRenderer::List;
+        const QVector<ViewSection> sections = buildSections(entities, listSpec, today, archivedListIds);
+        QVector<Entity> items;
+        for (const ViewSection &section : sections) {
+            if (section.key == QLatin1String("pinned")) continue;
+            items.append(section.items);
+        }
+        appendSection(&result, QStringLiteral("list:") + list.id, list.name, items);
+    }
+    return result;
 }
 
 QString scheduleLabel(const Entity &entity)

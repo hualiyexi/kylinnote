@@ -14,12 +14,22 @@
 namespace kl {
 namespace backupcodec {
 
-// v3：lists 增加 icon/color/archivedAtUtcMs。读入兼容 v2（缺省补默认值：无图标、无颜色、未归档）；
-// 更旧版本与 v4+ 一律拒绝，旧程序（只认 v2）也会拒绝 v3。
-const int kVersion = 3;
+// v4：folders 增加 icon。读入兼容 v2/v3（缺省补默认值：文件夹无图标）；
+// 更旧版本与 v5+ 一律拒绝，旧程序（只认 v3）也会拒绝 v4。
+const int kVersion = 4;
 const int kMinimumVersion = 2;
 const qint64 kMaximumRevision = 9007199254740991LL;
 inline QString formatName() { return QStringLiteral("KylinList.Entities"); }
+inline bool readFolderIcon(const QJsonObject &object, QString *icon, QString *error)
+{
+    icon->clear();
+    if (object.contains(QStringLiteral("icon"))) {
+        if (!object.value(QStringLiteral("icon")).isString()) return entitycodec::fail(error, QStringLiteral("文件夹 icon 必须为字符串"));
+        *icon = object.value(QStringLiteral("icon")).toString();
+    }
+    if (!isValidListIcon(*icon)) return entitycodec::fail(error, QStringLiteral("文件夹 icon 非法"));
+    return true;
+}
 inline bool readListAppearance(const QJsonObject &object, QString *icon, QString *color,
                                qint64 *archivedAtUtcMs, QString *error)
 {
@@ -186,8 +196,12 @@ inline QJsonObject toJson(const EntitySnapshot &snapshot, const QVector<EntityEv
     root.insert(QStringLiteral("defaultTimezone"), snapshotTimeZone(snapshot));
     QJsonArray folders, lists, sections, series, entities, links, attachments, eventArray;
     QJsonArray checklist, tags, entityTags, reminders, viewDefs;
-    for (const Folder &row : snapshot.folders)
-        folders.append(namedJson(row.id, row.name, QString(), row.sortOrder, row.createdAt, row.updatedAt, QString(), row.revision, row.serverRevision));
+    for (const Folder &row : snapshot.folders) {
+        QJsonObject object = namedJson(row.id, row.name, QString(), row.sortOrder, row.createdAt, row.updatedAt,
+                                       QString(), row.revision, row.serverRevision);
+        object.insert(QStringLiteral("icon"), row.icon);
+        folders.append(object);
+    }
     for (const TaskList &row : snapshot.lists) {
         QJsonObject object = namedJson(row.id, row.name, row.folderId, row.sortOrder, row.createdAt, row.updatedAt,
                                       QStringLiteral("folderId"), row.revision, row.serverRevision);
@@ -260,7 +274,7 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
     if (root.value(QStringLiteral("format")).toString() != formatName()
         || !entitycodec::readInteger(root.value(QStringLiteral("version")), kMinimumVersion, kVersion, &version)
         || !entitycodec::validTimeZone(defaultTimezone))
-        return entitycodec::fail(error, QStringLiteral("不是受支持的 KylinList.Entities v2/v3 备份；旧格式不迁移"));
+        return entitycodec::fail(error, QStringLiteral("不是受支持的 KylinList.Entities v2/v3/v4 备份；旧格式不迁移"));
     const char *const arrays[] = {"folders","lists","sections","recurrenceSeries","entities","recurrenceLinks",
         "attachments","events","checklistItems","tags","entityTags","reminders","viewDefs"};
     for (const char *key : arrays) if (!root.value(QLatin1String(key)).isArray())
@@ -272,6 +286,8 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
         Folder row; QString ignoredParent;
         if (!readNamed(value.toObject(), QString(), &row.id, &row.name, &ignoredParent,
                        &row.sortOrder, &row.createdAt, &row.updatedAt, &row.revision, &row.serverRevision, error)) return false;
+        // v2/v3 备份没有 folders[].icon：读入补空（默认文件夹图标）。
+        if (!readFolderIcon(value.toObject(), &row.icon, error)) return false;
         if (folderIds.contains(row.id)) return entitycodec::fail(error, QStringLiteral("文件夹 id 重复"));
         folderIds.insert(row.id); snapshot.folders.append(row);
     }

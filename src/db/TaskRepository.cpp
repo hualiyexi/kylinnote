@@ -143,15 +143,17 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
     }
 
     QSqlQuery folders(m_database);
-    if (!folders.exec(QStringLiteral("SELECT id,name,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM folders ORDER BY sort_order,id")))
+    if (!folders.exec(QStringLiteral("SELECT id,name,icon,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM folders ORDER BY sort_order,id")))
         return sqlFailure(folders, error);
     QSet<QString> folderIds;
     while (folders.next()) {
         Folder row;
-        row.id = folders.value(0).toString(); row.name = folders.value(1).toString(); row.sortOrder = folders.value(2).toInt();
-        row.revision = folders.value(5).toLongLong(); row.serverRevision = folders.value(6).toLongLong();
-        if (!dbDate(folders.value(3), &row.createdAt, error) || !dbDate(folders.value(4), &row.updatedAt, error)
-            || row.revision <= 0 || row.serverRevision < 0 || !validNamedEntity(row.id, row.name, row.createdAt, row.updatedAt, row.sortOrder, error)) return false;
+        row.id = folders.value(0).toString(); row.name = folders.value(1).toString(); row.icon = folders.value(2).toString();
+        row.sortOrder = folders.value(3).toInt();
+        row.revision = folders.value(6).toLongLong(); row.serverRevision = folders.value(7).toLongLong();
+        if (!dbDate(folders.value(4), &row.createdAt, error) || !dbDate(folders.value(5), &row.updatedAt, error)
+            || row.revision <= 0 || row.serverRevision < 0 || !validNamedEntity(row.id, row.name, row.createdAt, row.updatedAt, row.sortOrder, error)
+            || !isValidListIcon(row.icon)) return false;
         folderIds.insert(row.id); snapshot.folders.append(row);
     }
 
@@ -469,23 +471,42 @@ bool TaskRepository::load(EntitySnapshot *out, QString *error) const
 bool TaskRepository::saveFolder(Folder *folder, QString *error)
 {
     if (!isUuid(folder->id) || folder->name.trimmed().isEmpty() || folder->sortOrder < 0
-        || !folder->createdAt.isValid() || !folder->updatedAt.isValid()) return entitycodec::fail(error, QStringLiteral("文件夹字段非法"));
+        || !folder->createdAt.isValid() || !folder->updatedAt.isValid() || !isValidListIcon(folder->icon))
+        return entitycodec::fail(error, QStringLiteral("文件夹字段非法"));
     folder->name = folder->name.trimmed();
-    QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT 1 FROM folders WHERE id=?")); exists.addBindValue(folder->id);
+    QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT name,revision FROM folders WHERE id=?")); exists.addBindValue(folder->id);
     if (!exists.exec()) return sqlFailure(exists, error);
     const bool update = exists.next();
+    qint64 storedRevision = 0;
+    QString storedName;
+    if (update) {
+        storedName = exists.value(0).toString();
+        storedRevision = exists.value(1).toLongLong();
+        if (folder->name == storedName.trimmed()) folder->name = storedName;
+        // 名称长度只约束新建与真正改名；旧库历史长名称的原名更新保留原名（与清单口径一致）。
+        if (folder->name != storedName && folder->name.size() > kListNameMaxLength)
+            return entitycodec::fail(error, QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+        // CAS：陈旧快照不得覆盖其他 store 已提交的改名/图标等变更。
+        if (folder->revision != storedRevision)
+            return entitycodec::fail(error, QStringLiteral("文件夹已被其他操作修改，请重新加载"));
+    } else if (folder->name.size() > kListNameMaxLength) {
+        return entitycodec::fail(error, QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+    }
     QSqlQuery query(m_database);
-    if (!query.prepare(update ? QStringLiteral("UPDATE folders SET name=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
-                              : QStringLiteral("INSERT INTO folders(id,name,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?)")))
+    if (!query.prepare(update ? QStringLiteral("UPDATE folders SET name=?,icon=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=? AND revision=?")
+                              : QStringLiteral("INSERT INTO folders(id,name,icon,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?)")))
         return sqlFailure(query, error);
     if (update) {
-        query.addBindValue(folder->name); query.addBindValue(folder->sortOrder);
-        query.addBindValue(utcMs(folder->updatedAt)); query.addBindValue(folder->id);
+        query.addBindValue(folder->name); query.addBindValue(safeText(folder->icon)); query.addBindValue(folder->sortOrder);
+        query.addBindValue(utcMs(folder->updatedAt)); query.addBindValue(folder->id); query.addBindValue(storedRevision);
     } else {
-        query.addBindValue(folder->id); query.addBindValue(folder->name);
+        query.addBindValue(folder->id); query.addBindValue(folder->name); query.addBindValue(safeText(folder->icon));
         query.addBindValue(folder->sortOrder); query.addBindValue(utcMs(folder->createdAt)); query.addBindValue(utcMs(folder->updatedAt));
     }
-    return query.exec() ? true : sqlFailure(query, error);
+    if (!query.exec()) return sqlFailure(query, error);
+    if (update && query.numRowsAffected() != 1)
+        return entitycodec::fail(error, QStringLiteral("文件夹已被其他操作修改，请重新加载"));
+    return true;
 }
 
 bool TaskRepository::saveGroup(TaskList *group, QString *error)
@@ -1136,8 +1157,8 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
 
     for (const Folder &row : incoming.folders) {
         QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("INSERT INTO folders(id,name,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?)"));
-        query.addBindValue(row.id); query.addBindValue(row.name); query.addBindValue(row.sortOrder);
+        query.prepare(QStringLiteral("INSERT INTO folders(id,name,icon,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?)"));
+        query.addBindValue(row.id); query.addBindValue(row.name); query.addBindValue(safeText(row.icon)); query.addBindValue(row.sortOrder);
         query.addBindValue(utcMs(row.createdAt)); query.addBindValue(utcMs(row.updatedAt)); query.addBindValue(row.revision); query.addBindValue(row.serverRevision);
         if (!query.exec()) { sqlFailure(query, error); return abort(); }
     }

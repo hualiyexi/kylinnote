@@ -47,6 +47,22 @@ TaskTag makeTaskTag(const QString &entityId, const QString &tagId)
 {
     TaskTag link; link.id = newUuid(); link.entityId = entityId; link.tagId = tagId; return link;
 }
+// 顶层“平铺清单 + 文件夹”混合序列的稳定顺序：sortOrder 优先；同序号时平铺清单在文件夹前
+// （旧 UI 把文件夹排在全部平铺清单之后），再按 id。旧全 0 数据因此退化为
+// “平铺清单在前、文件夹在后、各自 (sortOrder,id)”，与历史 UI 展示一致。
+struct TopLevelRow {
+    const TaskList *list = nullptr;
+    const Folder *folder = nullptr;
+    int sortOrder() const { return list ? list->sortOrder : folder->sortOrder; }
+    bool isFolder() const { return folder != nullptr; }
+    QString id() const { return list ? list->id : folder->id; }
+};
+bool topLevelLess(const TopLevelRow &a, const TopLevelRow &b)
+{
+    if (a.sortOrder() != b.sortOrder()) return a.sortOrder() < b.sortOrder();
+    if (a.isFolder() != b.isFolder()) return !a.isFolder();   // 同序号：清单在文件夹前
+    return a.id() < b.id();
+}
 void addEvent(EntityChanges *changes, const Entity &entity, const QString &type, const QString &field,
               const QVariant &oldValue, const QVariant &newValue, const QDateTime &occurredAt)
 {
@@ -675,6 +691,35 @@ QString TaskStore::createTask(const QString &title, const QString &listId, const
     if (!commit(&changes, true)) return QString();
     return changes.saves.first().entity.id;
 }
+QString TaskStore::createSubtask(const QString &title, const QString &parentId)
+{
+    if (!ensureLoaded()) return QString();
+    // 父项必须从当前快照重读：存在、未删除、active 的任务；笔记/完成/放弃/回收站一律拒绝。
+    const StoredEntity *parentStored = parentId.isEmpty() ? nullptr : find(parentId);
+    if (!parentStored) { fail(QStringLiteral("父任务不存在")); return QString(); }
+    const Entity &parent = parentStored->entity;
+    if (parent.kind != EntityKind::Task || parent.status != TaskStatus::Active || parent.deleted) {
+        fail(QStringLiteral("父任务必须是未删除的进行中任务"));
+        return QString();
+    }
+    Entity value;
+    value.kind = EntityKind::Task;
+    value.title = title;
+    value.listId = parent.listId; value.sectionId = parent.sectionId; value.parentId = parent.id;
+    // 只继承日期语义：时间视图（今天/明天/最近7天/已过期）按 effectiveDate 聚合，
+    // 复制 allDayDate/startAt/dueAt/timeZone 让子任务与父项同桶立即可见。
+    value.allDayDate = parent.allDayDate; value.startAt = parent.startAt; value.dueAt = parent.dueAt;
+    value.timeZone = parent.timeZone;
+    // 不继承置顶、提醒、重复/完成状态：pinnedAt/reminders/rrule 保持新任务默认空值。
+    qint64 order = 0;
+    for (const StoredEntity &row : m_snapshot.entities)
+        if (row.entity.parentId == parent.id) order = qMax(order, row.entity.sortOrder + 1);
+    value.sortOrder = order;                                    // 同级末尾 max+1
+    EntityChanges changes;
+    if (!prepareSave(value, &changes)) return QString();        // 父子校验由 prepareSave 复用
+    if (!commit(&changes, true)) return QString();
+    return changes.saves.first().entity.id;
+}
 QString TaskStore::createNote(const QString &title, const QString &listId, const QString &sectionId)
 {
     if (!ensureLoaded()) return QString();
@@ -785,19 +830,253 @@ bool TaskStore::deletePermanently(const QString &id)
     return commit(&changes, true);
 }
 
-QString TaskStore::createFolder(const QString &name)
+int TaskStore::nextListSortOrder(const QString &folderId) const
+{
+    int order = 0;
+    for (const TaskList &row : m_snapshot.lists) {
+        if (row.folderId != folderId) continue;
+        order = qMax(order, row.sortOrder + 1);
+    }
+    // 顶层清单与文件夹共用排序序列：新建落到两者最大值之后，UI 合并展示不会插进文件夹中间。
+    if (folderId.isEmpty())
+        for (const Folder &row : m_snapshot.folders) order = qMax(order, row.sortOrder + 1);
+    return order;
+}
+int TaskStore::nextFolderSortOrder() const
+{
+    int order = 0;
+    for (const Folder &row : m_snapshot.folders) order = qMax(order, row.sortOrder + 1);
+    for (const TaskList &row : m_snapshot.lists) if (row.folderId.isEmpty()) order = qMax(order, row.sortOrder + 1);
+    return order;
+}
+
+QString TaskStore::createFolder(const QString &name, const QString &icon)
 {
     if (!ensureLoaded()) return QString();
-    const QDateTime now = utcNow(); Folder row; row.id = newUuid(); row.name = name; row.createdAt = now; row.updatedAt = now;
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || trimmed.size() > kListNameMaxLength)
+        { fail(QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength)); return QString(); }
+    if (!isValidListIcon(icon)) { fail(QStringLiteral("文件夹图标超出长度限制")); return QString(); }
+    const QDateTime now = utcNow(); Folder row; row.id = newUuid(); row.name = trimmed; row.icon = icon;
+    row.sortOrder = nextFolderSortOrder(); row.createdAt = now; row.updatedAt = now;
     EntityChanges changes; changes.folderSaves.append(row); return commit(&changes) ? row.id : QString();
 }
 bool TaskStore::renameFolder(const QString &id, const QString &name)
 {
     if (!ensureLoaded()) return false;
     if (id.isEmpty() || !hasFolder(id)) return fail(QStringLiteral("文件夹不存在"));
-    for (Folder row : m_snapshot.folders) if (row.id == id) {
-        row.name = name; row.updatedAt = utcNow(); EntityChanges changes; changes.folderSaves.append(row); return commit(&changes);
+    for (const Folder &row : m_snapshot.folders) if (row.id == id) {
+        Folder updated = row;
+        updated.name = name; updated.updatedAt = utcNow();
+        return saveFolder(updated);
     } return fail(QStringLiteral("文件夹不存在"));
+}
+bool TaskStore::saveFolder(const Folder &folder)
+{
+    if (!ensureLoaded()) return false;
+    const Folder *existing = nullptr;
+    for (const Folder &row : m_snapshot.folders) if (row.id == folder.id) existing = &row;
+    if (folder.id.isEmpty() || !existing) return fail(QStringLiteral("文件夹不存在"));
+    // 旧草稿必须基于本 store 的当前快照；repository 还会核对实际数据库 revision。
+    if (folder.revision != existing->revision)
+        return fail(QStringLiteral("文件夹已被其他操作修改，请重新加载"));
+    Folder row = *existing;
+    row.name = folder.name.trimmed();
+    if (row.name == existing->name.trimmed()) row.name = existing->name; // 原名更新保留旧库原文
+    row.icon = folder.icon;
+    row.sortOrder = folder.sortOrder;
+    if (row.name.isEmpty()) return fail(QStringLiteral("文件夹名称不能为空"));
+    // 长度上限只约束新建与真正改名；旧库历史长名称的原名更新照常放行。
+    if (row.name != existing->name && row.name.size() > kListNameMaxLength)
+        return fail(QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+    if (!isValidListIcon(row.icon)) return fail(QStringLiteral("文件夹图标超出长度限制"));
+    if (row.sortOrder < 0) return fail(QStringLiteral("文件夹排序非法"));
+    if (row.name == existing->name && row.icon == existing->icon && row.sortOrder == existing->sortOrder) {
+        m_lastError.clear(); return true;
+    }
+    row.updatedAt = utcNow();
+    EntityChanges changes; changes.folderSaves.append(row); return commit(&changes);
+}
+bool TaskStore::moveList(const QString &sourceId, const QString &targetFolderId,
+                         const QString &targetListId, bool after)
+{
+    if (!ensureLoaded()) return false;
+    // source/target 都从当前快照重读；陈旧引用直接拒绝，不落任何写入。
+    const TaskList *source = findList(sourceId);
+    if (sourceId.isEmpty() || !source) return fail(QStringLiteral("清单不存在"));
+    if (source->inbox) return fail(QStringLiteral("系统 inbox 不可移动"));
+    if (source->archivedAtUtcMs > 0) return fail(QStringLiteral("已归档清单不可移动"));
+    if (!targetFolderId.isEmpty() && !hasFolder(targetFolderId)) return fail(QStringLiteral("目标文件夹不存在"));
+    if (!targetListId.isEmpty()) {
+        const TaskList *anchor = findList(targetListId);
+        if (!anchor) return fail(QStringLiteral("目标清单不存在"));
+        if (anchor->inbox) return fail(QStringLiteral("不能以系统 inbox 作为移动目标"));
+        if (anchor->archivedAtUtcMs > 0) return fail(QStringLiteral("不能以已归档清单作为移动目标"));
+        if (anchor->folderId != targetFolderId) return fail(QStringLiteral("目标清单不在目标文件夹内"));
+        if (anchor->id == source->id) return fail(QStringLiteral("不能相对自身移动清单"));
+    }
+    const QString sourceFolderId = source->folderId;
+    const QDateTime now = utcNow();
+    EntityChanges changes;
+    bool changed = false;
+    // 混合序列按目标位置整体写入：每行（清单或文件夹）只出现一次，避免同批 CAS 重复保存。
+    const auto saveTopLevel = [&now, &changes, &changed](const QVector<TopLevelRow> &rows) {
+        for (int i = 0; i < rows.size(); ++i) {
+            const TopLevelRow &row = rows.at(i);
+            if (row.list) {
+                if (row.list->folderId.isEmpty() && row.list->sortOrder == i) continue;
+                TaskList value = *row.list;
+                value.folderId.clear(); value.sortOrder = i; value.updatedAt = now;
+                changes.groupSaves.append(value); changed = true;
+            } else {
+                if (row.folder->sortOrder == i) continue;
+                Folder value = *row.folder;
+                value.sortOrder = i; value.updatedAt = now;
+                changes.folderSaves.append(value); changed = true;
+            }
+        }
+    };
+    if (targetFolderId.isEmpty()) {
+        // 顶层是“平铺清单 + 文件夹”混合序列：去掉 source 后按锚点位置（或末尾）重插，整体规范为 0..n-1。
+        QVector<TopLevelRow> merged;
+        for (const TaskList &row : m_snapshot.lists)
+            if (row.folderId.isEmpty() && row.id != sourceId) merged.append(TopLevelRow{&row, nullptr});
+        for (const Folder &row : m_snapshot.folders) merged.append(TopLevelRow{nullptr, &row});
+        std::sort(merged.begin(), merged.end(), topLevelLess);
+        int insertAt = merged.size();                       // 目标空 = 混合序列末尾
+        if (!targetListId.isEmpty())
+            for (int i = 0; i < merged.size(); ++i)
+                if (merged.at(i).list && merged.at(i).list->id == targetListId) insertAt = after ? i + 1 : i;
+        merged.insert(insertAt, TopLevelRow{source, nullptr});
+        saveTopLevel(merged);
+    } else {
+        // 文件夹容器是纯清单序列：排序后重插 source 并规范为 0..n-1。
+        QVector<TaskList> destination;
+        for (const TaskList &row : m_snapshot.lists) if (row.folderId == targetFolderId && row.id != sourceId) destination.append(row);
+        std::sort(destination.begin(), destination.end(), [](const TaskList &a, const TaskList &b) {
+            if (a.sortOrder != b.sortOrder) return a.sortOrder < b.sortOrder;
+            return a.id < b.id;
+        });
+        int insertAt = destination.size();                   // 目标空 = 容器末尾
+        if (!targetListId.isEmpty())
+            for (int i = 0; i < destination.size(); ++i) if (destination.at(i).id == targetListId) insertAt = after ? i + 1 : i;
+        destination.insert(insertAt, *source);
+        for (int i = 0; i < destination.size(); ++i) {
+            const TaskList &row = destination.at(i);
+            if (row.folderId == targetFolderId && row.sortOrder == i) continue;   // 位置未变就不写
+            TaskList value = row;
+            value.folderId = targetFolderId; value.sortOrder = i; value.updatedAt = now;
+            changes.groupSaves.append(value); changed = true;
+        }
+    }
+    // 跨容器移动后源容器同样规范化：顶层规范化混合序列（不含 source），文件夹规范化剩余清单。
+    if (sourceFolderId != targetFolderId) {
+        if (sourceFolderId.isEmpty()) {
+            QVector<TopLevelRow> merged;
+            for (const TaskList &row : m_snapshot.lists)
+                if (row.folderId.isEmpty() && row.id != sourceId) merged.append(TopLevelRow{&row, nullptr});
+            for (const Folder &row : m_snapshot.folders) merged.append(TopLevelRow{nullptr, &row});
+            std::sort(merged.begin(), merged.end(), topLevelLess);
+            saveTopLevel(merged);
+        } else {
+            QVector<TaskList> remaining;
+            for (const TaskList &row : m_snapshot.lists) if (row.folderId == sourceFolderId && row.id != sourceId) remaining.append(row);
+            std::sort(remaining.begin(), remaining.end(), [](const TaskList &a, const TaskList &b) {
+                if (a.sortOrder != b.sortOrder) return a.sortOrder < b.sortOrder;
+                return a.id < b.id;
+            });
+            for (int i = 0; i < remaining.size(); ++i) {
+                if (remaining.at(i).sortOrder == i) continue;
+                TaskList row = remaining.at(i);
+                row.sortOrder = i; row.updatedAt = now;
+                changes.groupSaves.append(row); changed = true;
+            }
+        }
+    }
+    if (!changed) { m_lastError.clear(); return true; }
+    return commit(&changes);
+}
+QString TaskStore::createFolderFromLists(const QString &name, const QString &icon,
+                                         const QString &sourceId, const QString &targetId)
+{
+    if (!ensureLoaded()) return QString();
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || trimmed.size() > kListNameMaxLength)
+        { fail(QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength)); return QString(); }
+    if (!isValidListIcon(icon)) { fail(QStringLiteral("文件夹图标超出长度限制")); return QString(); }
+    const TaskList *source = findList(sourceId);
+    const TaskList *target = findList(targetId);
+    if (sourceId.isEmpty() || !source) { fail(QStringLiteral("源清单不存在")); return QString(); }
+    if (source->inbox) { fail(QStringLiteral("系统 inbox 不可移动")); return QString(); }
+    if (source->archivedAtUtcMs > 0) { fail(QStringLiteral("已归档清单不可移动")); return QString(); }
+    if (targetId.isEmpty() || !target) { fail(QStringLiteral("目标清单不存在")); return QString(); }
+    if (target->inbox) { fail(QStringLiteral("目标必须是普通清单")); return QString(); }
+    if (target->archivedAtUtcMs > 0) { fail(QStringLiteral("目标必须是未归档清单")); return QString(); }
+    if (!target->folderId.isEmpty()) { fail(QStringLiteral("目标必须是平铺清单")); return QString(); }
+    if (source->id == target->id) { fail(QStringLiteral("源清单与目标清单不能相同")); return QString(); }
+    const QString sourceFolderId = source->folderId;
+    const QDateTime now = utcNow();
+    Folder folder;
+    folder.id = newUuid(); folder.name = trimmed; folder.icon = icon;
+    folder.createdAt = now; folder.updatedAt = now;         // sortOrder 由混合序列分配
+    // 顶层混合序列（平铺清单 + 文件夹）在同一事务内整体规范化：
+    // 新文件夹精确占据 target 原来的 UI 位置；source 在顶层且位于 target 之前时先移除，位置前移一格。
+    QVector<TopLevelRow> full;
+    for (const TaskList &row : m_snapshot.lists)
+        if (row.folderId.isEmpty()) full.append(TopLevelRow{&row, nullptr});
+    for (const Folder &row : m_snapshot.folders) full.append(TopLevelRow{nullptr, &row});
+    std::sort(full.begin(), full.end(), topLevelLess);
+    int targetIndex = -1, sourceIndex = -1;
+    for (int i = 0; i < full.size(); ++i) {
+        if (full.at(i).list && full.at(i).list->id == targetId) targetIndex = i;
+        if (sourceFolderId.isEmpty() && full.at(i).list && full.at(i).list->id == sourceId) sourceIndex = i;
+    }
+    const int folderIndex = targetIndex - (sourceIndex >= 0 && sourceIndex < targetIndex ? 1 : 0);
+    QVector<TopLevelRow> merged;
+    for (int i = 0; i < full.size(); ++i) {
+        if (i == targetIndex || i == sourceIndex) continue;
+        merged.append(full.at(i));
+    }
+    merged.insert(folderIndex, TopLevelRow{nullptr, &folder});
+    EntityChanges changes;
+    for (int i = 0; i < merged.size(); ++i) {
+        const TopLevelRow &row = merged.at(i);
+        if (row.list) {
+            if (row.list->sortOrder == i) continue;          // 顶层清单 folderId 已空，位置未变就不写
+            TaskList value = *row.list;
+            value.sortOrder = i; value.updatedAt = now;
+            changes.groupSaves.append(value);
+        } else if (row.folder->id == folder.id) {
+            folder.sortOrder = i;                            // 新文件夹占位，循环外一次入队
+        } else if (row.folder->sortOrder != i) {
+            Folder value = *row.folder;
+            value.sortOrder = i; value.updatedAt = now;
+            changes.folderSaves.append(value);
+        }
+    }
+    changes.folderSaves.append(folder);                      // 新文件夹一次 INSERT，不重复保存
+    // 两清单进入新文件夹，保持原相对顺序（混合序列比较器口径）。
+    TaskList first = topLevelLess(TopLevelRow{source, nullptr}, TopLevelRow{target, nullptr}) ? *source : *target;
+    TaskList second = first.id == source->id ? *target : *source;
+    first.folderId = folder.id; first.sortOrder = 0; first.updatedAt = now;
+    second.folderId = folder.id; second.sortOrder = 1; second.updatedAt = now;
+    changes.groupSaves.append(first); changes.groupSaves.append(second);
+    // source 原来在文件夹里时，剩余清单规范化。
+    if (!sourceFolderId.isEmpty()) {
+        QVector<TaskList> remaining;
+        for (const TaskList &row : m_snapshot.lists) if (row.folderId == sourceFolderId && row.id != sourceId) remaining.append(row);
+        std::sort(remaining.begin(), remaining.end(), [](const TaskList &a, const TaskList &b) {
+            if (a.sortOrder != b.sortOrder) return a.sortOrder < b.sortOrder;
+            return a.id < b.id;
+        });
+        for (int i = 0; i < remaining.size(); ++i) {
+            if (remaining.at(i).sortOrder == i) continue;
+            TaskList row = remaining.at(i);
+            row.sortOrder = i; row.updatedAt = now;
+            changes.groupSaves.append(row);
+        }
+    }
+    return commit(&changes) ? folder.id : QString();
 }
 bool TaskStore::deleteFolder(const QString &id)
 {
@@ -814,8 +1093,9 @@ QString TaskStore::createList(const QString &name, const QString &folderId, Enti
     if (!isValidListIcon(icon)) { fail(QStringLiteral("清单图标超出长度限制")); return QString(); }
     if (!isValidListColor(color)) { fail(QStringLiteral("清单颜色必须为空或 #RRGGBB")); return QString(); }
     const QDateTime now = utcNow(); TaskList row; row.id = newUuid(); row.folderId = folderId; row.kind = kind;
-    row.name = trimmed; row.icon = icon; row.color = color; row.createdAt = now; row.updatedAt = now;
-    // 名称+folder+kind+icon+color 在同一事务内创建，UI 无需 create 后二次 saveList。
+    row.name = trimmed; row.icon = icon; row.color = color; row.sortOrder = nextListSortOrder(folderId);
+    row.createdAt = now; row.updatedAt = now;
+    // 名称+folder+kind+icon+color+容器尾部 sortOrder 在同一事务内创建，UI 无需 create 后二次 saveList。
     EntityChanges changes; changes.groupSaves.append(row); return commit(&changes) ? row.id : QString();
 }
 bool TaskStore::renameList(const QString &id, const QString &name)
@@ -828,15 +1108,8 @@ bool TaskStore::renameList(const QString &id, const QString &name)
 }
 bool TaskStore::setListFolder(const QString &id, const QString &folderId)
 {
-    if (!ensureLoaded()) return false;
-    if (!hasFolder(folderId)) return fail(QStringLiteral("文件夹不存在"));
-    for (TaskList row : m_snapshot.lists) if (row.id == id) {
-        if (row.inbox) return fail(QStringLiteral("系统 inbox 不可归入其他文件夹"));
-        if (row.folderId == folderId) { m_lastError.clear(); return true; }
-        row.folderId = folderId; row.updatedAt = utcNow();
-        EntityChanges changes; changes.groupSaves.append(row); return commit(&changes);
-    }
-    return fail(QStringLiteral("清单不存在"));
+    // 转调 moveList：进入目标容器即分配容器末尾顺序，不保留可能与既有行碰撞的旧 sortOrder。
+    return moveList(id, folderId);
 }
 bool TaskStore::deleteList(const QString &id)
 {
@@ -938,6 +1211,71 @@ bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
         ++postponed;
     }
     if (postponed == 0) { m_lastError.clear(); return true; }
+    return commit(&changes);
+}
+bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
+                                  const QString &targetSection, const QDate &targetDate,
+                                  bool pinned, bool detachParent, bool adjustDate)
+{
+    if (!ensureLoaded()) return false;
+    // orderedIds 逐 ID 从当前快照重读：不存在、重复或缺 source 整批拒绝，不落任何写入。
+    if (sourceId.isEmpty() || orderedIds.isEmpty()) return fail(QStringLiteral("目标段顺序不能为空"));
+    QSet<QString> seen;
+    bool hasSource = false;
+    for (const QString &id : orderedIds) {
+        if (id.isEmpty() || !find(id)) return fail(QStringLiteral("目标段任务不存在"));
+        if (seen.contains(id)) return fail(QStringLiteral("目标段任务重复"));
+        seen.insert(id);
+        if (id == sourceId) hasSource = true;
+    }
+    if (!hasSource) return fail(QStringLiteral("目标段必须包含拖动任务"));
+    // 只有真正跨时间分区才改期；同段排序的 targetDate 为空，保留段内其他合法日期。
+    const QDate today = toAppTime(appNow()).date();
+    const bool timeSection = TaskDrop::isTimeSection(targetSection);
+    if (timeSection && adjustDate) {
+        if (!today.isValid() || !targetDate.isValid()
+            || TaskDrop::dateForSection(targetSection, today) != targetDate)
+            return fail(QStringLiteral("目标日期与时间分区不一致"));
+    } else if (targetDate.isValid()) {
+        return fail(QStringLiteral("非改期拖动不能指定目标日期"));
+    }
+    if (targetSection == QStringLiteral("pinned") && !pinned)
+        return fail(QStringLiteral("置顶分区的目标必须保持置顶"));
+
+    const QDateTime now = utcNow();
+    EntityChanges changes;
+    bool changed = false;
+    for (int i = 0; i < orderedIds.size(); ++i) {
+        const QString &id = orderedIds.at(i);
+        const StoredEntity *stored = find(id);                  // 上面已校验存在
+        Entity value = stored->entity;                          // 快照 StoredEntity，非陈旧草稿
+        bool rowChanged = value.sortOrder != i;
+        if (id == sourceId) {
+            if (pinned && !value.pinnedAt.isValid()) value.pinnedAt = now;   // 新置顶取当前时刻
+            else if (!pinned && value.pinnedAt.isValid()) value.pinnedAt = QDateTime();   // 已置顶保持原值
+            if (detachParent && !value.parentId.isEmpty()) value.parentId.clear();
+            if (timeSection && adjustDate) {
+                const QDate from = effectiveDate(value);
+                if (!from.isValid()) return fail(QStringLiteral("无有效日期的任务不能拖入时间分区"));
+                const qint64 days = from.daysTo(targetDate);     // 同段重排时 days==0，日期不动
+                const auto shiftDate = [days](const QDateTime &when) {
+                    if (!when.isValid()) return QDateTime();
+                    return fromAppTime(toAppTime(when).addDays(days));
+                };
+                if (value.allDayDate.isValid()) value.allDayDate = value.allDayDate.addDays(days);
+                if (value.dueAt.isValid()) value.dueAt = shiftDate(value.dueAt);
+                if (value.startAt.isValid()) value.startAt = shiftDate(value.startAt);
+            }
+            rowChanged = rowChanged || value.pinnedAt != stored->entity.pinnedAt
+                || value.parentId != stored->entity.parentId || value.allDayDate != stored->entity.allDayDate
+                || value.startAt != stored->entity.startAt || value.dueAt != stored->entity.dueAt;
+        }
+        if (!rowChanged) continue;                               // 位置与内容都未变就不写
+        value.sortOrder = i;
+        if (!prepareSave(value, &changes)) return false;         // 单事务，失败无部分成功
+        changed = true;
+    }
+    if (!changed) { m_lastError.clear(); return true; }          // 幂等：无实际变化零写入
     return commit(&changes);
 }
 QString TaskStore::createSection(const QString &listId, const QString &name)

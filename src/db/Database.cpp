@@ -12,6 +12,7 @@ namespace {
 const char *const kSchema[] = {
     "CREATE TABLE folders("
     "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),"
+    "icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16),"
     "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
     "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
     "CREATE TABLE lists("
@@ -174,8 +175,10 @@ bool Database::openAt(const QString &path, QString *error)
                     failure = QStringLiteral("不是受支持的 KylinList 数据库；application_id 不匹配，拒绝迁移或改写旧数据");
                 } else if (version == 5) {
                     if (!applyPragmas(&failure) || !migrateFromV5(&failure)) {}
+                } else if (version == 6) {
+                    if (!applyPragmas(&failure) || !migrateFromV6(&failure)) {}
                 } else if (version != schemaVersion()) {
-                    failure = QStringLiteral("不是受支持的 KylinList 数据库；仅接受 v6（v5 可自动升级），拒绝改写旧数据");
+                    failure = QStringLiteral("不是受支持的 KylinList 数据库；仅接受 v7（v5/v6 可自动升级），拒绝改写旧数据");
                 } else if (!applyPragmas(&failure)) {}
             }
         }
@@ -212,7 +215,7 @@ bool Database::initializeSchema(QString *error)
     if (!database.transaction()) return fail(QStringLiteral("开始初始化 schema 失败: ") + database.lastError().text(), error);
     QString failure;
     for (const char *sql : kSchema) {
-        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v6 schema 失败: ") + query.lastError().text(); break; }
+        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v7 schema 失败: ") + query.lastError().text(); break; }
     }
     const QString inboxId = newUuid(), now = QString::number(utcMs(utcNow()));
     if (failure.isEmpty()) {
@@ -233,7 +236,7 @@ bool Database::initializeSchema(QString *error)
         }
     }
     QSqlQuery versions(database);
-    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=6"))
+    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=7"))
                               || !versions.exec(QStringLiteral("PRAGMA application_id=%1").arg(applicationId()))))
         failure = QStringLiteral("写入数据库标识失败: ") + versions.lastError().text();
     QSqlQuery foreign(database);
@@ -244,31 +247,58 @@ bool Database::initializeSchema(QString *error)
     return true;
 }
 
-// v5 -> v6：单事务内给 lists 补 icon/color/archived_at_utc_ms 三列与收集箱归档保护触发器。
+// v5 -> v7：单事务内给 lists 补 icon/color/archived_at_utc_ms 三列与收集箱归档保护触发器，
+// 再给 folders 补 icon 列（等价于先升 v6 再升 v7，但只落一次版本号）。
 // 旧数据默认无图标、无颜色、未归档；其余表、行与凭证原样保留，失败整体回滚并拒绝打开。
 bool Database::migrateFromV5(QString *error)
 {
     QSqlDatabase database = connection();
-    if (!database.transaction()) return fail(QStringLiteral("开始 v5→v6 升级事务失败: ") + database.lastError().text(), error);
+    if (!database.transaction()) return fail(QStringLiteral("开始 v5→v7 升级事务失败: ") + database.lastError().text(), error);
     const char *const steps[] = {
         "ALTER TABLE lists ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)",
         "ALTER TABLE lists ADD COLUMN color TEXT NOT NULL DEFAULT '' CHECK(color='' OR color GLOB "
             "'#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]')",
         "ALTER TABLE lists ADD COLUMN archived_at_utc_ms INTEGER NOT NULL DEFAULT 0 CHECK(archived_at_utc_ms>=0)",
         "CREATE TRIGGER prevent_inbox_archive BEFORE UPDATE OF archived_at_utc_ms ON lists "
-            "WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END"
+            "WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
+        "ALTER TABLE folders ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)"
     };
     QString failure;
     for (const char *sql : steps) {
         QSqlQuery query(database);
-        if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("v5→v6 升级失败: ") + query.lastError().text(); break; }
+        if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("v5→v7 升级失败: ") + query.lastError().text(); break; }
     }
     QSqlQuery foreign(database);
     if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next()))
-        failure = QStringLiteral("v5→v6 升级外键检查失败");
+        failure = QStringLiteral("v5→v7 升级外键检查失败");
     QSqlQuery versions(database);
-    if (failure.isEmpty() && !versions.exec(QStringLiteral("PRAGMA user_version=6")))
-        failure = QStringLiteral("v5→v6 升级写入版本失败: ") + versions.lastError().text();
+    if (failure.isEmpty() && !versions.exec(QStringLiteral("PRAGMA user_version=7")))
+        failure = QStringLiteral("v5→v7 升级写入版本失败");
+    if (!failure.isEmpty() || !database.commit()) {
+        if (failure.isEmpty()) failure = database.lastError().text();
+        database.rollback(); return fail(failure, error);
+    }
+    return true;
+}
+
+// v6 -> v7：单事务内给 folders 补 icon 列；旧文件夹默认无图标，
+// 其余表、行与凭证原样保留，失败整体回滚并拒绝打开。
+bool Database::migrateFromV6(QString *error)
+{
+    QSqlDatabase database = connection();
+    if (!database.transaction()) return fail(QStringLiteral("开始 v6→v7 升级事务失败: ") + database.lastError().text(), error);
+    QString failure;
+    {
+        QSqlQuery query(database);
+        if (!query.exec(QStringLiteral("ALTER TABLE folders ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)")))
+            failure = QStringLiteral("v6→v7 升级失败: ") + query.lastError().text();
+    }
+    QSqlQuery foreign(database);
+    if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next()))
+        failure = QStringLiteral("v6→v7 升级外键检查失败");
+    QSqlQuery versions(database);
+    if (failure.isEmpty() && !versions.exec(QStringLiteral("PRAGMA user_version=7")))
+        failure = QStringLiteral("v6→v7 升级写入版本失败");
     if (!failure.isEmpty() || !database.commit()) {
         if (failure.isEmpty()) failure = database.lastError().text();
         database.rollback(); return fail(failure, error);

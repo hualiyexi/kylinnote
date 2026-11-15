@@ -45,9 +45,12 @@ inline TaskStatus taskStatusFromName(const QString &name)
     return TaskStatus::Active;
 }
 
+// 文件夹外观的写入口径与清单一致：name trim 后 1..64；icon 复用清单图标校验
+// （空 = 默认文件夹图标，否则 emoji 文本 ≤16 个 UTF-16 码元，拒绝控制字符）。
 struct Folder {
     QString id;
     QString name;
+    QString icon;
     int sortOrder = 0;
     QDateTime createdAt;
     QDateTime updatedAt;
