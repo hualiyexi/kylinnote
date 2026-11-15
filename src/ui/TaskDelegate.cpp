@@ -130,13 +130,19 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         p->setFont(titleFont);
         p->setPen(AppStyle::color(Color::Muted));
         const QString title = i.data().toString();
-        p->drawText(QRect(row.left() + 16, row.top(), row.width() - 90, row.height()),
+        qreal textLeft = row.left() + 16.0;
+        if (i.data(TaskListModel::SectionKeyRole).toString() == QLatin1String("pinned")) {
+            const QRectF icon(row.left() + 15.0, row.center().y() - 8.0, 16.0, 16.0);
+            AppIcons::paint(p, IconId::PinSection, icon, AppStyle::color(Color::Star));
+            textLeft = icon.right() + 6.0;
+        }
+        p->drawText(QRectF(textLeft, row.top(), qMax(0.0, row.width() - textLeft), row.height()),
                     Qt::AlignLeft | Qt::AlignVCenter, title);
         const int count = i.data(TaskListModel::HeaderEntityIdsRole).toStringList().size();
         if (count > 0) {
             const int titleWidth = p->fontMetrics().horizontalAdvance(title);
             p->setPen(AppStyle::color(Color::Faint));
-            p->drawText(QRect(row.left() + 24 + titleWidth, row.top(), 36, row.height()),
+            p->drawText(QRectF(textLeft + titleWidth + 8.0, row.top(), 36, row.height()),
                         Qt::AlignLeft | Qt::AlignVCenter, QString::number(count));
         }
         if (!i.data(TaskListModel::HeaderActionRole).toString().isEmpty()) {

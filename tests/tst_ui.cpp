@@ -2145,6 +2145,52 @@ private slots:
                 different = withGlyph.pixel(x, y) != withoutGlyph.pixel(x, y);
         QVERIFY(different);
     }
+    void pinnedSectionHeaderShowsPinIcon() {
+        const QString id = m_store->createTask(QStringLiteral("置顶任务"));
+        Entity task = m_store->entity(id);
+        task.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(task));
+        QVERIFY(m_store->setPinnedAt(id, appNow()));
+
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(navigation && view && model);
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (navigation->item(row)->data(Qt::UserRole).toInt()
+                == static_cast<int>(ViewScope::Today)) {
+                navigation->setCurrentRow(row);
+                break;
+            }
+        }
+        QTRY_COMPARE(model->filter().scope, ViewScope::Today);
+        QModelIndex header;
+        for (int row = 0; row < model->rowCount(); ++row) {
+            const QModelIndex index = model->index(row, 0);
+            if (model->data(index, TaskListModel::HeaderRole).toBool()
+                && model->data(index, TaskListModel::SectionKeyRole).toString()
+                       == QStringLiteral("pinned")) header = index;
+        }
+        QVERIFY(header.isValid());
+        view->scrollTo(header);
+        QApplication::processEvents();
+        const QRect rowRect = view->visualRect(header);
+        QVERIFY(rowRect.isValid());
+        const QImage image = view->viewport()->grab().toImage();
+        const qreal dpr = image.devicePixelRatio();
+        const QRectF icon(rowRect.left() + 15.0, rowRect.center().y() - 8.0, 16.0, 16.0);
+        int orangePixels = 0;
+        for (int y = qFloor(icon.top() * dpr); y <= qCeil(icon.bottom() * dpr); ++y) {
+            for (int x = qFloor(icon.left() * dpr); x <= qCeil(icon.right() * dpr); ++x) {
+                if (!image.rect().contains(x, y)) continue;
+                const QColor pixel = image.pixelColor(x, y);
+                if (pixel.red() > 200 && pixel.green() > 100 && pixel.green() < 220
+                    && pixel.blue() < 90) ++orangePixels;
+            }
+        }
+        QVERIFY2(orangePixels > 20, qPrintable(QStringLiteral("pin icon pixels: %1").arg(orangePixels)));
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,
