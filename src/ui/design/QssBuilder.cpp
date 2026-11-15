@@ -47,7 +47,7 @@ QString buildStyleSheet(Theme theme) {
         "QLabel[muted=\"true\"]{color:%4;}"
         "QLabel[section=\"true\"]{color:%5;font-weight:600;padding-top:10px;}"
         "QPushButton,QToolButton{background:transparent;border:1px solid transparent;"
-        "border-radius:6px;padding:5px 12px;color:%1;}"
+        "border-radius:8px;padding:5px 12px;color:%1;}"
         "QPushButton:hover,QToolButton:hover{background:%6;}"
         "QPushButton:pressed,QToolButton:pressed{background:%7;}"
         "QPushButton:focus,QToolButton:focus{border:1px solid %8;}"
@@ -61,7 +61,7 @@ QString buildStyleSheet(Theme theme) {
         "QPushButton[quiet=\"true\"]{color:%5;text-align:left;padding:7px 10px;}"
         "QPushButton[quiet=\"true\"]:hover{background:%12;color:%1;}"
         "QLineEdit,QDateTimeEdit,QComboBox,QSpinBox{background:%13;border:1px solid transparent;"
-        "border-radius:6px;padding:6px 10px;selection-background-color:%14;selection-color:%1;}"
+        "border-radius:8px;padding:6px 10px;selection-background-color:%14;selection-color:%1;}"
         "QLineEdit:hover,QDateTimeEdit:hover,QComboBox:hover,QSpinBox:hover{background:%15;}"
         "QLineEdit:focus,QDateTimeEdit:focus,QComboBox:focus,QSpinBox:focus{background:%16;"
         "border:1px solid %8;}"
@@ -186,8 +186,8 @@ QString buildStyleSheet(Theme theme) {
             "QFrame#ListPane,QFrame#ListHeader{background:%1;border:0;}"
             "QFrame#DetailFrame{background:%1;border:0;}"
             "QWidget#TaskDetailWidget{background:transparent;}"
-            "QFrame#QuickAddFrame{background:%1;border:1px solid %3;border-radius:7px;}"
-            "QFrame#QuickAddFrame:focus-within{border:1px solid %5;}"
+            "QFrame#QuickAddFrame{background:%10;border:0;border-radius:10px;}"
+            "QFrame#QuickAddFrame:focus-within{background:%10;border:0;}"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd,"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd:hover,"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd:focus{background:transparent;border:0;padding:0;}"
@@ -205,7 +205,7 @@ QString buildStyleSheet(Theme theme) {
             "QFrame#ToastIsland{background:transparent;border:0;}")
             .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
             .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar)
-            .arg(menuBg);
+            .arg(menuBg).arg(field);
 }
 
 QString buildPreviewCss(Theme theme) {

@@ -1429,7 +1429,9 @@ private slots:
         auto* model = qobject_cast<TaskListModel*>(panel.findChild<QListView*>(QStringLiteral("TaskList"))->model());
         QCOMPARE(model->filter().scope, ViewScope::List);
         QCOMPARE(model->filter().listId, noteList);
-        QVERIFY(quick->placeholderText().contains(QStringLiteral("笔记"))); QVERIFY(!renderer->isEnabled());
+        QVERIFY(quick->placeholderText().contains(QStringLiteral("笔记")));
+        QVERIFY(quick->placeholderText().contains(QStringLiteral("笔记清单")));
+        QVERIFY(!renderer->isEnabled());
         quick->setText(QStringLiteral("默认新建笔记")); QTest::keyClick(quick, Qt::Key_Return);
         QString noteId;
         for (const Entity& entity : m_store->entities()) if (entity.title == QStringLiteral("默认新建笔记")) noteId = entity.id;
@@ -1447,6 +1449,7 @@ private slots:
         QVERIFY(detail->findChild<QWidget*>(QStringLiteral("TaskAppearanceHost"))->isHidden());
         QCOMPARE(detail->findChild<QPushButton*>(QStringLiteral("ConvertKind"))->text(), QStringLiteral("转为任务"));
         navigation->setCurrentRow(todayRow); QVERIFY(renderer->isEnabled());
+        QVERIFY(quick->placeholderText().contains(QStringLiteral("收集箱")));
         renderer->setCurrentIndex(static_cast<int>(ViewRenderer::Time));
         QCOMPARE(model->filter().renderer, ViewRenderer::Time);
         navigation->setCurrentRow(allRow);
@@ -1831,6 +1834,56 @@ private slots:
         QVERIFY(m_store->trashTask(dated));
         QTRY_VERIFY(rowFor(ViewScope::Today) < 0);
     }
+    void listEmojiGlyphPainting() {
+        TaskList appearance;
+        appearance.name = QStringLiteral("工作");
+        appearance.icon = QStringLiteral("🏛️");
+        for (const int size : {14, 16, 18, 20}) {
+            QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            painter.setPen(Qt::NoPen);
+            ListAppearance::paint(&painter, appearance, QRectF(0, 0, size, size),
+                                  QColor(QStringLiteral("#526575")));
+            painter.end();
+            int paintedPixels = 0;
+            for (int y = 0; y < size; ++y) {
+                for (int x = 0; x < size; ++x) {
+                    if (qAlpha(image.pixel(x, y)) != 0) ++paintedPixels;
+                    if (x == 0 || y == 0 || x == size - 1 || y == size - 1)
+                        QCOMPARE(qAlpha(image.pixel(x, y)), 0);
+                }
+            }
+            QVERIFY2(paintedPixels > 4, qPrintable(QStringLiteral("emoji size %1 was not painted").arg(size)));
+        }
+
+        QListWidget navigation;
+        auto* item = new QListWidgetItem(QStringLiteral("工作"), &navigation);
+        item->setData(NavigationDelegate::IconNameRole, appearance.icon);
+        item->setData(NavigationDelegate::ListColorRole, QStringLiteral("#4CA1FF"));
+        const QModelIndex index = navigation.model()->index(0, 0);
+        NavigationDelegate delegate;
+        const auto render = [&delegate, &index](const QImage& initial) {
+            QImage image = initial;
+            QPainter painter(&image);
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, 0, 220, 36);
+            option.state = QStyle::State_Enabled | QStyle::State_Selected;
+            delegate.paint(&painter, option, index);
+            painter.end();
+            return image;
+        };
+        QImage blank(220, 36, QImage::Format_ARGB32_Premultiplied);
+        blank.fill(Qt::transparent);
+        const QImage withGlyph = render(blank);
+        item->setData(NavigationDelegate::IconNameRole, QString());
+        const QImage withoutGlyph = render(blank);
+        bool different = false;
+        for (int y = 8; y < 28 && !different; ++y)
+            for (int x = 22; x < 42 && !different; ++x)
+                different = withGlyph.pixel(x, y) != withoutGlyph.pixel(x, y);
+        QVERIFY(different);
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,
@@ -1932,8 +1985,10 @@ private slots:
         painter.end();
         for (int y = 0; y < 80; ++y) {
             const QColor expected = colors[y < 40 ? 0 : 1];
-            for (int x = 0; x < 3; ++x)
+            for (int x = 16; x < 19; ++x)
                 QCOMPARE(QColor::fromRgba(rows.pixel(x, y)), expected);
+            for (int x = 0; x < 16; ++x)
+                QVERIFY(QColor::fromRgba(rows.pixel(x, y)) != expected);
         }
         const QString screenshotDir = qEnvironmentVariable("KYLINLIST_SCREENSHOT_DIR");
         if (!screenshotDir.isEmpty()) {

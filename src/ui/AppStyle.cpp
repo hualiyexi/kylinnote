@@ -50,8 +50,8 @@ int metric(Metric role) {
         case Metric::ControlHeight: return 36;
         case Metric::TaskRowHeight: return 40;
         case Metric::NavRowHeight: return 36;    // 考据 36px
-        case Metric::RadiusRow: return 8;        // 考据悬停菜单项 8px
-        case Metric::RadiusControl: return 6;
+        case Metric::RadiusRow: return 10;       // 任务行悬浮背景与参考一致
+        case Metric::RadiusControl: return 8;
         case Metric::Hairline: return 1;
     }
     return 0;

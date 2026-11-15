@@ -18,15 +18,15 @@ namespace {
 using AppStyle::Color;
 using AppStyle::Metric;
 
-QRectF checkBoxRect(const QRect& row) {
-    return QRectF(row.left() + 16.0, row.center().y() - 8.0, 16.0, 16.0);
-}
-
 QRectF headerActionRect(const QRect& row) {
     return QRectF(row.right() - 58.0, row.center().y() - 13.0, 46.0, 26.0);
 }
 
 struct TaskLayout {
+    QRectF background;
+    QRectF colorBar;
+    QRectF dragHandle;
+    QRectF checkBox;
     QRectF title;
     QRectF list;
     QRectF date;
@@ -36,13 +36,21 @@ struct TaskLayout {
 TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& index) {
     const QRectF row = option.rect;
     const QFontMetrics smallMetrics(AppStyle::font(AppStyle::Font::Small));
+    const int depth = qMax(0, index.data(TaskListModel::DepthRole).toInt());
+    const qreal indent = depth * 24.0;
     const bool pinned = index.data(TaskListModel::PinnedRole).toBool();
     const bool deleted = index.data(TaskListModel::DeletedRole).toBool();
     const QString listName = index.data(TaskListModel::ListNameRole).toString();
     const QString date = index.data(TaskListModel::ScheduleRole).toString();
 
     TaskLayout layout;
-    const qreal left = row.left() + 44.0;
+    // 色条不随父子层级移动；拖动柄和悬浮背景在子任务中整体缩进一级。
+    layout.colorBar = QRectF(row.left() + 16.0, row.top(), 3.0, row.height());
+    layout.dragHandle = QRectF(row.left() + 5.0 + indent, row.center().y() - 6.0, 12.0, 12.0);
+    layout.background = QRectF(row.left() + 20.0 + indent, row.top(),
+                               qMax(0.0, row.width() - 38.0 - indent), row.height());
+    layout.checkBox = QRectF(row.left() + 34.0 + indent, row.center().y() - 8.0, 16.0, 16.0);
+    const qreal left = row.left() + 58.0 + indent;
     const qreal titleFloor = qMin(160.0, qMax(0.0, row.width() - 56.0) * 0.5);
     const qreal metadataWidth = qMax(0.0, row.width() - 56.0 - titleFloor - (pinned ? 24.0 : 0.0));
     qreal right = row.right() - 12.0;
@@ -144,7 +152,8 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     const bool overdue = i.data(TaskListModel::OverdueRole).toBool();
     const int priority = i.data(TaskListModel::PriorityRole).toInt();
     const QRect row = o.rect;
-    const QRectF background = QRectF(row).adjusted(2.0, 2.0, -2.0, -2.0);
+    const TaskLayout layout = taskLayout(o, i);
+    const QRectF background = layout.background;
     const qreal radius = AppStyle::metric(Metric::RadiusRow);
 
     if (selected || hovered) {
@@ -153,17 +162,17 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         p->drawRoundedRect(background, radius, radius);
     } else {
         p->setPen(QPen(AppStyle::color(Color::Separator), 1.0));
-        p->drawLine(QPointF(row.left() + 44.0, row.bottom() - 0.5),
+        p->drawLine(QPointF(layout.title.left(), row.bottom() - 0.5),
                     QPointF(row.right() - 14.0, row.bottom() - 0.5));
     }
 
     const QColor listColor(i.data(TaskListModel::ListColorRole).toString());
-    if (!deleted && listColor.isValid()) {
-        // 清单色是实体列的连续左边框，不是悬浮在行内的小圆角标记。
-        p->fillRect(QRect(row.left(), row.top(), 3, row.height()), listColor);
-    }
+    if (!deleted && listColor.isValid())
+        p->fillRect(layout.colorBar.toAlignedRect(), listColor);
+    if (hovered && !deleted)
+        AppIcons::paint(p, QStringLiteral("drag"), layout.dragHandle, AppStyle::color(Color::Faint));
 
-    const QRectF box = checkBoxRect(row);
+    const QRectF box = layout.checkBox;
     if (kind == EntityKind::Note) {
         AppIcons::paint(p, IconId::Note, box, AppStyle::color(Color::Muted));
     } else if (completed) {
@@ -179,7 +188,6 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
                         box, ThemeManager::instance().color(token));
     }
 
-    const TaskLayout layout = taskLayout(o, i);
     QFont titleFont = AppStyle::font(AppStyle::Font::Body);
     titleFont.setStrikeOut(completed);
     p->setFont(titleFont);
@@ -289,7 +297,7 @@ bool TaskDelegate::editorEvent(QEvent* event,
     bool toggle = false;
     if (event->type() == QEvent::MouseButtonRelease) {
         auto* mouse = static_cast<QMouseEvent*>(event);
-        const QRectF box = checkBoxRect(option.rect);
+        const QRectF box = taskLayout(option, index).checkBox;
         toggle = mouse->button() == Qt::LeftButton &&
                  QRectF(box.center().x() - 15.0, box.center().y() - 15.0, 30.0, 30.0)
                      .contains(mouse->pos());

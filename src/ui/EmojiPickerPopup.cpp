@@ -2,7 +2,6 @@
 
 #include <QAction>
 #include <QGraphicsDropShadowEffect>
-#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -37,18 +36,7 @@ class EmojiCellButton : public QToolButton {
 public:
     explicit EmojiCellButton(const QString& emoji, QWidget* parent) : QToolButton(parent) {
         setText(emoji);
-        QFont font = ds::qfont(ds::FontScene::Body);
-        QFontDatabase database;
-        const QStringList available = database.families();
-        for (const QString& family : {QStringLiteral("Segoe UI Emoji"),
-                                      QStringLiteral("Noto Color Emoji"),
-                                      QStringLiteral("Apple Color Emoji"),
-                                      QStringLiteral("Twemoji Mozilla")}) {
-            if (available.contains(family)) {
-                font.setFamily(family);
-                break;
-            }
-        }
+        QFont font = ds::emojiFont();
         font.setPixelSize(19);
         setFont(font);
     }

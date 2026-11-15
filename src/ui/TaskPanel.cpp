@@ -371,7 +371,7 @@ void TaskPanel::buildUi() {
     center->addWidget(listHeader);
 
     auto* content = new QVBoxLayout;
-    content->setContentsMargins(22, 16, 22, 12);
+    content->setContentsMargins(0, 16, 0, 12);
     content->setSpacing(12);
     center->addLayout(content, 1);
 
@@ -403,7 +403,10 @@ void TaskPanel::buildUi() {
     add->hide();
     connect(add, &QPushButton::clicked, this, &TaskPanel::createTask);
     connect(m_quick, &QLineEdit::returnPressed, this, &TaskPanel::createTask);
-    content->addWidget(quickFrame);
+    auto* quickRow = new QHBoxLayout;
+    quickRow->setContentsMargins(22, 0, 22, 0);
+    quickRow->addWidget(quickFrame);
+    content->addLayout(quickRow);
 
     m_search = new QLineEdit(m_middle);
     m_search->setObjectName(QStringLiteral("TaskSearch"));
@@ -412,7 +415,10 @@ void TaskPanel::buildUi() {
     m_search->setFixedHeight(AppStyle::metric(AppStyle::Metric::ControlHeight));
     m_search->setAccessibleName(QStringLiteral("搜索任务与笔记"));
     m_search->hide();
-    content->addWidget(m_search);
+    auto* searchRow = new QHBoxLayout;
+    searchRow->setContentsMargins(22, 0, 22, 0);
+    searchRow->addWidget(m_search);
+    content->addLayout(searchRow);
 
     m_model = new TaskListModel(m_store, this);
     m_list = new QListView(m_middle);
@@ -453,6 +459,7 @@ void TaskPanel::buildUi() {
     m_empty->setProperty("muted", true);
     m_empty->setWordWrap(true);
     m_empty->setAlignment(Qt::AlignCenter);
+    m_empty->setContentsMargins(22, 0, 22, 0);
     m_listStack = new QStackedWidget(m_middle);
     m_listStack->addWidget(m_list);
     m_listStack->addWidget(m_empty);
@@ -818,6 +825,7 @@ void TaskPanel::rebuildNavigation() {
     m_navigation->setCurrentRow(selected ? m_navigation->row(selected) : -1);
     m_rebuilding = false;
     if (resetFilter) applyFilter();
+    updateQuickAddKind();
     updateHeadingAppearance();
     m_count->setText(m_model->entityCount() > 0 ? QString::number(m_model->entityCount()) : QString());
     m_listStack->setCurrentWidget(m_model->entityCount() == 0
@@ -860,16 +868,23 @@ void TaskPanel::updateHeadingAppearance() {
 }
 
 void TaskPanel::updateQuickAddKind() {
-    EntityKind kind = EntityKind::Task;
-    if (m_filter.scope == ViewScope::List)
+    TaskList target;
+    if (m_filter.scope == ViewScope::List) {
         for (const TaskList& list : m_store->lists())
-            if (list.id == m_filter.listId) kind = list.kind;
+            if (list.id == m_filter.listId) target = list;
+    } else {
+        for (const TaskList& list : m_store->lists())
+            if (list.inbox) target = list;
+    }
+    const EntityKind kind = target.id.isEmpty() ? EntityKind::Task : target.kind;
+    const QString prefix = target.icon.isEmpty() ? QString() : target.icon + QLatin1Char(' ');
+    const QString targetName = target.name.isEmpty() ? QString() : prefix + target.name;
+    const QString action = kind == EntityKind::Note ? QStringLiteral("添加笔记") : QStringLiteral("添加任务");
+    const QString placeholder = targetName.isEmpty() ? action
+        : QStringLiteral("%1至“%2”").arg(action, targetName);
     m_quickKind->setPixmap(AppIcons::icon(IconId::Add, ds::ColorToken::TextTertiary, 18).pixmap(18, 18));
-    m_quick->setPlaceholderText(kind == EntityKind::Note
-        ? QStringLiteral("添加笔记")
-        : QStringLiteral("添加任务"));
-    m_quick->setAccessibleName(kind == EntityKind::Note
-        ? QStringLiteral("快速添加笔记") : QStringLiteral("快速添加任务"));
+    m_quick->setPlaceholderText(placeholder);
+    m_quick->setAccessibleName(placeholder);
 }
 
 void TaskPanel::createTask() {
@@ -1206,8 +1221,7 @@ void TaskPanel::refreshWorkspaceIcons() {
         m_quickDate->setText(QStringLiteral("今天"));
         m_quickDate->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     }
-    if (auto* icon = findChild<QLabel*>(QStringLiteral("ListHeadingIcon")))
-        icon->setPixmap(AppIcons::icon(IconId::TaskList, ds::ColorToken::Text, 18).pixmap(18, 18));
+    updateHeadingAppearance();
 }
 
 void TaskPanel::selectNavigation(ViewScope scope, const QString& listId) {

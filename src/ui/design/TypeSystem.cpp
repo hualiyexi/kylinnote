@@ -95,5 +95,20 @@ QFont qfont(FontScene scene) {
     return f;
 }
 
+QFont emojiFont() {
+    QFont font = qfont(FontScene::Body);
+    const QStringList available = QFontDatabase().families();
+    for (const QString& family : {QStringLiteral("Segoe UI Emoji"),
+                                  QStringLiteral("Noto Color Emoji"),
+                                  QStringLiteral("Apple Color Emoji"),
+                                  QStringLiteral("Twemoji Mozilla")}) {
+        if (available.contains(family)) {
+            font.setFamily(family);
+            break;
+        }
+    }
+    return font;
+}
+
 }  // namespace ds
 }  // namespace kl

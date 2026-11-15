@@ -38,6 +38,8 @@ enum class FontScene : int {
 QFont qfont(FontScene scene);
 // 字体族回退链（Microsoft YaHei UI → … → 系统默认）。
 QStringList fontFamilies();
+// 清单与文件夹的彩色字形共用字体；调用方按实际绘制框设置 pixelSize。
+QFont emojiFont();
 
 }  // namespace ds
 }  // namespace kl

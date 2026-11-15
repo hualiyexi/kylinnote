@@ -27,7 +27,8 @@ public:
         ScheduleTooltipRole,
         SectionKeyRole,
         HeaderActionRole,
-        HeaderEntityIdsRole
+        HeaderEntityIdsRole,
+        DepthRole
     };
     explicit TaskListModel(TaskStore* store, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
