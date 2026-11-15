@@ -31,6 +31,7 @@ enum class FontScene : int {
     Caption,    // 辅助/计数
     Mono,       // 等宽/代码
     DetailTitle,// 与正文融为一体的实体标题
+    ListSection,// 第三列清单内分区标题（14px / 600）
     Count
 };
 

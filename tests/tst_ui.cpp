@@ -2191,6 +2191,61 @@ private slots:
         }
         QVERIFY2(orangePixels > 20, qPrintable(QStringLiteral("pin icon pixels: %1").arg(orangePixels)));
     }
+    void sectionHeadersShareTypography() {
+        const QDate today = toAppTime(appNow()).date();
+        const auto makeDatedTask = [this](const QString& title, const QDate& date) {
+            const QString id = m_store->createTask(title);
+            Entity entity = m_store->entity(id);
+            entity.allDayDate = date;
+            if (!m_store->saveTask(entity)) return QString();
+            return id;
+        };
+        const QString pinnedId = makeDatedTask(QStringLiteral("置顶标题"), today);
+        QVERIFY(!pinnedId.isEmpty());
+        QVERIFY(m_store->setPinnedAt(pinnedId, appNow()));
+        QVERIFY(!makeDatedTask(QStringLiteral("过期标题"), today.addDays(-1)).isEmpty());
+        QVERIFY(!makeDatedTask(QStringLiteral("今天标题"), today).isEmpty());
+
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(navigation && view && model);
+        for (int row = 0; row < navigation->count(); ++row) {
+            if (navigation->item(row)->data(Qt::UserRole).toInt()
+                == static_cast<int>(ViewScope::Today)) {
+                navigation->setCurrentRow(row);
+                break;
+            }
+        }
+        QTRY_COMPARE(model->filter().scope, ViewScope::Today);
+        QVERIFY(model->rowCount() >= 3);
+        const QImage image = view->viewport()->grab().toImage();
+        const qreal dpr = image.devicePixelRatio();
+        QVector<int> heights;
+        for (int row = 0; row < model->rowCount(); ++row) {
+            const QModelIndex index = model->index(row, 0);
+            if (!model->data(index, TaskListModel::HeaderRole).toBool()) continue;
+            const QRect rowRect = view->visualRect(index);
+            int top = rowRect.bottom() + 1, bottom = rowRect.top() - 1;
+            for (int y = rowRect.top(); y <= rowRect.bottom(); ++y) {
+                for (int x = rowRect.left(); x <= rowRect.right(); ++x) {
+                    const int px = qRound(x * dpr), py = qRound(y * dpr);
+                    if (!image.rect().contains(px, py)) continue;
+                    const QColor pixel = image.pixelColor(px, py);
+                    // 标题为正文深色；橙色图标、蓝色“顺延”和灰色计数都不在阈值内。
+                    if (pixel.red() < 120 && pixel.green() < 120 && pixel.blue() < 120) {
+                        top = qMin(top, y);
+                        bottom = qMax(bottom, y);
+                    }
+                }
+            }
+            QVERIFY2(bottom >= top, qPrintable(QStringLiteral("header %1 has no dark text").arg(row)));
+            heights.append(bottom - top + 1);
+        }
+        QVERIFY2(heights.size() >= 3, qPrintable(QStringLiteral("headers: %1").arg(heights.size())));
+        for (int height : heights) QVERIFY(qAbs(height - heights.first()) <= 1);
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,

@@ -12,6 +12,7 @@
 #include "ListAppearance.h"
 #include "TaskListModel.h"
 #include "design/ThemeManager.h"
+#include "design/TypeSystem.h"
 
 namespace kl {
 namespace {
@@ -126,9 +127,9 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     p->setRenderHint(QPainter::Antialiasing, true);
     if (i.data(TaskListModel::HeaderRole).toBool()) {
         const QRect row = o.rect;
-        const QFont titleFont = AppStyle::font(AppStyle::Font::Small);
+        const QFont titleFont = ds::qfont(ds::FontScene::ListSection);
         p->setFont(titleFont);
-        p->setPen(AppStyle::color(Color::Muted));
+        p->setPen(AppStyle::color(Color::Text));
         const QString title = i.data().toString();
         qreal textLeft = row.left() + 16.0;
         if (i.data(TaskListModel::SectionKeyRole).toString() == QLatin1String("pinned")) {
@@ -141,6 +142,7 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         const int count = i.data(TaskListModel::HeaderEntityIdsRole).toStringList().size();
         if (count > 0) {
             const int titleWidth = p->fontMetrics().horizontalAdvance(title);
+            p->setFont(AppStyle::font(AppStyle::Font::Small));
             p->setPen(AppStyle::color(Color::Faint));
             p->drawText(QRectF(textLeft + titleWidth + 8.0, row.top(), 36, row.height()),
                         Qt::AlignLeft | Qt::AlignVCenter, QString::number(count));

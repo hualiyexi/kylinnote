@@ -89,6 +89,10 @@ QFont qfont(FontScene scene) {
             f.setPointSizeF(pointSize(TypeScale::DetailTitle));
             f.setWeight(QFont::Bold);
             break;
+        case FontScene::ListSection:
+            f.setPointSizeF(pointSize(TypeScale::Subtitle));
+            f.setWeight(QFont::DemiBold);
+            break;
         case FontScene::Count:
             break;
     }
