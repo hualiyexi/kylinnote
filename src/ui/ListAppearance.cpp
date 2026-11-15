@@ -22,12 +22,18 @@ QColor color(const TaskList& list) {
     return value.isValid() ? value : QColor();
 }
 
+namespace {
+// 清单颜色只用于右侧圆点；图标保持稳定的中性色，避免每个清单染成不同颜色。
+QColor stableIconColor(const QColor& fallback) {
+    return fallback.isValid() ? fallback
+                              : ThemeManager::instance().color(ds::ColorToken::TextSecondary);
+}
+}  // namespace
+
 QIcon icon(const TaskList& list, int size, const QColor& fallbackColor) {
     const QString name = iconName(list);
-    if (AppIcons::hasIcon(name)) {
-        const QColor listColor = color(list);
-        return AppIcons::icon(name, listColor.isValid() ? listColor : fallbackColor, size);
-    }
+    if (AppIcons::hasIcon(name))
+        return AppIcons::icon(name, stableIconColor(fallbackColor), size);
     QPixmap pixmap(size * 2, size * 2);
     pixmap.setDevicePixelRatio(2.0);
     pixmap.fill(Qt::transparent);
@@ -41,9 +47,7 @@ void paint(QPainter* painter, const TaskList& list, const QRectF& rect,
     if (!painter) return;
     const QString name = iconName(list);
     if (AppIcons::hasIcon(name)) {
-        const QColor listColor = color(list);
-        AppIcons::paint(painter, name, rect,
-                        listColor.isValid() ? listColor : fallbackColor);
+        AppIcons::paint(painter, name, rect, stableIconColor(fallbackColor));
         return;
     }
     painter->save();

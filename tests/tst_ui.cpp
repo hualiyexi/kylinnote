@@ -2469,6 +2469,85 @@ private slots:
         QApplication::processEvents();
         QCOMPARE(marginAlpha(), 0);
     }
+    void subtaskDisclosureUsesSectionTriangleStyle() {
+        const QString parent = m_store->createTask(QStringLiteral("父任务样式"));
+        const QString child = m_store->createSubtask(QStringLiteral("子任务样式"), parent);
+        QVERIFY(!child.isEmpty());
+        TaskListModel model(m_store.get());
+        TaskDelegate delegate;
+        const auto render = [&](bool collapsed) {
+            QModelIndex index = model.indexForTask(parent);
+            if (model.data(index, TaskListModel::ChildrenCollapsedRole).toBool() != collapsed)
+                model.toggleChildren(parent);
+            index = model.indexForTask(parent);
+            QImage image(560, 44, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::white);
+            QPainter painter(&image);
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, 0, 560, 44);
+            option.state = QStyle::State_Enabled;
+            delegate.paint(&painter, option, index);
+            painter.end();
+            return image;
+        };
+        const auto arrowBounds = [](const QImage& image) {
+            QRect bounds;
+            for (int y = 16; y < 28; ++y) {
+                for (int x = 22; x < 34; ++x) {
+                    if (image.pixelColor(x, y) == QColor(Qt::white)) continue;
+                    bounds = bounds.isNull() ? QRect(x, y, 1, 1) : bounds.united(QRect(x, y, 1, 1));
+                }
+            }
+            return bounds;
+        };
+        const QRect expanded = arrowBounds(render(false));
+        const QRect collapsed = arrowBounds(render(true));
+        QVERIFY(!expanded.isNull() && !collapsed.isNull());
+        QVERIFY2(expanded.width() > expanded.height() * 1.3,
+                 qPrintable(QStringLiteral("expanded arrow %1x%2").arg(expanded.width()).arg(expanded.height())));
+        QVERIFY2(collapsed.height() > collapsed.width() * 1.3,
+                 qPrintable(QStringLiteral("collapsed arrow %1x%2").arg(collapsed.width()).arg(collapsed.height())));
+    }
+    void navigationListShowsColorDotAndStableIcon() {
+        const QString list = m_store->createList(QStringLiteral("彩色清单"), QString(),
+                                                 EntityKind::Task, QString(),
+                                                 QStringLiteral("#FFAC38"));
+        QVERIFY(!list.isEmpty());
+        QVERIFY(!m_store->createTask(QStringLiteral("计数任务"), list).isEmpty());
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* navigation = panel.findChild<QListWidget*>(QStringLiteral("Navigation"));
+        auto* delegate = navigation ? qobject_cast<NavigationDelegate*>(navigation->itemDelegate()) : nullptr;
+        QVERIFY(navigation && delegate);
+        int row = -1;
+        for (int candidate = 0; candidate < navigation->count(); ++candidate) {
+            if (navigation->item(candidate)->data(Qt::UserRole + 1).toString() == list) {
+                row = candidate;
+                break;
+            }
+        }
+        QVERIFY(row >= 0);
+        QImage image(220, 36, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        QStyleOptionViewItem option;
+        option.rect = QRect(0, 0, 220, 36);
+        option.state = QStyle::State_Enabled;
+        delegate->paint(&painter, option, navigation->model()->index(row, 0));
+        painter.end();
+        const auto isListColor = [](const QColor& pixel) {
+            return pixel.red() > 200 && pixel.green() > 120 && pixel.green() < 210
+                && pixel.blue() < 110;
+        };
+        int dotPixels = 0, iconPixels = 0;
+        for (int y = 10; y < 26; ++y) {
+            for (int x = 150; x < 205; ++x)
+                if (isListColor(image.pixelColor(x, y))) ++dotPixels;
+            for (int x = 20; x < 45; ++x)
+                if (isListColor(image.pixelColor(x, y))) ++iconPixels;
+        }
+        QVERIFY2(dotPixels > 10, qPrintable(QStringLiteral("dot pixels: %1").arg(dotPixels)));
+        QCOMPARE(iconPixels, 0);  // 图标保持中性色，不再被清单颜色染色。
+    }
     void listAppearanceAndArchiveNavigation() {
         const QString folder = m_store->createFolder(QStringLiteral("工作文件夹"));
         const QString list = m_store->createList(QStringLiteral("工作"), folder, EntityKind::Task,

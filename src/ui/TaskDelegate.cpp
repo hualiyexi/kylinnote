@@ -110,6 +110,7 @@ struct NavigationLayout {
     QRectF disclosure;
     QRectF icon;
     QRectF label;
+    QRectF dot;
     QString count;
 };
 
@@ -129,8 +130,13 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
     const QFont countFont = AppStyle::font(AppStyle::Font::Small);
     const int countWidth = QFontMetrics(countFont).horizontalAdvance(layout.count);
     const qreal right = layout.background.right() - 12.0 - countWidth;
+    const QString listColor = index.data(NavigationDelegate::ListColorRole).toString();
+    const bool colorDot = !folder && QColor(listColor).isValid();
+    if (colorDot)
+        layout.dot = QRectF(right - 12.0, layout.background.center().y() - 4.0, 8.0, 8.0);
+    const qreal labelRight = colorDot ? right - 12.0 : right;
     layout.label = QRectF(layout.icon.right() + 6.0, row.top(),
-                          qMax(0.0, right - layout.icon.right() - 6.0), row.height());
+                          qMax(0.0, labelRight - layout.icon.right() - 6.0), row.height());
     return layout;
 }
 
@@ -208,9 +214,9 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     if (hovered && !deleted)
         AppIcons::paint(p, QStringLiteral("drag"), layout.dragHandle, AppStyle::color(Color::Faint));
     if (!layout.disclosure.isNull()) {
-        AppIcons::paint(p, i.data(TaskListModel::ChildrenCollapsedRole).toBool()
-            ? QStringLiteral("chevron-folder-close") : QStringLiteral("chevron-folder-open"),
-            layout.disclosure, AppStyle::color(Color::Muted));
+        paintTriangle(p, layout.disclosure.adjusted(2.0, 2.0, -2.0, -2.0),
+                      !i.data(TaskListModel::ChildrenCollapsedRole).toBool(),
+                      AppStyle::color(hovered ? Color::Muted : Color::Faint));
     }
 
     const QRectF box = layout.checkBox;
@@ -418,6 +424,11 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     p->setPen(AppStyle::color(Color::Faint));
     p->drawText(QRectF(layout.background.left(), row.top(), layout.background.width() - 12.0,
                        row.height()), Qt::AlignRight | Qt::AlignVCenter, layout.count);
+    if (!layout.dot.isNull()) {
+        p->setPen(Qt::NoPen);
+        p->setBrush(QColor(i.data(ListColorRole).toString()));
+        p->drawEllipse(layout.dot);
+    }
     if (!folderId.isEmpty()) {
         paintTriangle(p, layout.disclosure.adjusted(2.0, 2.0, -2.0, -2.0),
                       i.data(FolderExpandedRole).toBool(),
