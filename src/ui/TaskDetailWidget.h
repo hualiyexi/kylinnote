@@ -13,6 +13,7 @@ class QListWidget;
 class QPushButton;
 class QLabel;
 class QToolButton;
+class QFrame;
 namespace kl {
 class TaskStore;
 class MarkdownEditor;
@@ -56,6 +57,7 @@ private:
     void addChecklistRow();
     void updateChecklistHeight();
     void updateDateChip();
+    void updateParentLink();
     void refreshIcons();
     void setStatus(const QString& text, bool error = false);
     void setSettingsExpanded(bool expanded);
@@ -83,6 +85,11 @@ private:
     QToolButton* m_commentButton = nullptr;
     QToolButton* m_moreButton = nullptr;
     QToolButton *m_infoButton = nullptr, *m_reminderButton = nullptr, *m_closeButton = nullptr;
+    QFrame* m_headerSeparator = nullptr;
+    QWidget* m_parentHost = nullptr;
+    QPushButton* m_parentLink = nullptr;
+    QToolButton* m_parentArrow = nullptr;
+    QString m_parentId;
     EntityInfoPopup* m_infoPopup = nullptr;
     ListSelectPopup* m_groupPopup = nullptr;
     TaskDateController* m_dateController = nullptr;

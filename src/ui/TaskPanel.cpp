@@ -20,8 +20,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPrintDialog>
-#include <QPrinter>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -32,7 +30,6 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
-#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -62,7 +59,6 @@
 #include "TaskDetailWidget.h"
 #include "TaskListModel.h"
 #include "TaskListView.h"
-#include "TaskPrintDocument.h"
 #include "ToastIsland.h"
 #include "WindowChrome.h"
 #include "WindowBorderOverlay.h"
@@ -421,6 +417,7 @@ void TaskPanel::buildUi() {
 
     // 快速添加是一整条轻边框输入行，不再附加搜索框和独立添加按钮。
     auto* quickFrame = new QFrame(m_middle);
+    m_quickFrame = quickFrame;
     quickFrame->setObjectName(QStringLiteral("QuickAddFrame"));
     quickFrame->setFixedHeight(40);
     auto* quick = new QHBoxLayout(quickFrame);
@@ -436,11 +433,15 @@ void TaskPanel::buildUi() {
     quick->addWidget(m_quick, 1);
     m_quickDate = new QToolButton(quickFrame);
     m_quickDate->setObjectName(QStringLiteral("QuickAddDate"));
-    m_quickDate->setToolTip(QStringLiteral("新任务默认安排到今天"));
-    m_quickDate->setAccessibleName(QStringLiteral("切换新任务默认日期"));
-    m_quickDate->setCheckable(true);
+    m_quickDate->setToolTip(QStringLiteral("设置新任务日期"));
+    m_quickDate->setAccessibleName(QStringLiteral("设置新任务日期"));
     m_quickDate->setAutoRaise(true);
-    m_quickDate->setFixedSize(68, 30);
+    m_quickDate->setCursor(Qt::PointingHandCursor);
+    m_quickDate->setMinimumWidth(68);
+    m_quickDate->setMaximumWidth(120);
+    m_quickDate->setFixedHeight(30);
+    m_quickDate->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    m_quickDate->hide();
     quick->addWidget(m_quickDate);
     auto* add = new QPushButton(QStringLiteral("添加"), quickFrame);
     add->setObjectName(QStringLiteral("QuickAddButton"));
@@ -470,13 +471,29 @@ void TaskPanel::buildUi() {
     m_list->setModel(m_model);
     auto* taskDelegate = new TaskDelegate(m_list);
     m_list->setItemDelegate(taskDelegate);
-    auto* dateController = new TaskDateController(m_store, this);
-    connect(dateController, &TaskDateController::saveFailed, this, &TaskPanel::showError);
+    m_dateController = new TaskDateController(m_store, this);
+    connect(m_dateController, &TaskDateController::saveFailed, this, &TaskPanel::showError);
+    connect(m_dateController, &TaskDateController::draftSaved, this, [this](const Entity& draft) {
+        m_quickDraft = draft;
+        m_quickDateCustomized = true;
+        updateQuickDateButton();
+    });
+    connect(m_dateController, &TaskDateController::closed, this, [this]() {
+        QTimer::singleShot(0, this, &TaskPanel::updateQuickDateVisibility);
+    });
+    connect(m_quickDate, &QToolButton::clicked, this, [this]() {
+        m_dateController->openDraft(m_quickDraft,
+            QRect(m_quickDate->mapToGlobal(QPoint()), m_quickDate->size()));
+        updateQuickDateVisibility();
+    });
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget*) {
+        updateQuickDateVisibility();
+    });
     connect(taskDelegate, &TaskDelegate::dateActivated, this,
-            [this, dateController](const QString& id, const QRect& anchor) {
+            [this](const QString& id, const QRect& anchor) {
         if (!flush()) return;
-        dateController->open(id, QRect(m_list->viewport()->mapToGlobal(anchor.topLeft()),
-                                       anchor.size()));
+        m_dateController->open(id, QRect(m_list->viewport()->mapToGlobal(anchor.topLeft()),
+                                         anchor.size()));
     });
     connect(taskDelegate, &TaskDelegate::listActivated, this, [this](const QString& listId) {
         for (const TaskList& list : m_store->lists()) {
@@ -1050,6 +1067,46 @@ void TaskPanel::updateQuickAddKind() {
     m_quick->setEnabled(m_filter.scope != ViewScope::Folder || !target.id.isEmpty());
 }
 
+void TaskPanel::updateQuickDateButton() {
+    if (!m_quickDate) return;
+    const QDate today = toAppTime(appNow()).date();
+    QDate date;
+    QString time;
+    if (m_quickDateCustomized) {
+        if (m_quickDraft.dueAt.isValid()) {
+            const QDateTime wall = toAppTime(m_quickDraft.dueAt);
+            date = wall.date();
+            time = wall.toString(QStringLiteral("HH:mm"));
+        } else {
+            date = m_quickDraft.allDayDate;
+        }
+    }
+    QString label = m_filter.scope == ViewScope::Tomorrow ? QStringLiteral("明天")
+                                                          : QStringLiteral("今天");
+    if (m_quickDateCustomized) {
+        if (!date.isValid()) label = QStringLiteral("无日期");
+        else if (date == today) label = QStringLiteral("今天");
+        else if (date == today.addDays(1)) label = QStringLiteral("明天");
+        else label = date.toString(QStringLiteral("M月d日"));
+        if (!time.isEmpty()) label += QLatin1Char(' ') + time;
+    }
+    m_quickDate->setText(label);
+    m_quickDate->setAccessibleName(QStringLiteral("新任务日期：") + label);
+    m_quickDate->setToolTip(m_quickDateCustomized ? scheduleLabel(m_quickDraft)
+                                                  : QStringLiteral("设置新任务日期"));
+    m_quickDate->setProperty("hasDate", date.isValid());
+    m_quickDate->style()->unpolish(m_quickDate);
+    m_quickDate->style()->polish(m_quickDate);
+}
+
+void TaskPanel::updateQuickDateVisibility() {
+    if (!m_quickDate || !m_quickFrame || !m_quick) return;
+    const QWidget* focus = QApplication::focusWidget();
+    const bool inside = focus && m_quickFrame->isAncestorOf(focus);
+    const bool popupOpen = m_dateController && m_dateController->isOpen();
+    m_quickDate->setVisible(m_quick->isVisible() && m_quick->isEnabled() && (inside || popupOpen));
+}
+
 void TaskPanel::createTask() {
     if (m_restoreFrozen) return;
     const QString title = m_quick->text().trimmed();
@@ -1077,18 +1134,33 @@ void TaskPanel::createTask() {
                                       : m_store->createTask(title, targetListId);
     } else id = m_store->createTask(title);
     if (id.isEmpty()) return;
-    QDate defaultDate;
-    if (m_quickDate->isChecked() || m_filter.scope == ViewScope::Today
-        || m_filter.scope == ViewScope::Next7Days || m_filter.scope == ViewScope::Overdue)
-        defaultDate = toAppTime(appNow()).date();
-    else if (m_filter.scope == ViewScope::Tomorrow)
-        defaultDate = toAppTime(appNow()).date().addDays(1);
-    if (defaultDate.isValid()) {
-        Entity created = m_store->entity(id);
-        created.allDayDate = defaultDate;
-        if (!m_store->saveTask(created)) return;
+    Entity created = m_store->entity(id);
+    bool saveSchedule = false;
+    if (created.kind == EntityKind::Task && m_quickDateCustomized) {
+        created.dueAt = m_quickDraft.dueAt;
+        created.startAt = m_quickDraft.startAt;
+        created.allDayDate = m_quickDraft.allDayDate;
+        created.reminderAt = m_quickDraft.reminderAt;
+        created.recurrence = m_quickDraft.recurrence;
+        saveSchedule = true;
+    } else if (created.kind == EntityKind::Task) {
+        QDate defaultDate;
+        if (m_filter.scope == ViewScope::Today || m_filter.scope == ViewScope::Next7Days
+            || m_filter.scope == ViewScope::Overdue)
+            defaultDate = toAppTime(appNow()).date();
+        else if (m_filter.scope == ViewScope::Tomorrow)
+            defaultDate = toAppTime(appNow()).date().addDays(1);
+        if (defaultDate.isValid()) {
+            created.allDayDate = defaultDate;
+            saveSchedule = true;
+        }
     }
+    if (saveSchedule && !m_store->saveTask(created)) return;
+    m_quickDraft = Entity();
+    m_quickDateCustomized = false;
+    updateQuickDateButton();
     m_quick->clear(); showTask(id); m_detail->focusTitle();
+    updateQuickDateVisibility();
 }
 
 void TaskPanel::showTask(QString id) {
@@ -1163,6 +1235,9 @@ void TaskPanel::resetAfterRestore() {
     setRestoreFrozen(false); m_selectedId.clear(); m_filter = ViewSpec();
     { const QSignalBlocker blocker(m_search); m_search->clear(); }
     { const QSignalBlocker blocker(m_quick); m_quick->clear(); }
+    m_quickDraft = Entity();
+    m_quickDateCustomized = false;
+    updateQuickDateButton();
     { const QSignalBlocker blocker(m_renderer); m_renderer->setCurrentIndex(0); }
     m_detail->setTask(QString()); m_heading->setText(scopeLabel(ViewScope::AllLists));
     rebuildNavigation(); applyFilter();
@@ -1415,8 +1490,8 @@ void TaskPanel::refreshWorkspaceIcons() {
                                                 WorkspaceGeometry::SidebarToggleIconSize));
     if (m_quickDate) {
         m_quickDate->setIcon(AppIcons::icon(IconId::Calendar, 15));
-        m_quickDate->setText(QStringLiteral("今天"));
         m_quickDate->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        updateQuickDateButton();
     }
     updateHeadingAppearance();
 }
@@ -1855,25 +1930,6 @@ void TaskPanel::workspaceMenu() {
         });
         dialog.exec();
     });
-
-    auto* printMenu = menu.addMenu(AppIcons::icon(IconId::Print, 18), QStringLiteral("打印"));
-    printMenu->setObjectName(QStringLiteral("PrintMenu"));
-    const auto print = [this](bool includeContent) {
-        QTextDocument document;
-        populateTaskPrintDocument(&document, *m_model, *m_store, m_heading->text(), includeContent);
-        QPrinter printer(QPrinter::HighResolution);
-        printer.setDocName(m_heading->text());
-        QPrintDialog dialog(&printer, this);
-        dialog.setWindowTitle(includeContent ? QStringLiteral("打印标题和内容")
-                                             : QStringLiteral("打印标题"));
-        if (dialog.exec() == QDialog::Accepted) document.print(&printer);
-    };
-    auto* printTitle = printMenu->addAction(QStringLiteral("打印标题"));
-    printTitle->setObjectName(QStringLiteral("PrintTitle"));
-    connect(printTitle, &QAction::triggered, this, [print]() { print(false); });
-    auto* printContent = printMenu->addAction(QStringLiteral("打印标题和内容"));
-    printContent->setObjectName(QStringLiteral("PrintTitleAndContent"));
-    connect(printContent, &QAction::triggered, this, [print]() { print(true); });
 
     // 与网页 bottomRight 一致：卡片右缘对齐按钮右缘，而不是以鼠标位置为左上角。
     menu.ensurePolished();

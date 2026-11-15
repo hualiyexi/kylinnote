@@ -33,6 +33,7 @@ enum class FontScene : int {
     Mono,       // 等宽/代码
     DetailTitle,// 与正文融为一体的实体标题
     ListSection,// 第三列清单内分区标题（14px / 600）
+    Menu,       // 13px 常规菜单与父任务链接
     Count
 };
 

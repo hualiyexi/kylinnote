@@ -29,7 +29,7 @@ enum class EntityCommand {
     // 回收站
     Restore, DeletePermanently,
     // 详情更多特有
-    UploadAttachment, ViewActivity, SaveAsTemplate, Export, Print,
+    UploadAttachment, ViewActivity, SaveAsTemplate, Export,
     // 已完成与多选
     EditCompletionTime, Complete, CopyText, Merge,
     // 视图级

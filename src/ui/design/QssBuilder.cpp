@@ -31,6 +31,7 @@ QString buildStyleSheet(Theme theme) {
     const QString separator = hex(ColorToken::Divider, theme);
     const QString hover = hex(ColorToken::Hover, theme);
     const QString field = hex(ColorToken::Field, theme);
+    const QString quickAddBg = hex(ColorToken::QuickAddBg, theme);
     const QString fieldHover = hex(ColorToken::FieldHover, theme);
     const QString border = hex(ColorToken::Border, theme);
     const QString menuBg = hex(ColorToken::MenuBg, theme);
@@ -167,6 +168,11 @@ QString buildStyleSheet(Theme theme) {
             "QPushButton#DateChip:hover,QPushButton#DateChip:focus{background:%4;}"
             "QPushButton#DateChip[overdue=\"true\"]{color:%7;}"
             "QToolButton#DetailInfo,QToolButton#DetailReminder,QToolButton#DetailClose{padding:0;border:0;}"
+            "QFrame#DetailHeaderSeparator{background:%2;border:0;}"
+            "QPushButton#ParentTaskLink{color:%3;background:transparent;border:0;padding:0;text-align:left;}"
+            "QPushButton#ParentTaskLink:hover{color:%6;background:transparent;}"
+            "QToolButton#ParentTaskArrow{padding:0;border:0;background:transparent;}"
+            "QToolButton#ParentTaskArrow:hover{background:transparent;}"
             "QToolButton#GroupChip{padding:4px 6px;border:0;}"
             "QToolButton#FooterFormat,QToolButton#FooterComment,QToolButton#DetailMore{"
             "padding:0;border:0;}"
@@ -182,7 +188,7 @@ QString buildStyleSheet(Theme theme) {
             "QToolButton#AttachmentActions::menu-indicator{image:none;width:0;height:0;}"
             "QLabel#DetailStatus{color:%7;padding:6px 0;}"
             "QMainWindow#TaskPanel,QWidget#WorkspaceRoot{background:transparent;}"
-            "QFrame#ActivityRail{background:%11;border:0;border-right:1px solid %2;"
+            "QFrame#ActivityRail{background:%RAILBG%;border:0;border-right:1px solid %2;"
             "border-top-left-radius:10px;border-bottom-left-radius:10px;}"
             "QFrame#ActivityRail QToolButton{border:0;border-radius:8px;padding:0;}"
             "QFrame#ActivityRail QToolButton:hover{background:%4;}"
@@ -195,13 +201,13 @@ QString buildStyleSheet(Theme theme) {
             "QFrame#ListHeader QToolButton:pressed{background:%5;}"
             "QFrame#DetailFrame{background:%1;border:0;}"
             "QWidget#TaskDetailWidget{background:transparent;}"
-            "QFrame#QuickAddFrame{background:%10;border:0;border-radius:10px;}"
-            "QFrame#QuickAddFrame:focus-within{background:%10;border:0;}"
+            "QFrame#QuickAddFrame{background:%QUICKADDBG%;border:0;border-radius:10px;}"
+            "QFrame#QuickAddFrame:focus-within{background:%QUICKADDBG%;border:0;}"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd,"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd:hover,"
             "QFrame#QuickAddFrame QLineEdit#QuickAdd:focus{background:transparent;border:0;padding:0;}"
             "QToolButton#QuickAddDate{color:%3;padding:0 4px;border:0;}"
-            "QToolButton#QuickAddDate:checked{color:%5;}"
+            "QToolButton#QuickAddDate[hasDate=\"true\"]{color:%PRIMARY%;}"
             "QWidget#WindowControls{background:transparent;border-top-right-radius:10px;}"
             "QWidget#WindowControls QToolButton{border:0;border-radius:0;padding:0;}"
             "QWidget#WindowControls QToolButton:hover,"
@@ -213,8 +219,11 @@ QString buildStyleSheet(Theme theme) {
             "QListView#TaskList{background:transparent;}"
             "QFrame#ToastIsland{background:transparent;border:0;}")
             .arg(surface).arg(hex(ColorToken::DetailDivider, theme)).arg(muted)
-            .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar)
-            .arg(menuBg).arg(field).arg(railBg);
+            .arg(hover).arg(selection).arg(text).arg(danger).arg(sidebar).arg(menuBg)
+            // Qt 5 链式 arg 的双位数字占位易错位；组件专用色使用命名替换。
+            .replace(QStringLiteral("%RAILBG%"), railBg)
+            .replace(QStringLiteral("%QUICKADDBG%"), quickAddBg)
+            .replace(QStringLiteral("%PRIMARY%"), primary);
 }
 
 QString buildPreviewCss(Theme theme) {

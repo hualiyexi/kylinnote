@@ -32,6 +32,13 @@ QRectF sectionArrowRect(const QRect& row) {
 constexpr qreal kSectionTitleLeft = 36.0;
 // 滴答给置顶图标用 vertical-align: sub；图标盒相对行中心下移，和中文视觉中线对齐。
 constexpr qreal kSectionPinVerticalOffset = 2.0;
+// 滴答详情主行 40px，详情从 34px 起、18px 高，整行 62px。
+constexpr qreal kTaskDetailTop = 34.0;
+constexpr qreal kTaskDetailHeight = 18.0;
+constexpr int kTaskRowHeightWithDetail = 62;
+constexpr qreal kListGlyphVerticalOffset = 1.0;
+// 仅绘制外扩半像素，消除高分屏抗锯齿在背景顶边留下的细缝。
+constexpr qreal kRowBackgroundVerticalBleed = 0.5;
 
 // 滴答用同一个下三角旋转表示收起，避免再维护一套右向图标。
 void paintTriangle(QPainter* p, const QRectF& rect, bool expanded, const QColor& color) {
@@ -78,8 +85,10 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     if (index.data(TaskListModel::HasChildrenRole).toBool())
         layout.disclosure = QRectF(mainRow.left() + 20.0 + indent,
                                    mainRow.center().y() - 8.0, 16.0, 16.0);
-    layout.background = QRectF(row.left() + 20.0 + indent, row.top(),
-                               qMax(0.0, row.width() - 38.0 - indent), row.height());
+    layout.background = QRectF(row.left() + 20.0 + indent,
+                               row.top() - kRowBackgroundVerticalBleed,
+                               qMax(0.0, row.width() - 38.0 - indent),
+                               row.height() + 2.0 * kRowBackgroundVerticalBleed);
     layout.checkBox = QRectF(mainRow.left() + 34.0 + indent,
                              mainRow.center().y() - 8.0, 16.0, 16.0);
     const qreal left = mainRow.left() + 58.0 + indent;
@@ -103,9 +112,9 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     }
     layout.title = QRectF(left, mainRow.top(), qMax(0.0, right - left), mainRow.height());
     if (showDetail)
-        layout.detail = QRectF(left, mainRow.bottom(),
+        layout.detail = QRectF(left, row.top() + kTaskDetailTop,
                                qMax(0.0, row.right() - 26.0 - left),
-                               qMax(0.0, row.height() - mainRow.height()));
+                               kTaskDetailHeight);
     return layout;
 }
 
@@ -274,7 +283,9 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
     }
     if (!layout.list.isNull()) {
         const TaskList list = listFromIndex(i);
-        const QRectF glyph(layout.list.left(), layout.list.center().y() - 7.0, 14.0, 14.0);
+        const QRectF glyph(layout.list.left(),
+                           layout.list.center().y() - 7.0 + kListGlyphVerticalOffset,
+                           14.0, 14.0);
         ListAppearance::paint(p, list, glyph, AppStyle::color(Color::Muted));
         p->setPen(AppStyle::color(completed ? Color::Faint : Color::Muted));
         const QRectF nameRect(glyph.right() + 4.0, layout.list.top(),
@@ -298,7 +309,8 @@ QSize TaskDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& ind
     if (index.data(TaskListModel::HeaderRole).toBool()) return QSize(320, 36);
     int height = AppStyle::metric(Metric::TaskRowHeight);
     if (index.data(TaskListModel::DetailsVisibleRole).toBool()
-        && !index.data(TaskListModel::DetailRole).toString().isEmpty()) height += 24;
+        && !index.data(TaskListModel::DetailRole).toString().isEmpty())
+        return QSize(320, kTaskRowHeightWithDetail);
     return QSize(320, height);
 }
 

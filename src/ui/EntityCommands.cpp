@@ -94,8 +94,6 @@ CommandInfo commandInfo(EntityCommand cmd)
         return {"saveAsTemplate", QStringLiteral("保存为模板"), IconId::DesktopNote};
     case EntityCommand::Export:
         return {"export", QStringLiteral("导出"), IconId::Backup};
-    case EntityCommand::Print:
-        return {"print", QStringLiteral("打印"), IconId::TaskList};
     case EntityCommand::EditCompletionTime:
         return {"editCompletionTime", QStringLiteral("修改完成时间"), IconId::Clock};
     case EntityCommand::Complete:
@@ -352,7 +350,6 @@ QMenu *EntityCommands::buildDetailMoreMenu(const MenuContext &ctx, const QString
         menu->addAction(convert);
     }
     menu->addAction(makeAction(EntityCommand::Export, entityId, menu));
-    menu->addAction(makeAction(EntityCommand::Print, entityId, menu));
     menu->addAction(makeAction(EntityCommand::Delete, entityId, menu));
     return menu;
 }
@@ -431,7 +428,6 @@ QMenu *EntityCommands::buildWorkspaceMenu(QWidget *parent)
     menu->addAction(makeAction(EntityCommand::HideCompleted, QString(), menu));
     menu->addAction(makeAction(EntityCommand::ShowDetail, QString(), menu));
     menu->addAction(makeAction(EntityCommand::DisplaySettings, QString(), menu));
-    menu->addAction(makeAction(EntityCommand::Print, QString(), menu));
     return menu;
 }
 
@@ -1108,7 +1104,6 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
     case EntityCommand::StartFocus:
     case EntityCommand::SaveAsTemplate:
     case EntityCommand::Export:
-    case EntityCommand::Print:
     case EntityCommand::EditCompletionTime:
     case EntityCommand::CopyText:
     case EntityCommand::Merge:

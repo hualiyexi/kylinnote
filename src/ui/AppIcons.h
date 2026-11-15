@@ -29,7 +29,7 @@ enum class IconId {
     Underline, Highlight, Expand, Info, ChevronDown, FormatClear, Format, Comment,
     // 主窗口
     WindowMinimize, WindowMaximize, WindowClose, Sort, MoreTitlebar,
-    SidebarCollapse, SidebarExpand, HideCompleted, HideDetails, DisplaySettings, Print,
+    SidebarCollapse, SidebarExpand, HideCompleted, HideDetails, DisplaySettings,
     Help, Sync,
     Count
 };

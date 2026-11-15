@@ -54,6 +54,7 @@ constexpr QRgb L_Scrollbar = 0xFFD9DFEA;
 constexpr QRgb L_ScrollbarHover = 0xFFC2CCDD;
 constexpr QRgb L_RowHover = 0xFFF5F5F5;
 constexpr QRgb L_RowSelected = 0xFFF0F0F0;
+constexpr QRgb L_QuickAddBg = 0xFFF7F7F7;
 constexpr QRgb L_TooltipBg = 0xE6191919;
 // 深色中性阶（KylinList 自定）
 constexpr QRgb D_Text = 0xFFE8EAED;
@@ -102,6 +103,7 @@ enum class ColorToken : int {
     WindowBorder, Shadow,
     RowHover, RowSelected,
     RailBg,
+    QuickAddBg,
     Count
 };
 

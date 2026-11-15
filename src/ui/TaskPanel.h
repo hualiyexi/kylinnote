@@ -22,6 +22,7 @@ class TaskListModel;
 class TaskListView;
 class NavigationListWidget;
 class TaskDetailWidget;
+class TaskDateController;
 class WindowControls;
 class WindowResizeArea;
 class SplitterResizeArea;
@@ -65,6 +66,8 @@ private:
     void applyFilter();
     void createTask();
     void updateQuickAddKind();
+    void updateQuickDateButton();
+    void updateQuickDateVisibility();
     void showTaskMenu(const QPoint& position);
     void organizationMenu(const QPoint& position);
     void groupMenu();
@@ -90,6 +93,7 @@ private:
     TaskStore* m_store;
     TaskListModel* m_model = nullptr;
     TaskDetailWidget* m_detail = nullptr;
+    TaskDateController* m_dateController = nullptr;
     NavigationListWidget* m_navigation = nullptr;
     TaskListView* m_list = nullptr;
     QLineEdit *m_search = nullptr, *m_quick = nullptr;
@@ -103,6 +107,7 @@ private:
     QFrame* m_sidebar = nullptr;
     QFrame* m_middle = nullptr;
     QFrame* m_activityRail = nullptr;
+    QFrame* m_quickFrame = nullptr;
     WindowControls* m_windowControls = nullptr;
     WorkspaceSurface* m_surface = nullptr;
     WindowBorderOverlay* m_border = nullptr;
@@ -113,6 +118,8 @@ private:
     QToolButton *m_railTasks = nullptr, *m_railSearch = nullptr, *m_railSettings = nullptr;
     QToolButton* m_sidebarToggle = nullptr;
     QToolButton* m_quickDate = nullptr;
+    Entity m_quickDraft;
+    bool m_quickDateCustomized = false;
     ToastIsland* m_toast = nullptr;
     ViewSpec m_filter;
     QSet<QString> m_archivedListIds;

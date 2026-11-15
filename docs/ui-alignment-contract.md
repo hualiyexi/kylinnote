@@ -8,10 +8,10 @@
 
 | 区域 | 当前规格 | 实现 |
 |---|---|---|
-| 第三列实体与分组 | 实体行 40px，分组头 36px；标题单行。清单色条距实体区左侧 16px、覆盖整行，父任务拖动柄在色条左侧，悬浮背景从色条右侧开始；子任务拖动柄与背景额外缩进 24px，色条不动，背景圆角 10px。右侧清单与日期为独立点击区域 | `TaskListModel`、`TaskDelegate`、`ListAppearance`、`TaskPanel` |
+| 第三列实体与分组 | 普通实体行 40px，显示详细时 62px（详情从 34px 起、18px 高），分组头 36px；标题单行。清单色条距实体区左侧 16px、覆盖整行，父任务拖动柄在色条左侧，悬浮背景从色条右侧开始并覆盖整行，绘制仅外扩半像素消除抗锯齿细缝；子任务拖动柄与背景额外缩进 24px，色条不动，背景圆角 10px。右侧清单图标下移 1px，清单与日期为独立点击区域 | `TaskListModel`、`TaskDelegate`、`ListAppearance`、`TaskPanel` |
 | 智能日期范围 | 今天含全部逾期（有效日期 ≤ 今天）；明天仅明天；最近7天含全部逾期及今天至今天+6；计数与列表共用筛选，活动聚合排除归档清单 | `ViewSpec`、`TaskListModel`、`TaskPanel` |
 | 过期顺延 | 仅聚合智能范围的过期分组提供，普通清单及收集箱无顺延入口；每个任务按自身有效日期平移至今天，保留起止时刻、跨日跨度及原提醒，整批事务提交 | `TaskDelegate`、`TaskListModel`、`TaskStore::postponeOverdueTasks()` |
-| 日期编辑入口 | 行内日期与详情共用 `TaskDateController`；打开时固定实体 ID，提交前读取该实体最新状态。四个快捷项为今天、明天、今天+7、下个月同日；纯日期只写 `allDayDate`，明确时刻（含 00:00）只写 `dueAt`，时间页可移除时刻而保留日期 | `TaskDateController`、`DatePickerPopup`、`TaskDetailWidget`、`TaskPanel` |
+| 日期编辑入口 | 行内日期、详情与快速添加共用 `TaskDateController` 和唯一 `DatePickerPopup`；已有任务提交前读取最新实体，快速添加走草稿入口且确认后才写入新建任务。四个快捷项为今天、明天、今天+7、下个月同日；纯日期只写 `allDayDate`，明确时刻（含 00:00）只写 `dueAt`，时间页可移除时刻而保留日期 | `TaskDateController`、`DatePickerPopup`、`TaskDetailWidget`、`TaskPanel` |
 | 侧栏组织 | 智能入口与历史入口不显示分组标题；“清单”标题 hover 显示加号（键盘聚焦亦可见）。区域间为 1px 横线及上下 16px 留白，非导航分隔项使用无效 scope，不能冒充“所有”。归档清单位于可展开组；不提供独立的“已过期”筛选入口，第三列列表内逾期分组与顺延能力保留 | `SidebarSectionHeader`、`NavigationDelegate`、`TaskPanel` |
 | 智能入口设置 | 功能栏设置按钮打开独立 `SettingsDialog`；所有、今天、明天、最近7天、收集箱、已完成、已放弃、垃圾桶均支持显示／有实体时显示／隐藏（界面第二项称“有内容时显示”）；本机保存，不随业务备份，隐藏不阻断显式实体导航 | `SettingsDialog`、`SmartListSettingsWidget`、`Settings`、`TaskPanel` |
 | 清单归档与删除 | 归档只改清单资格，保留实体状态、日期、提醒与附件；活动聚合、提醒和活动桌面便签排除归档清单，直接清单与历史仍可见。删清单将全部实体移至收集箱并进入垃圾桶，保留 `status`、提醒与原已删时间，恢复后留在收集箱 | `TaskStore`、`TaskRepository`、`NoteManager`、`TaskPanel` |
@@ -22,7 +22,7 @@
 | 清单拖动与文件夹 | 普通未归档清单可拖动：上下边缘排序，平铺清单中心合并，文件夹内中心移动；拖动中显示插入线或圆角包围框。组织区末尾和可见空白可移到顶层末尾。合并先弹名称/图标编辑器，确认后原子建夹，取消不改组织归属、顺序或 revision；正文失焦仍按原编辑会话保存。不创建嵌套文件夹。文件夹可选择、展开/收起，置顶跨清单汇总，其余按清单分节 | `NavigationListWidget`、`NavigationDelegate`、`FolderEditorDialog`、`TaskStore`、`TaskPanel` |
 | 任务层级与手动顺序 | 父任务后连续展示子任务，支持折叠；跨分区归组后每个实体仅出现一次，计数不被折叠改变。拖动携带可见子树，同父级内排序保留各自实际置顶状态，跨父级仍走“关联主任务”。段内先 `sortOrder`，同值保留原日期/创建时间/置顶回退；进入/离开置顶区同步切换置顶状态。文件夹任务只能拖回自己的清单，禁止跨清单误投放 | `TaskListModel`、`TaskListView`、`TaskDelegate`、`TaskStore::moveEntityForDrop()` |
 | 时间区拖动 | 使用 `overdue/today/tomorrow/next7days` 稳定键；跨区分别落到昨天、今天、明天、后天，保留时刻/跨度/提醒，同段不改日期。子任务脱离父级按真实日期所属区判断，不沿父级显示日期误判。空置顶区及缺失的空时间分区仅在拖动时追加到归组后的列表底部，不移动原行；结束、取消或离开后移除 | `TaskDrop`、`TaskListModel`、`TaskListView`、`TaskStore` |
-| 快速添加与任务右键 | 快速添加为 10px 圆角、透明边框、语义浅底，placeholder 包含实际目标清单；文件夹选择成员清单，空文件夹禁用。右键复用日期、优先级、添加子任务、关联主任务、置顶、移动到、副本、转换与删除等已实现命令，保留完成状态和桌面便签，不展示标签/复制链接/未定义命令 | `QssBuilder`、`TaskPanel`、`EntityCommands`、`TaskStore::createSubtask()` |
+| 快速添加与任务右键 | 快速添加为 10px 圆角、透明边框，浅色底使用 `QuickAddBg=#F7F7F7`，placeholder 包含实际目标清单；日期按钮仅在输入行内聚焦或日期弹层打开时显示。文件夹选择成员清单，空文件夹禁用。右键复用日期、优先级、添加子任务、关联主任务、置顶、移动到、副本、转换与删除等已实现命令，保留完成状态和桌面便签，不展示标签/复制链接/未定义命令 | `QssBuilder`、`TaskPanel`、`EntityCommands`、`TaskStore::createSubtask()` |
 
 本轮不新增摘要、指派、标签或过滤器等范围外功能；早期参照矩阵中的范围外项目不构成本轮交付项。
 
@@ -95,7 +95,7 @@
 | 粉色渐变主题 | 蓝色 `#4772FA` 默认 | 粉色是采样账号自选主题，非默认规范 | ① |
 | 深色主题色值 | KylinList 自定 | 考据无深色色值证据 | — |
 | 设置弹窗 800×680 | 首轮集成在溢出菜单；2026-11-15 已有独立 `SettingsDialog` | 首轮菜单方案为历史；当前弹窗提供智能入口三态本机设置 | ①③ |
-| R07 完整项序 | 部分实现 | EntityCommands 提供框架；专注/模板/打印等未实现功能不展示入口 | ① |
+| R07 完整项序 | 部分实现 | EntityCommands 提供框架；专注/模板等未实现功能不展示入口 | ① |
 | 日期弹层 260×540 | 约 280×520 | Qt 控件尺寸与 CSS 略有差异，保持比例 | ① |
 | 详情低频字段平铺 | 全部收进「更多设置」折叠区 | 用户验收指出首版 R8 仍把三行日期编辑/重复/预设/附件/检查清单/便签外观全铺开，正文被挤到中部；按 `01:29-48`、`07:28` 二次重构为固定顶栏+正文主区+固定底栏 | ①⑤ |
 | 日期弹层入口 | 顶栏「设置日期」chip | 首版 R7 的 `DatePickerPopup` 为死代码，本次接入 `openDatePicker()` | ① |
@@ -129,7 +129,7 @@
 | 细节 | 本轮规格 | 实现 |
 |---|---|---|
 | 分隔线 | 工作区列表与详情之间 1 逻辑像素；日期栏下 1 像素细线 | `TaskPanel`、`QssBuilder` |
-| 顶栏 | 日期／提醒在左、信息图标在右；任务完成及优先级收进更多菜单 | `TaskDetailWidget` |
+| 顶栏 | 任务完成框、日期／提醒在左、信息图标在右；优先级收进更多菜单。覆盖详情关闭在最左且右侧信息前有分割线，普通停靠不显示关闭；子任务父级链接为 13px/22px、距标题 8px，可点击跳转 | `TaskDetailWidget` |
 | 日期状态 | 上海时区显示 `yyyy/MM/dd`；有效未完成任务显示「延期 N 天」，逾期文字和日历图标同色 | `updateDateChip()` |
 | 标题与正文 | 仍为两个字段；标题无框、同背景、同左边缘，与正文一起滚动，靠字重字号区分 | `TaskDetailForm`、`MarkdownEditor::setFlowLayout()` |
 | 检查项与附件 | 每项一行、内容决定高度、无常驻分区标题、无空态占位；一个外层滚动区 | `TaskChecklist`、`AttachmentWidget::setInlineMode()` |
@@ -162,7 +162,7 @@
 | 窗口操作 | 顶部空白拖动、双击最大化／还原；Windows 边缘和角落可缩放；关闭仍遵循托盘语义 | `WindowDragArea`、`TaskPanel::nativeEvent()` |
 | 第一列 | 52px 窄功能栏：本机工作区、任务、搜索、笔记、数据说明、设置 | `ActivityRail` |
 | 第二列 | 232px 筛选与组织栏：智能筛选、收集箱、文件夹／清单、历史；新建入口收在顶部 | `Sidebar`、`NavigationDelegate` |
-| 第三列 | 清单标题、计数、排序与更多；40px 整行快速添加；搜索由功能栏按需展开 | `ListPane`、`QuickAddFrame` |
+| 第三列 | 折叠、清单标题、计数与更多；40px 整行快速添加，日期入口仅在行内聚焦或日期弹层打开时显示；搜索由功能栏按需展开 | `ListPane`、`QuickAddFrame` |
 | 第四列 | 选中实体才显示；详情关闭按钮收起后第三列占满余宽；窗口按钮不与详情信息按钮重叠 | `WorkspaceSplitter`、`DetailClose` |
 | 底部状态栏 | 完全移除，不保留空白条；临时反馈使用轻提示，错误仍就地显示 | `TaskPanel::showNotice()` |
 | 系统阴影 | 主窗口也声明 `Qt::NoDropShadowWindowHint`，沿用全局原生阴影禁用策略 | `TaskPanel`、`SystemShadow` |
@@ -206,7 +206,7 @@
 | 两个可调边界 | 第二列 180–360px，第四列按可用空间调整；两个 handle 均为 1px，第一列固定 52px | `WorkspaceSplitter`、`QssBuilder` |
 | 第二列显隐 | 列表标题栏提供显隐按钮；手动隐藏与自动隐藏分开记录，列宽分别持久化 | `TaskPanel`、`SidebarToggle` |
 | 响应式顺序 | 变窄先收第四列，再收第二列；拉宽先恢复第二列，再恢复第四列，保留用户列宽 | `TaskPanel::reconcileWorkspaceLayout()` |
-| 覆盖详情 | 第四列自动隐藏后，选中实体在右侧显示约 300px 覆盖详情，不改变列表宽度；关闭按钮紧邻提醒，关闭只隐藏浮层 | `TaskPanel::updateDetailOverlayGeometry()`、`TaskDetailWidget::setOverlayMode()` |
+| 覆盖详情 | 第四列自动隐藏后，选中实体在右侧显示约 300px 覆盖详情，不改变列表宽度；关闭按钮位于最左且只隐藏浮层，普通停靠详情不显示关闭 | `TaskPanel::updateDetailOverlayGeometry()`、`TaskDetailWidget::setOverlayMode()` |
 | 分界缺角 | 中间列不再误用窗口外缘圆角；分割线与栏背景不重复描边，第三／第四列上端无透底小角 | `QssBuilder` |
 
 验证：`workspaceUsesFourColumnsAndNoPermanentStatusBar` 更新为常驻空白详情语义；`responsiveColumnsAndOverlayDetail` 覆盖两个 1px 边界、固定功能栏、最小窗口、自动隐藏／恢复、覆盖详情几何与关闭、手动隐藏第二列。原生 Windows 截图新增 `workspace-divider-detail.png`、`task-panel-auto-three-columns.png`、`task-panel-detail-overlay.png`、`task-panel-auto-two-columns.png`，核对分界上端、覆盖堆叠和两列状态。以上仍不是银河麒麟 V10 SP 目标机验收。

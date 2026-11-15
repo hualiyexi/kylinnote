@@ -100,7 +100,6 @@
 #include "ui/TaskListModel.h"
 #include "ui/TaskListView.h"
 #include "ui/TaskPanel.h"
-#include "ui/TaskPrintDocument.h"
 #include "ui/SidebarSectionHeader.h"
 #include "ui/ToastIsland.h"
 #include "ui/UpdateDialog.h"
@@ -976,7 +975,9 @@ private slots:
         auto* info = detailPane->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
         QVERIFY(info);
         QVERIFY(rectIn(info, &panel).top() >= rectIn(controls, &panel).bottom());
-        QTest::mouseClick(detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose")), Qt::LeftButton);
+        auto* close = detailPane->findChild<QToolButton*>(QStringLiteral("DetailClose"));
+        QVERIFY(close && !close->isVisible()); // 普通停靠详情没有关闭按钮。
+        QVERIFY(panel.findChild<TaskDetailWidget*>()->setTask(QString()));
         QTRY_VERIFY(detailPane->isVisible());
         QVERIFY(panel.findChild<TaskDetailWidget*>()->entityId().isEmpty());
         QCOMPARE(rectIn(listPane, &panel).right(), rectIn(detailPane, &panel).left() - 2);
@@ -1262,7 +1263,7 @@ private slots:
         QVERIFY(more);
         bool menuOpened = false, settingsOpened = false;
         int menuCardWidth = 0;
-        QStringList actionTexts, printTexts;
+        QStringList actionTexts;
         QImage menuImage;
         QTimer::singleShot(0, &panel, [&]() {
             auto* menu = panel.findChild<PopupMenu*>(QStringLiteral("WorkspaceMenu"));
@@ -1274,8 +1275,6 @@ private slots:
             for (QAction* action : menu->actions()) actionTexts.append(action->text());
             menuCardWidth = menu->width() - 2 * PopupMenu::shadowMargin();
             menuImage = menu->grab().toImage();
-            auto* printMenu = menu->findChild<PopupMenu*>(QStringLiteral("PrintMenu"));
-            if (printMenu) for (QAction* action : printMenu->actions()) printTexts.append(action->text());
             if (auto* action = menu->findChild<QAction*>(QStringLiteral("HideCompleted")))
                 action->trigger();
             if (auto* action = menu->findChild<QAction*>(QStringLiteral("HideDetails")))
@@ -1299,10 +1298,9 @@ private slots:
         QTest::mouseClick(more, Qt::LeftButton);
         QVERIFY(menuOpened);
         QCOMPARE(actionTexts, QStringList({QStringLiteral("显示已完成"), QStringLiteral("显示详细"),
-                                           QStringLiteral("显示设置"), QStringLiteral("打印")}));
+                                           QStringLiteral("显示设置")}));
         QVERIFY(!actionTexts.contains(QStringLiteral("视图")));
-        QCOMPARE(printTexts, QStringList({QStringLiteral("打印标题"),
-                                          QStringLiteral("打印标题和内容")}));
+        QVERIFY(!actionTexts.contains(QStringLiteral("打印")));
         QCOMPARE(menuCardWidth, 164);
         QVERIFY(settingsOpened);
         auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
@@ -1357,11 +1355,45 @@ private slots:
         filter.showDetails = true;
         model.setFilter(filter);
         activeIndex = model.indexForTask(activeId);
-        QCOMPARE(delegate.sizeHint(option, activeIndex).height(), normalHeight + 24);
+        QCOMPARE(delegate.sizeHint(option, activeIndex).height(), normalHeight + 22);
+        option.rect = QRect(0, 0, 600, normalHeight + 22);
+        option.state = QStyle::State_Enabled | QStyle::State_Selected;
+        QImage rowImage(option.rect.size(), QImage::Format_ARGB32_Premultiplied);
+        rowImage.fill(ThemeManager::instance().color(ds::ColorToken::Surface));
+        QPainter rowPainter(&rowImage);
+        delegate.paint(&rowPainter, option, activeIndex);
+        rowPainter.end();
+        const QRgb selected = ThemeManager::instance().color(ds::ColorToken::RowSelected).rgba();
+        QCOMPARE(rowImage.pixel(300, 0), selected);
+        QCOMPARE(rowImage.pixel(300, normalHeight + 21), selected);
         filter.countdownDates = true;
         model.setFilter(filter);
         activeIndex = model.indexForTask(activeId);
         QCOMPARE(activeIndex.data(TaskListModel::ScheduleRole).toString(), QStringLiteral("1天后"));
+        const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+        if (!screenshots.isEmpty()) {
+            TaskPanel panel(m_store.get());
+            panel.resize(1000, 700);
+            panel.show();
+            auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+            auto* panelModel = view ? qobject_cast<TaskListModel*>(view->model()) : nullptr;
+            QVERIFY(view && panelModel);
+            panelModel->setFilter(filter);
+            panel.showTask(activeId);
+            const QModelIndex index = panelModel->indexForTask(activeId);
+            QVERIFY(index.isValid());
+            QTRY_COMPARE(view->visualRect(index).height(), normalHeight + 22);
+            const QRect row = view->visualRect(index).adjusted(0, -4, 0, 4);
+            const QPixmap grabbed = view->viewport()->grab();
+            const qreal dpr = grabbed.devicePixelRatio();
+            const QRect physical(qRound(row.x() * dpr), qRound(row.y() * dpr),
+                                 qRound(row.width() * dpr), qRound(row.height() * dpr));
+            const QImage image = grabbed.toImage().copy(physical);
+            QVERIFY(QDir().mkpath(screenshots));
+            QVERIFY(image.scaled(image.width() * 3, image.height() * 3,
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/task-row-detail-62.png")));
+        }
     }
 
     void displaySettingsDialogMatchesWebOptions() {
@@ -1391,27 +1423,6 @@ private slots:
                                  Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
                 .save(screenshots + QStringLiteral("/workspace-display-settings.png")));
         }
-    }
-
-    void printDocumentUsesVisibleTitlesAndOptionalContent() {
-        const QString id = m_store->createTask(QStringLiteral("打印任务"));
-        Entity task = m_store->entity(id);
-        task.body = QStringLiteral("正文第一行\n正文第二行");
-        ChecklistItem item;
-        item.text = QStringLiteral("打印检查项");
-        task.checklist.append(item);
-        QVERIFY(m_store->saveTask(task));
-        TaskListModel model(m_store.get());
-        QTextDocument titles;
-        populateTaskPrintDocument(&titles, model, *m_store, QStringLiteral("打印视图"), false);
-        QVERIFY(titles.toPlainText().contains(QStringLiteral("打印任务")));
-        QVERIFY(!titles.toPlainText().contains(QStringLiteral("正文第一行")));
-        QVERIFY(!titles.toPlainText().contains(QStringLiteral("打印检查项")));
-        QTextDocument content;
-        populateTaskPrintDocument(&content, model, *m_store, QStringLiteral("打印视图"), true);
-        QVERIFY(content.toPlainText().contains(QStringLiteral("正文第一行")));
-        QVERIFY(content.toPlainText().contains(QStringLiteral("正文第二行")));
-        QVERIFY(content.toPlainText().contains(QStringLiteral("打印检查项")));
     }
 
     void responsiveColumnsAndOverlayDetail() {
@@ -1500,8 +1511,8 @@ private slots:
         QVERIFY(rectIn(detail, &panel).left() > rectIn(list, &panel).left());
         auto* close = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));
         auto* reminder = detail->findChild<QToolButton*>(QStringLiteral("DetailReminder"));
-        QVERIFY(close && reminder);
-        QVERIFY(rectIn(close, &panel).left() >= rectIn(reminder, &panel).right());
+        QVERIFY(close && reminder && close->isVisible());
+        QVERIFY(rectIn(close, &panel).left() < rectIn(reminder, &panel).left());
         QTest::mouseClick(close, Qt::LeftButton);
         QTRY_VERIFY(!detail->isVisible());
         QVERIFY(!overlayShadow->isVisible());
@@ -2007,6 +2018,128 @@ private slots:
         QTRY_COMPARE(combo.currentIndex(), 2);
         QTRY_VERIFY(choices.isNull() || !choices->isVisible());
     }
+    void quickAddUsesSharedDateControllerAndFocusVisibility() {
+        TaskPanel panel(m_store.get());
+        panel.resize(1000, 700);
+        panel.show();
+        auto* quick = panel.findChild<QLineEdit*>(QStringLiteral("QuickAdd"));
+        auto* quickFrame = panel.findChild<QFrame*>(QStringLiteral("QuickAddFrame"));
+        auto* date = panel.findChild<QToolButton*>(QStringLiteral("QuickAddDate"));
+        QVERIFY(quick && quickFrame && date);
+        QVERIFY(!date->isVisible());
+        const QColor quickBg = ThemeManager::instance().color(ds::ColorToken::QuickAddBg);
+        QCOMPARE(quickBg.name(), QStringLiteral("#f7f7f7"));
+        const QPixmap frameGrab = quickFrame->grab();
+        const QImage frameImage = frameGrab.toImage();
+        const int sampleX = qRound(4 * frameGrab.devicePixelRatio());
+        QCOMPARE(QColor::fromRgba(frameImage.pixel(sampleX, frameImage.height() / 2)).rgba(),
+                 quickBg.rgba());
+        QCOMPARE(panel.findChildren<TaskDateController*>().count(), 1);
+
+        quick->setFocus();
+        QTRY_VERIFY(date->isVisible());
+        QTest::mouseClick(date, Qt::LeftButton);
+        QPointer<DatePickerPopup> picker = panel.findChild<DatePickerPopup*>();
+        QVERIFY(picker); QTRY_VERIFY(picker->isVisible());
+        const QDate chosen = toAppTime(appNow()).date().addDays(2);
+        picker->setAllDayDate(chosen);
+        picker->accept();
+        QTRY_VERIFY(!picker);
+        QCOMPARE(date->text(), chosen.toString(QStringLiteral("M月d日")));
+        QVERIFY(date->property("hasDate").toBool());
+        const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+        if (!screenshots.isEmpty()) {
+            const QImage image = quickFrame->grab().toImage();
+            QVERIFY(QDir().mkpath(screenshots));
+            QVERIFY(image.scaled(image.width() * 3, image.height() * 3,
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/quick-add-date-focused.png")));
+        }
+        quick->setText(QStringLiteral("共享日期的新任务"));
+        QTest::keyClick(quick, Qt::Key_Return);
+        QString id;
+        for (const Entity& entity : m_store->entities())
+            if (entity.title == QStringLiteral("共享日期的新任务")) id = entity.id;
+        QVERIFY(isUuid(id));
+        QCOMPARE(m_store->entity(id).allDayDate, chosen);
+        QTRY_VERIFY(!date->isVisible());
+        QVERIFY(!date->property("hasDate").toBool());
+
+        quick->setFocus();
+        QTRY_VERIFY(date->isVisible());
+        quick->setText(QStringLiteral("不继承旧日期"));
+        QTest::keyClick(quick, Qt::Key_Return);
+        QString second;
+        for (const Entity& entity : m_store->entities())
+            if (entity.title == QStringLiteral("不继承旧日期")) second = entity.id;
+        QVERIFY(isUuid(second));
+        QVERIFY(!m_store->entity(second).allDayDate.isValid());
+        QVERIFY(!m_store->entity(second).dueAt.isValid());
+    }
+
+    void overlayDetailShowsCloseCompletionAndParentLink() {
+        const QString parentId = m_store->createTask(QStringLiteral("父任务"));
+        const QString childId = m_store->createSubtask(QStringLiteral("子任务"), parentId);
+        QVERIFY(isUuid(childId));
+        TaskPanel panel(m_store.get());
+        panel.resize(900, 700);
+        panel.show();
+        panel.showTask(childId);
+        auto* frame = panel.findChild<QFrame*>(QStringLiteral("DetailFrame"));
+        auto* detail = panel.findChild<TaskDetailWidget*>();
+        QTRY_VERIFY(frame && frame->isVisible() && frame->property("overlay").toBool());
+        QVERIFY(detail);
+        auto* close = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));
+        auto* completed = detail->findChild<QCheckBox*>(QStringLiteral("TaskCompleted"));
+        auto* separator = detail->findChild<QFrame*>(QStringLiteral("DetailHeaderSeparatorHost"));
+        auto* parentHost = detail->findChild<QWidget*>(QStringLiteral("ParentTaskHost"));
+        auto* parentLink = detail->findChild<QPushButton*>(QStringLiteral("ParentTaskLink"));
+        auto* parentArrow = detail->findChild<QToolButton*>(QStringLiteral("ParentTaskArrow"));
+        auto* title = detail->findChild<QLineEdit*>(QStringLiteral("TaskTitle"));
+        auto* date = detail->findChild<QPushButton*>(QStringLiteral("DateChip"));
+        auto* info = detail->findChild<QToolButton*>(QStringLiteral("DetailInfo"));
+        QVERIFY(close && completed && separator && parentHost && parentLink && parentArrow && title && date && info);
+        QVERIFY(close->isVisible() && completed->isVisible() && separator->isVisible());
+        QVERIFY(parentHost->isVisible() && parentLink->isVisible());
+        QVERIFY(rectIn(close, detail).right() < rectIn(completed, detail).left());
+        QVERIFY(rectIn(completed, detail).right() < rectIn(date, detail).left());
+        QVERIFY(rectIn(separator, detail).right() < rectIn(info, detail).left());
+        QCOMPARE(parentLink->height(), 22);
+        QCOMPARE(rectIn(parentLink, detail).left(), rectIn(title, detail).left());
+        QVERIFY(rectIn(parentLink, detail).left() < rectIn(parentArrow, detail).left());
+        QCOMPARE(parentLink->font().pointSizeF(), ds::pointSize(ds::TypeScale::Menu));
+        QCOMPARE(rectIn(title, detail).top() - rectIn(parentLink, detail).top() - parentLink->height(), 8);
+        const QImage checkImage = completed->grab().toImage();
+        const QRgb headerBg = ThemeManager::instance().color(ds::ColorToken::Surface).rgba();
+        bool checkInk = false;
+        for (int y = 0; y < checkImage.height(); ++y)
+            for (int x = 0; x < checkImage.width(); ++x)
+                if (qAlpha(checkImage.pixel(x, y)) > 40 && checkImage.pixel(x, y) != headerBg)
+                    checkInk = true;
+        QVERIFY(checkInk);
+        const QString screenshots = QString::fromLocal8Bit(qgetenv("KYLINLIST_SCREENSHOT_DIR"));
+        if (!screenshots.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshots));
+            const QImage image = detail->grab().toImage().copy(0, 0, detail->width(), 180);
+            QVERIFY(image.scaled(image.width() * 2, image.height() * 2,
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(screenshots + QStringLiteral("/detail-overlay-parent.png")));
+        }
+        QTest::mouseClick(parentLink, Qt::LeftButton);
+        QTRY_COMPARE(detail->entityId(), parentId);
+        QVERIFY(parentHost->isHidden());
+        QTest::mouseClick(close, Qt::LeftButton);
+        QTRY_VERIFY(!frame->isVisible());
+
+        panel.resize(1240, 820);
+        panel.showTask(childId);
+        QTRY_VERIFY(frame->isVisible() && !frame->property("overlay").toBool());
+        QVERIFY(!close->isVisible());
+        QVERIFY(!separator->isVisible());
+        QVERIFY(completed->isVisible());
+        QVERIFY(parentHost->isVisible());
+    }
+
     void dateControllerTargetsOnlyItsEntity() {
         const QString first = m_store->createTask(QStringLiteral("本次日期目标"));
         const QString second = m_store->createTask(QStringLiteral("另一个实体"));
@@ -4072,7 +4205,7 @@ private slots:
         auto* priority = detail.findChild<QComboBox*>(QStringLiteral("TaskPriority"));
         QVERIFY(header && date && info && title && completed && priority);
         QVERIFY(!header->isAncestorOf(title)); QVERIFY(header->isAncestorOf(date)); QVERIFY(header->isAncestorOf(info));
-        QVERIFY(completed->isHidden()); QVERIFY(priority->isHidden());
+        QVERIFY(completed->isVisible()); QVERIFY(priority->isHidden());
         QVERIFY(date->isVisible()); QVERIFY(info->isVisible());
         QVERIFY(rectIn(info, header).left() > rectIn(date, header).right());
         for (QPushButton* button : header->findChildren<QPushButton*>())
@@ -4082,7 +4215,8 @@ private slots:
                 QVERIFY(button->accessibleName().contains(QStringLiteral("提醒")) || button->toolTip().contains(QStringLiteral("提醒")));
         for (QLineEdit* field : header->findChildren<QLineEdit*>()) QVERIFY(!field->isVisible());
         for (QComboBox* field : header->findChildren<QComboBox*>()) QVERIFY(!field->isVisible());
-        for (QCheckBox* field : header->findChildren<QCheckBox*>()) QVERIFY(!field->isVisible());
+        for (QCheckBox* field : header->findChildren<QCheckBox*>())
+            if (field != completed) QVERIFY(!field->isVisible());
 
         detail.activateWindow(); detail.focusTitle(); QTest::keyClicks(title, QStringLiteral("Menu keeps this title"));
         QVERIFY(triggerDetailCommand(detail, QStringLiteral("CmdPriority3")));
@@ -4098,7 +4232,7 @@ private slots:
         QVERIFY(!status || !status->isVisible() || status->text().isEmpty());
         QVERIFY(detail.setTask(QString())); QVERIFY(detail.setTask(id));
         QCOMPARE(title->text(), QStringLiteral("Menu keeps this title"));
-        QVERIFY(completed->isHidden()); QVERIFY(priority->isHidden());
+        QVERIFY(completed->isVisible()); QVERIFY(priority->isHidden());
         QVERIFY(!status || !status->isVisible() || status->text().isEmpty());
     }
 
@@ -4717,8 +4851,8 @@ private slots:
             panel.showTask();
             QTest::qWait(30);
             auto* closeDetail = detail->findChild<QToolButton*>(QStringLiteral("DetailClose"));
-            QVERIFY(closeDetail);
-            QTest::mouseClick(closeDetail, Qt::LeftButton);
+            QVERIFY(closeDetail && !closeDetail->isVisible());
+            QVERIFY(detail->setTask(QString()));
             QTRY_VERIFY(panel.findChild<QFrame*>(QStringLiteral("DetailFrame"))->isVisible());
             QVERIFY(panel.findChild<TaskDetailWidget*>()->entityId().isEmpty());
             QVERIFY(panel.grab().save(dir + QStringLiteral("/task-panel-three-columns.png")));

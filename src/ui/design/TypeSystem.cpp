@@ -115,6 +115,9 @@ QFont qfont(FontScene scene) {
             f.setPointSizeF(pointSize(TypeScale::Subtitle));
             f.setWeight(QFont::DemiBold);
             break;
+        case FontScene::Menu:
+            f.setPointSizeF(pointSize(TypeScale::Menu));
+            break;
         case FontScene::Count:
             break;
     }

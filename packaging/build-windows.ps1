@@ -166,7 +166,7 @@ try {
         '--dir', $StageDir, $App)
     # Explicitly require the features that windeployqt's dependency scan can miss.
     foreach ($Plugin in @('platforms/qwindows.dll', 'platforms/qoffscreen.dll', 'sqldrivers/qsqlite.dll',
-            'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll', 'printsupport/windowsprintersupport.dll')) {
+            'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll')) {
         $PluginPath = $Plugin
         if ($Configuration -eq 'Debug') { $PluginPath = $Plugin -replace '\.dll$', 'd.dll' }
         $Destination = Join-Path $StageDir $PluginPath
@@ -184,7 +184,6 @@ try {
     if ($Configuration -eq 'Debug') { $Suffix = 'd' }
     foreach ($Required in @("Qt5Core$Suffix.dll", "Qt5Gui$Suffix.dll", "Qt5Widgets$Suffix.dll",
             "Qt5Sql$Suffix.dll", "Qt5Network$Suffix.dll", "Qt5Svg$Suffix.dll",
-            "Qt5PrintSupport$Suffix.dll",
             'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll')) {
         $DeployedLibrary = Join-Path $StageDir $Required
         if (-not (Test-Path -LiteralPath $DeployedLibrary -PathType Leaf)) {

@@ -89,7 +89,6 @@ QString iconNameFor(IconId id) {
         case IconId::HideCompleted: return "hide-completed";
         case IconId::HideDetails: return "hide-details";
         case IconId::DisplaySettings: return "calendar-config";
-        case IconId::Print: return "print-in-list";
         case IconId::Help: return "help";
         case IconId::Sync: return "sidebar-sync";
 
@@ -302,7 +301,6 @@ QString accessibleName(IconId id) {
         case IconId::HideCompleted: return QStringLiteral("显示或隐藏已完成");
         case IconId::HideDetails: return QStringLiteral("显示或隐藏详细");
         case IconId::DisplaySettings: return QStringLiteral("显示设置");
-        case IconId::Print: return QStringLiteral("打印");
         case IconId::Help: return QStringLiteral("帮助");
         case IconId::Sync: return QStringLiteral("本机数据");
         default: return QString();

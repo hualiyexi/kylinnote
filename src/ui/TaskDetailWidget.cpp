@@ -41,6 +41,20 @@
 
 namespace kl {
 namespace {
+class CompletionCheckBox final : public QCheckBox {
+public:
+    explicit CompletionCheckBox(QWidget* parent) : QCheckBox(parent) {}
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        const QRectF glyph((width() - 17.0) / 2.0, (height() - 17.0) / 2.0, 17.0, 17.0);
+        const QColor color = ThemeManager::instance().color(
+            isEnabled() ? ds::ColorToken::TextSecondary : ds::ColorToken::TextTertiary);
+        const QString icon = isChecked() ? QStringLiteral("completed")
+            : (underMouse() ? QStringLiteral("hover-checkbox") : QStringLiteral("checkbox"));
+        AppIcons::paint(&painter, icon, glyph, color);
+    }
+};
+
 class InlineChecklistDelegate final : public QStyledItemDelegate {
 public:
     explicit InlineChecklistDelegate(QObject* parent) : QStyledItemDelegate(parent) {}
@@ -116,16 +130,14 @@ TaskDetailWidget::TaskDetailWidget(TaskStore* store, QWidget* parent) : QWidget(
 
 void TaskDetailWidget::setOverlayMode(bool overlay) {
     m_overlayMode = overlay;
-    // 覆盖模式把关闭放在提醒旁；停靠模式保留信息按钮后的常规位置。
     if (auto* header = findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
-        if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
+        if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout()))
             layout->setContentsMargins(overlay ? 12 : 20, 6, overlay ? 10 : 16, 6);
-            layout->removeWidget(m_closeButton);
-            layout->insertWidget(overlay ? 2 : layout->count(), m_closeButton);
-            layout->invalidate();
-            layout->activate();
-        }
     }
+    // 关闭与右侧分割线只属于覆盖模式；任务完成框在两种详情模式都可用。
+    m_closeButton->setVisible(overlay);
+    m_headerSeparator->setVisible(overlay);
+    updateEnabled();
 }
 
 void TaskDetailWidget::buildUi() {
@@ -156,6 +168,28 @@ void TaskDetailWidget::buildUi() {
     headerLayout->setContentsMargins(20, 6, 16, 6);
     headerLayout->setSpacing(2);
 
+    m_closeButton = new QToolButton(header);
+    m_closeButton->setObjectName(QStringLiteral("DetailClose"));
+    m_closeButton->setFixedSize(28, 28);
+    m_closeButton->setAutoRaise(true);
+    m_closeButton->setCursor(Qt::PointingHandCursor);
+    m_closeButton->setToolTip(QStringLiteral("关闭详情"));
+    m_closeButton->setAccessibleName(QStringLiteral("关闭详情"));
+    connect(m_closeButton, &QToolButton::clicked, this, [this]() {
+        if (finishEditing()) emit closeRequested();
+    });
+    headerLayout->addWidget(m_closeButton);
+    m_closeButton->hide();
+
+    m_completed = new CompletionCheckBox(header);
+    m_completed->setObjectName(QStringLiteral("TaskCompleted"));
+    m_completed->setFixedSize(20, 28);
+    m_completed->setCursor(Qt::PointingHandCursor);
+    m_completed->setToolTip(QStringLiteral("完成"));
+    m_completed->setAccessibleName(QStringLiteral("完成"));
+    headerLayout->addWidget(m_completed);
+    m_completed->hide();
+
     m_dateChip = new QPushButton(header);
     m_dateChip->setObjectName(QStringLiteral("DateChip"));
     m_dateChip->setToolTip(QStringLiteral("设置日期、时间与提醒"));
@@ -174,6 +208,19 @@ void TaskDetailWidget::buildUi() {
     headerLayout->addWidget(m_reminderButton);
     headerLayout->addStretch(1);
 
+    m_headerSeparator = new QFrame(header);
+    m_headerSeparator->setObjectName(QStringLiteral("DetailHeaderSeparatorHost"));
+    m_headerSeparator->setFixedSize(17, 20);
+    auto* separatorLayout = new QHBoxLayout(m_headerSeparator);
+    separatorLayout->setContentsMargins(8, 0, 8, 0);
+    separatorLayout->setSpacing(0);
+    auto* separatorLine = new QFrame(m_headerSeparator);
+    separatorLine->setObjectName(QStringLiteral("DetailHeaderSeparator"));
+    separatorLine->setFixedSize(1, 20);
+    separatorLayout->addWidget(separatorLine);
+    headerLayout->addWidget(m_headerSeparator);
+    m_headerSeparator->hide();
+
     m_infoButton = new QToolButton(header);
     m_infoButton->setObjectName(QStringLiteral("DetailInfo"));
     m_infoButton->setFixedSize(28, 28);
@@ -183,21 +230,7 @@ void TaskDetailWidget::buildUi() {
     connect(m_infoButton, &QToolButton::clicked, this, &TaskDetailWidget::showInfoPopup);
     headerLayout->addWidget(m_infoButton);
 
-    m_closeButton = new QToolButton(header);
-    m_closeButton->setObjectName(QStringLiteral("DetailClose"));
-    m_closeButton->setFixedSize(28, 28);
-    m_closeButton->setAutoRaise(true);
-    m_closeButton->setToolTip(QStringLiteral("关闭详情"));
-    m_closeButton->setAccessibleName(QStringLiteral("关闭详情"));
-    connect(m_closeButton, &QToolButton::clicked, this, [this]() {
-        if (finishEditing()) emit closeRequested();
-    });
-    headerLayout->addWidget(m_closeButton);
-
-    // 保留值控件供字段级保存使用；入口统一放在更多菜单。
-    m_completed = new QCheckBox(header);
-    m_completed->setObjectName(QStringLiteral("TaskCompleted"));
-    m_completed->hide();
+    // 其余隐藏值控件仅供字段级保存和兼容测试使用。
     m_pinnedAt = new QCheckBox(header);
     m_pinnedAt->setObjectName(QStringLiteral("TaskPinnedAt"));
     m_pinnedAt->hide();
@@ -232,6 +265,38 @@ void TaskDetailWidget::buildUi() {
     auto* layout = new QVBoxLayout(m_form);
     layout->setContentsMargins(24, 12, 24, 20);
     layout->setSpacing(4);
+
+    m_parentHost = new QWidget(m_form);
+    m_parentHost->setObjectName(QStringLiteral("ParentTaskHost"));
+    m_parentHost->setFixedHeight(26); // 22px 行高 + 4px；与主布局 4px 间距合计 8px。
+    auto* parentLayout = new QHBoxLayout(m_parentHost);
+    parentLayout->setContentsMargins(0, 0, 0, 4);
+    parentLayout->setSpacing(0);
+    m_parentLink = new QPushButton(m_parentHost);
+    m_parentLink->setObjectName(QStringLiteral("ParentTaskLink"));
+    m_parentLink->setFont(ds::qfont(ds::FontScene::Menu));
+    m_parentLink->setFixedHeight(22);
+    m_parentLink->setMaximumWidth(220);
+    m_parentLink->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    m_parentLink->setFlat(true);
+    m_parentLink->setCursor(Qt::PointingHandCursor);
+    const auto openParent = [this]() {
+        if (!m_parentId.isEmpty()) emit internalLinkRequested(m_parentId);
+    };
+    connect(m_parentLink, &QPushButton::clicked, this, openParent);
+    parentLayout->addWidget(m_parentLink, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    m_parentArrow = new QToolButton(m_parentHost);
+    m_parentArrow->setObjectName(QStringLiteral("ParentTaskArrow"));
+    m_parentArrow->setFixedSize(12, 22);
+    m_parentArrow->setIconSize(QSize(12, 12));
+    m_parentArrow->setAutoRaise(true);
+    m_parentArrow->setCursor(Qt::PointingHandCursor);
+    m_parentArrow->setAccessibleName(QStringLiteral("打开父任务"));
+    connect(m_parentArrow, &QToolButton::clicked, this, openParent);
+    parentLayout->addWidget(m_parentArrow, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    parentLayout->addStretch(1);
+    layout->addWidget(m_parentHost);
+    m_parentHost->hide();
 
     m_title = new QLineEdit(m_form);
     m_title->setObjectName(QStringLiteral("TaskTitle"));
@@ -761,6 +826,7 @@ void TaskDetailWidget::refreshIcons() {
     m_moreButton->setIcon(AppIcons::icon(IconId::More, 16));
     updateDateChip();
     refreshGroups();
+    updateParentLink();
 }
 
 void TaskDetailWidget::updateDateChip() {
@@ -788,6 +854,26 @@ void TaskDetailWidget::updateDateChip() {
     for (const TaskReminder& reminder : entity.reminders)
         reminders.append(toAppTime(reminder.triggerAt).toString(QStringLiteral("yyyy/MM/dd HH:mm")));
     m_reminderButton->setToolTip(QStringLiteral("提醒\n") + reminders.join(QLatin1Char('\n')));
+}
+
+void TaskDetailWidget::updateParentLink() {
+    if (!m_parentHost || !m_parentLink || !m_parentArrow) return;
+    const Entity current = m_store->entity(m_id);
+    m_parentId = current.parentId;
+    const Entity parent = m_store->entity(m_parentId);
+    if (parent.id.isEmpty()) m_parentId.clear();
+    m_parentHost->setVisible(!m_parentId.isEmpty());
+    if (m_parentId.isEmpty()) {
+        m_parentLink->setText(QString());
+        m_parentArrow->setIcon(QIcon());
+        return;
+    }
+    m_parentLink->setToolTip(parent.title);
+    m_parentLink->setAccessibleName(QStringLiteral("父任务：") + parent.title);
+    m_parentLink->setText(m_parentLink->fontMetrics().elidedText(
+        parent.title, Qt::ElideRight, 220));
+    m_parentArrow->setIcon(AppIcons::icon(QStringLiteral("chevron-right"),
+                                          ds::ColorToken::TextTertiary, 12));
 }
 
 void TaskDetailWidget::setSettingsExpanded(bool expanded) {
@@ -910,7 +996,7 @@ void TaskDetailWidget::updateEnabled() {
     const Entity entity = m_store->entity(m_id);
     const bool enabled = !entity.deleted;
     const bool task = entity.kind == EntityKind::Task;
-    m_completed->hide();
+    m_completed->setVisible(task && !m_id.isEmpty());
     m_priority->hide();
     m_dateChip->setVisible(task);
     m_dateChip->setEnabled(enabled && task);
@@ -928,6 +1014,7 @@ void TaskDetailWidget::updateEnabled() {
     m_commentButton->setEnabled(true);
     m_moreButton->setEnabled(true);
     m_attachments->setReadOnly(!enabled);
+    updateParentLink();
 }
 
 void TaskDetailWidget::dirty(const QString& field) {
