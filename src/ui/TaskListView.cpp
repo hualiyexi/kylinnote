@@ -9,6 +9,7 @@
 #include <QPainter>
 
 #include "AppStyle.h"
+#include "TaskDelegate.h"
 #include "TaskListModel.h"
 
 namespace kl {
@@ -18,6 +19,8 @@ TaskListView::TaskListView(QWidget* parent) : QListView(parent)
     setDragDropMode(QAbstractItemView::DragDrop);
     setDefaultDropAction(Qt::MoveAction);
     setDropIndicatorShown(false);
+    // 日期区域未按键时也要更新手型指针，viewport 必须开启鼠标跟踪。
+    viewport()->setMouseTracking(true);
 }
 
 QString TaskListView::mimeType()
@@ -44,9 +47,15 @@ void TaskListView::mouseMoveEvent(QMouseEvent* event)
 {
     QListView::mouseMoveEvent(event);
     const QModelIndex index = indexAt(event->pos());
-    const bool header = index.isValid()
-        && index.data(TaskListModel::HeaderRole).toBool();
-    viewport()->setCursor(header ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    bool clickable = index.isValid() && index.data(TaskListModel::HeaderRole).toBool();
+    if (index.isValid() && !clickable) {
+        if (auto* delegate = qobject_cast<TaskDelegate*>(itemDelegate())) {
+            QStyleOptionViewItem option;
+            option.rect = visualRect(index);
+            clickable = delegate->dateHitRect(option, index).contains(event->pos());
+        }
+    }
+    viewport()->setCursor(clickable ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
 void TaskListView::dragEnterEvent(QDragEnterEvent* event)

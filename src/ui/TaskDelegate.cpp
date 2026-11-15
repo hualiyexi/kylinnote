@@ -30,6 +30,8 @@ QRectF sectionArrowRect(const QRect& row) {
     return QRectF(row.left() + 20.0, row.center().y() - 4.0, 12.0, 12.0);
 }
 constexpr qreal kSectionTitleLeft = 36.0;
+// 滴答给置顶图标用 vertical-align: sub；图标盒相对行中心下移，和中文视觉中线对齐。
+constexpr qreal kSectionPinVerticalOffset = 2.0;
 
 // 滴答用同一个下三角旋转表示收起，避免再维护一套右向图标。
 void paintTriangle(QPainter* p, const QRectF& rect, bool expanded, const QColor& color) {
@@ -161,7 +163,9 @@ void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QMode
         paintTriangle(p, sectionArrowRect(row), !collapsed, arrowColor);
         qreal textLeft = row.left() + kSectionTitleLeft;
         if (i.data(TaskListModel::SectionKeyRole).toString() == QLatin1String("pinned")) {
-            const QRectF icon(textLeft, row.center().y() - 8.0, 16.0, 16.0);
+            const QRectF icon(textLeft,
+                              row.center().y() - 8.0 + kSectionPinVerticalOffset,
+                              16.0, 16.0);
             AppIcons::paint(p, IconId::PinSection, icon, AppStyle::color(Color::Star));
             textLeft = icon.right() + 5.0;
         }
@@ -363,6 +367,12 @@ bool TaskDelegate::editorEvent(QEvent* event,
             index.data(Qt::CheckStateRole).toInt() == Qt::Checked ? Qt::Unchecked : Qt::Checked,
             Qt::CheckStateRole);
     return false;
+}
+
+QRect TaskDelegate::dateHitRect(const QStyleOptionViewItem& option,
+                                const QModelIndex& index) const {
+    if (!index.isValid() || index.data(TaskListModel::HeaderRole).toBool()) return QRect();
+    return taskLayout(option, index).date.toAlignedRect();
 }
 
 void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {

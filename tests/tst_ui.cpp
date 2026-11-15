@@ -2227,7 +2227,7 @@ private slots:
         QVERIFY(rowRect.isValid());
         const QImage image = view->viewport()->grab().toImage();
         const qreal dpr = image.devicePixelRatio();
-        const QRectF icon(rowRect.left() + 36.0, rowRect.center().y() - 8.0, 16.0, 16.0);
+        const QRectF icon(rowRect.left() + 36.0, rowRect.center().y() - 6.0, 16.0, 16.0);
         int orangePixels = 0;
         for (int y = qFloor(icon.top() * dpr); y <= qCeil(icon.bottom() * dpr); ++y) {
             for (int x = qFloor(icon.left() * dpr); x <= qCeil(icon.right() * dpr); ++x) {
@@ -2238,6 +2238,47 @@ private slots:
             }
         }
         QVERIFY2(orangePixels > 20, qPrintable(QStringLiteral("pin icon pixels: %1").arg(orangePixels)));
+        const QString dir = qEnvironmentVariable("KYLINLIST_SCREENSHOT_DIR");
+        if (!dir.isEmpty()) {
+            QDir().mkpath(dir);
+            const QRect crop(qRound((rowRect.left() - 8) * dpr), qRound((rowRect.top() - 2) * dpr),
+                             qRound(280 * dpr), qRound((rowRect.height() + 4) * dpr));
+            QVERIFY(image.copy(crop).scaled(crop.width() * 2, crop.height() * 2,
+                                            Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                        .save(dir + QStringLiteral("/section-pinned-header.png")));
+        }
+    }
+    void taskDateAreaShowsPointingHandCursor() {
+        const QString list = m_store->createList(QStringLiteral("日期游标"), QString(),
+                                                 EntityKind::Task, QString(),
+                                                 QStringLiteral("#4CA1FF"));
+        const QString id = m_store->createTask(QStringLiteral("带日期任务"), list);
+        Entity task = m_store->entity(id);
+        task.allDayDate = toAppTime(appNow()).date();
+        QVERIFY(m_store->saveTask(task));
+
+        TaskPanel panel(m_store.get()); panel.resize(900, 640); panel.show();
+        auto* view = panel.findChild<TaskListView*>(QStringLiteral("TaskList"));
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        auto* delegate = view ? qobject_cast<TaskDelegate*>(view->itemDelegate()) : nullptr;
+        QVERIFY(view && model && delegate);
+        const QModelIndex index = model->indexForTask(id);
+        QVERIFY(index.isValid());
+        view->scrollTo(index);
+        QApplication::processEvents();
+        const QRect row = view->visualRect(index);
+        QVERIFY(row.isValid());
+        QStyleOptionViewItem option;
+        option.rect = row;
+        const QRect date = delegate->dateHitRect(option, index);
+        QVERIFY2(!date.isEmpty(), "带日期任务应有可点击日期区域");
+        QVERIFY(row.contains(date.center()));
+
+        QTest::mouseMove(view->viewport(), date.center());
+        QTRY_COMPARE(view->viewport()->cursor().shape(), Qt::PointingHandCursor);
+        // 同一行但不在日期区域内仍保持普通指针。
+        QTest::mouseMove(view->viewport(), QPoint(row.left() + 4, row.center().y()));
+        QTRY_COMPARE(view->viewport()->cursor().shape(), Qt::ArrowCursor);
     }
     void sectionHeadersShareTypography() {
         const QDate today = toAppTime(appNow()).date();

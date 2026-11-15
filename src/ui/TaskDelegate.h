@@ -26,6 +26,8 @@ public:
                      QAbstractItemModel* model,
                      const QStyleOptionViewItem& option,
                      const QModelIndex& index) override;
+    // 行内日期点击区域；与 editorEvent 共用同一布局，供视图设置手型指针。
+    QRect dateHitRect(const QStyleOptionViewItem& option, const QModelIndex& index) const;
 signals:
     void dateActivated(QString entityId, QRect anchor);
     void listActivated(QString listId);
