@@ -698,9 +698,11 @@ private slots:
             QCOMPARE(labelInk().size(), beforeStartChange.size());
             QVERIFY(labelInk() != beforeStartChange);
         }
-        detail.resize(560, 620);
+        // 宽栏复原要求日期与其他控件同排；字体不同，固定 560px 未必真能容纳整段文字。
+        detail.resize(qMax(560, chip->sizeHint().width() + 180), 620);
         QTRY_COMPARE(chip->height(), 30);
         QTRY_COMPARE(rectIn(chip, header).center().y(), rectIn(priority, header).center().y());
+        QVERIFY(chip->width() >= chip->sizeHint().width());
     }
 
     void typographyUsesApprovedPointSizes() {
