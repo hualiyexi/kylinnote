@@ -40,9 +40,7 @@ PopupMenu::PopupMenu(QWidget* parent) : QMenu(parent) {
     // 的 action 布局随之内缩；border:none + margin:0 令 PM_MenuPanelWidth 为 0。
     // 属性选择器仅作用于本组件，保留挂入的普通 QMenu 的原有样式。
     setProperty("popupMenu", true);
-    setStyleSheet(QStringLiteral(
-                      "QMenu[popupMenu=\"true\"]{background:transparent;border:0;margin:0;padding:%1px;}")
-                      .arg(PopupShadowMargin + 4));
+    setCardPadding(4, 4);
     // 全局 QSS 由 ThemeManager 重铺；这里只需失效阴影缓存，下次 paint 按当前
     // 主题的 ds::Shadow 重新生成（影色是缓存键的一部分）。
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ds::Theme) {
@@ -103,6 +101,12 @@ QAction* PopupMenu::addMenu(QMenu* menu) {
 
 int PopupMenu::shadowMargin() {
     return PopupShadowMargin;
+}
+
+void PopupMenu::setCardPadding(int horizontal, int vertical) {
+    setStyleSheet(QStringLiteral(
+        "QMenu[popupMenu=\"true\"]{background:transparent;border:0;margin:0;padding:%1px %2px;}")
+        .arg(PopupShadowMargin + vertical).arg(PopupShadowMargin + horizontal));
 }
 
 bool PopupMenu::event(QEvent* event) {

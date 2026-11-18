@@ -10,6 +10,7 @@
 
 class QCheckBox;
 class QFrame;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -88,7 +89,8 @@ private:
     void showGroupMenu();
     void showInfoPopup();
     void showPriorityMenu();
-    void updateDateChip();
+    void updateDateChip(bool refreshIcon = true);
+    void updateDateChipLayout();
     void updateParentLink();
     void refreshIcons();
     void setStatus(const QString& text, bool error = false, bool recoverable = false);
@@ -117,6 +119,8 @@ private:
     QWidget* m_recoveryActions = nullptr;
     QToolButton *m_reloadDraft = nullptr, *m_copyDraft = nullptr;
     QLineEdit* m_title = nullptr;
+    QFrame* m_header = nullptr;
+    QHBoxLayout* m_headerRow = nullptr;
     QCheckBox* m_completed = nullptr;
     QPushButton* m_dateChip = nullptr;
     QToolButton *m_groupChip = nullptr, *m_formatButton = nullptr, *m_moreButton = nullptr;
@@ -131,7 +135,6 @@ private:
     TaskDateController* m_dateController = nullptr;
     EntityCommands* m_commands = nullptr;
     bool m_focusMode = false;
-    bool m_overlayMode = false;
     bool m_desktopMode = false, m_desktopHovered = false;
     SelectionBubble* m_bubble = nullptr;
     FormatPanel* m_formatPanel = nullptr;

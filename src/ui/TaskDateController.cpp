@@ -17,10 +17,10 @@ void TaskDateController::close() {
     if (m_popup) m_popup->reject();
 }
 
-void TaskDateController::open(const QString& entityId, const QRect& globalAnchor) {
+void TaskDateController::open(const QString& entityId, const QRect& globalAnchor, QWidget* popupParent) {
     const Entity entity = m_store->entity(entityId);
     if (entity.id.isEmpty() || entity.deleted) return;
-    openEntity(entity, entityId, globalAnchor, m_store->schedule(entityId));
+    openEntity(entity, entityId, globalAnchor, m_store->schedule(entityId), popupParent);
 }
 
 void TaskDateController::openDraft(const Entity& draft, const QRect& globalAnchor) {
@@ -36,9 +36,12 @@ void TaskDateController::openDraft(const Entity& draft, const ScheduleValue& sch
 }
 
 void TaskDateController::openEntity(const Entity& entity, const QString& entityId,
-                                    const QRect& globalAnchor, const ScheduleValue& initial) {
+                                    const QRect& globalAnchor, const ScheduleValue& initial,
+                                    QWidget* popupParent) {
     close();
-    auto* picker = new DatePickerPopup(m_owner);
+    auto* picker = new DatePickerPopup(popupParent ? popupParent : m_owner);
+    if (popupParent && popupParent != m_owner)
+        connect(this, &QObject::destroyed, picker, &QObject::deleteLater);
     m_popup = picker;
     picker->setRecurrenceEnabled(entity.kind == EntityKind::Task);
     picker->setSchedule(initial);

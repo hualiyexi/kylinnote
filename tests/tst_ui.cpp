@@ -1955,6 +1955,21 @@ private slots:
                  + WorkspaceGeometry::DetailHeaderTopMargin);
         QCOMPARE(rectIn(controls, &panel).top(), rectIn(detail, &panel).top());
         QVERIFY(!rectIn(info, &panel).intersects(rectIn(controls, &panel)));
+        const QPoint shrinkFrom = overlayResize->mapToGlobal(QPoint(6, 200));
+        const QPoint shrinkTo = shrinkFrom + QPoint(60, 0);
+        QTest::mousePress(overlayResize, Qt::LeftButton, Qt::NoModifier, QPoint(6, 200));
+        QMouseEvent shrinkOverlay(QEvent::MouseMove, overlayResize->mapFromGlobal(shrinkTo), shrinkTo,
+                                  Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(overlayResize, &shrinkOverlay);
+        QTest::mouseRelease(overlayResize, Qt::LeftButton, Qt::NoModifier,
+                            overlayResize->mapFromGlobal(shrinkTo));
+        QCOMPARE(detail->width(), 260);
+        panel.resize(890, 720);
+        QApplication::processEvents();
+        QCOMPARE(detail->width(), 260);
+        QCOMPARE(rectIn(detail, &panel).right(), panel.rect().right() - 21);
+        panel.resize(900, 700);
+        QApplication::processEvents();
         QTest::mouseClick(close, Qt::LeftButton);
         QTRY_VERIFY(!detail->isVisible());
         QVERIFY(!overlayShadow->isVisible());
@@ -5506,14 +5521,21 @@ private slots:
         QTest::mouseClick(scope, Qt::LeftButton);
         auto* scopeMenu = widget.findChild<PopupMenu*>(QStringLiteral("TaskWidgetScopeMenu"));
         QVERIFY(scopeMenu && scopeMenu->isVisible());
+        QStringList scopeTitles;
         QAction* allTasks = nullptr;
         for (QAction* action : scopeMenu->actions()) {
-            if (action->text() == QStringLiteral("全部任务")) allTasks = action;
+            if (!action->isSeparator()) scopeTitles.append(action->text());
+            if (action->text() == QStringLiteral("所有")) allTasks = action;
         }
+        QCOMPARE(scopeTitles.mid(0, 5), (QStringList{QStringLiteral("今天"), QStringLiteral("明天"),
+            QStringLiteral("最近7天"), QStringLiteral("收集箱"), QStringLiteral("所有")}));
+        QVERIFY(!scopeTitles.contains(QStringLiteral("全部任务")));
         QVERIFY(allTasks);
         QTest::mouseClick(scopeMenu, Qt::LeftButton, Qt::NoModifier,
                           scopeMenu->actionGeometry(allTasks).center());
         QCOMPARE(widget.filter().scope, ViewScope::AllLists);
+        QCOMPARE(scope->text(), QStringLiteral("所有"));
+        QCOMPARE(widget.scopeTitle(), QStringLiteral("所有"));
         QVERIFY(!widget.model()->indexForTask(noteId).isValid());
 
         TaskListModel workspaceModel(m_store.get());
@@ -5567,6 +5589,65 @@ private slots:
         restored.closeWidget();
         TaskWidget closed(m_store.get());
         QVERIFY(!closed.isOpen());
+    }
+
+    void taskWidgetTomorrowMatchesSmartListAndRestoresScope() {
+        const QDate today = toAppTime(appNow()).date();
+        const auto createDated = [this](const QString& title, const QDate& first, const QDate& last) {
+            Entity draft;
+            draft.title = title;
+            ScheduleValue schedule;
+            schedule.allDayDate = first;
+            schedule.allDayEndDate = last;
+            schedule.hasScheduleRange = last.isValid();
+            QString id;
+            return m_store->saveSchedule(draft, schedule, &id) ? id : QString();
+        };
+        const QString due = createDated(QStringLiteral("只在明天"), today.addDays(1), QDate());
+        const QString crossing = createDated(QStringLiteral("跨过明天"), today, today.addDays(2));
+        const QString onlyToday = createDated(QStringLiteral("只在今天"), today, QDate());
+        QVERIFY(!due.isEmpty() && !crossing.isEmpty() && !onlyToday.isEmpty());
+
+        TaskWidget widget(m_store.get());
+        widget.showWidget();
+        QVERIFY(QTest::qWaitForWindowExposed(&widget));
+        auto* scope = widget.findChild<QToolButton*>(QStringLiteral("WidgetScope"));
+        QVERIFY(scope);
+        QTest::mouseClick(scope, Qt::LeftButton);
+        auto* menu = widget.findChild<PopupMenu*>(QStringLiteral("TaskWidgetScopeMenu"));
+        QVERIFY(menu && menu->isVisible());
+        QAction* tomorrow = nullptr;
+        for (QAction* action : menu->actions()) {
+            if (action->text() == QStringLiteral("明天")) tomorrow = action;
+        }
+        QVERIFY(tomorrow);
+        QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(tomorrow).center());
+        QCOMPARE(widget.filter().scope, ViewScope::Tomorrow);
+        QCOMPARE(widget.scopeTitle(), QStringLiteral("明天"));
+        QCOMPARE(scope->text(), QStringLiteral("明天"));
+        QVERIFY(widget.model()->indexForTask(due).isValid());
+        QVERIFY(widget.model()->indexForTask(crossing).isValid());
+        QVERIFY(!widget.model()->indexForTask(onlyToday).isValid());
+
+        auto* quick = widget.findChild<QLineEdit*>(QStringLiteral("WidgetQuickAdd"));
+        QVERIFY(quick);
+        const QString title = QStringLiteral("明天快捷创建");
+        quick->setText(title);
+        QTest::keyClick(quick, Qt::Key_Return);
+        Entity added;
+        for (const Entity& entity : m_store->entities()) {
+            if (entity.title == title) added = entity;
+        }
+        QVERIFY(!added.id.isEmpty());
+        QCOMPARE(added.listId, m_store->inboxListId());
+        QCOMPARE(added.allDayDate, today.addDays(1));
+        QVERIFY(widget.model()->indexForTask(added.id).isValid());
+        QVERIFY(widget.flush());
+
+        TaskWidget restored(m_store.get());
+        QCOMPARE(restored.filter().scope, ViewScope::Tomorrow);
+        QCOMPARE(restored.scopeTitle(), QStringLiteral("明天"));
+        QVERIFY(restored.model()->indexForTask(added.id).isValid());
     }
 
     void taskWidgetRestoresOnBackgroundAndTrayControlsPanel() {
@@ -5846,6 +5927,10 @@ private slots:
 
     void detailDateChipUsesShanghaiDateAndActiveStatus() {
         const QDate today = toAppTime(appNow()).date();
+        const auto dateText = [&today](const QDate& date) {
+            return date.toString(date.year() == today.year() ? QStringLiteral("M月d日")
+                                                           : QStringLiteral("yyyy/MM/dd"));
+        };
         const QDate overdue = today.addDays(-3);
         const QString id = m_store->createTask(QStringLiteral("逾期日期展示"));
         Entity task = m_store->entity(id);
@@ -5854,28 +5939,22 @@ private slots:
         QVERIFY(m_store->saveTask(task));
         TaskDetailWidget detail(m_store.get()); detail.resize(460, 640); detail.show(); QVERIFY(detail.setTask(id));
         auto* date = detail.findChild<QPushButton*>(QStringLiteral("DateChip")); QVERIFY(date);
-        QVERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
-        QVERIFY(date->text().contains(QStringLiteral("00:30")));
-        QVERIFY(date->text().contains(QStringLiteral("延期3天")));
+        const QString timed = dateText(overdue) + QStringLiteral(", 00:30");
+        QCOMPARE(date->text(), timed + QStringLiteral(", 延期3天"));
         QCOMPARE(date->accessibleName(), date->text());
         QVERIFY(m_store->setCompleted(id, true));
-        QTRY_VERIFY(!date->text().contains(QStringLiteral("延期")));
-        QVERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
+        QTRY_COMPARE(date->text(), timed);
         QVERIFY(m_store->setStatus(id, TaskStatus::Abandoned));
-        QTRY_VERIFY(!date->text().contains(QStringLiteral("延期")));
-        QVERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
+        QTRY_COMPARE(date->text(), timed);
         QVERIFY(m_store->setStatus(id, TaskStatus::Active));
         task = m_store->entity(id); task.dueAt = QDateTime(); task.allDayDate = overdue;
         task.startAt = QDateTime();
         QVERIFY(m_store->saveTask(task));
-        QTRY_VERIFY(date->text().contains(overdue.toString(QStringLiteral("yyyy/MM/dd"))));
-        QVERIFY(date->text().contains(QStringLiteral("延期3天")));
-        QVERIFY(!date->text().contains(QStringLiteral("11:45")));
+        QTRY_COMPARE(date->text(), dateText(overdue) + QStringLiteral(", 延期3天"));
         task = m_store->entity(id); task.startAt = QDateTime(); task.allDayDate = QDate();
         task.dueAt = fromAppTime(QDateTime(today.addDays(2), QTime(8, 30), Qt::LocalTime));
         QVERIFY(m_store->saveTask(task));
-        QTRY_VERIFY(date->text().contains(today.addDays(2).toString(QStringLiteral("yyyy/MM/dd"))));
-        QVERIFY(date->text().contains(QStringLiteral("08:30"))); QVERIFY(!date->text().contains(QStringLiteral("延期")));
+        QTRY_COMPARE(date->text(), dateText(today.addDays(2)) + QStringLiteral(", 08:30, 后天"));
     }
 
     void detailLongBodyScrollsAboveFixedAttachmentPaneAtNarrowWidth() {

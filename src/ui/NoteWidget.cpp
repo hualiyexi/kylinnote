@@ -186,7 +186,7 @@ void NoteWidget::setStore(TaskStore* store) {
 void NoteWidget::updateView() {
     if (m_appliedColor != colorToInt(m_task.color)) {
         m_appliedColor = colorToInt(m_task.color);
-        ColorTheme::apply(this, m_task.color);
+        ColorTheme::apply(m_paper, m_task.color);
     }
     m_titleBar->setPinned(m_task.layer == NoteLayer::OnTop);
     const QString title = m_detail ? m_detail->titleDraft() : m_task.title;
@@ -329,6 +329,8 @@ void NoteWidget::leaveEvent(QEvent* event) { setControlsHovered(false); QWidget:
 void NoteWidget::showColorMenu() {
     auto* menu = new PopupMenu(this);
     menu->setObjectName(QStringLiteral("NoteColorMenu"));
+    menu->setProperty("entityMenu", true);
+    menu->setCardPadding(8, 4);
     menu->setThemeOverride(ColorTheme::paperTheme());
     menu->setAttribute(Qt::WA_DeleteOnClose);
     for (int index = 0; index < ColorCount; ++index) {

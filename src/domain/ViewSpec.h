@@ -57,6 +57,13 @@ QVector<ViewSection> buildFolderSections(const QVector<Entity> &entities, const 
                                          const QSet<QString> &archivedListIds = QSet<QString>());
 
 // 与视图同属纯展示语义，供模型、便签和提醒弹窗共享。
+struct DetailScheduleCaption {
+    QString text;
+    bool scheduled = false;
+    bool overdue = false;
+};
+DetailScheduleCaption detailScheduleCaption(const Entity &entity, const QDateTime &now,
+                                            Qt::DayOfWeek firstDay = Qt::Monday);
 QString scheduleLabel(const Entity &entity);
 QString priorityLabel(int priority);
 QString recurrenceLabel(const QString &recurrence);

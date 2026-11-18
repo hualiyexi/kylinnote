@@ -153,7 +153,8 @@ TaskWidget::TaskWidget(TaskStore* store, QWidget* parent)
         static_cast<int>(ViewScope::List)).toInt());
     m_filter.listId = settings->value(QStringLiteral("listId")).toString();
     if (m_filter.scope != ViewScope::List && m_filter.scope != ViewScope::Today
-        && m_filter.scope != ViewScope::Next7Days && m_filter.scope != ViewScope::AllLists) {
+        && m_filter.scope != ViewScope::Tomorrow && m_filter.scope != ViewScope::Next7Days
+        && m_filter.scope != ViewScope::AllLists) {
         m_filter.scope = ViewScope::List;
     }
     if (m_filter.scope == ViewScope::List && m_filter.listId.isEmpty() && m_store)
@@ -561,8 +562,9 @@ void TaskWidget::updateHeader()
     m_scopeTitle.clear();
     switch (m_filter.scope) {
     case ViewScope::Today: m_scopeTitle = QStringLiteral("今天"); break;
+    case ViewScope::Tomorrow: m_scopeTitle = QStringLiteral("明天"); break;
     case ViewScope::Next7Days: m_scopeTitle = QStringLiteral("最近7天"); break;
-    case ViewScope::AllLists: m_scopeTitle = QStringLiteral("全部任务"); break;
+    case ViewScope::AllLists: m_scopeTitle = QStringLiteral("所有"); break;
     case ViewScope::List:
         if (m_store) {
             for (const TaskList& list : m_store->lists()) {
@@ -614,8 +616,10 @@ void TaskWidget::createTask()
     if (m_quickDateCustomized) {
         schedule = m_quickSchedule;
         hasSchedule = true;
-    } else if (m_filter.scope == ViewScope::Today || m_filter.scope == ViewScope::Next7Days) {
-        schedule.allDayDate = toAppTime(appNow()).date();
+    } else if (m_filter.scope == ViewScope::Today || m_filter.scope == ViewScope::Tomorrow
+               || m_filter.scope == ViewScope::Next7Days) {
+        const QDate today = toAppTime(appNow()).date();
+        schedule.allDayDate = m_filter.scope == ViewScope::Tomorrow ? today.addDays(1) : today;
         hasSchedule = true;
     }
     QString id;
@@ -661,9 +665,10 @@ void TaskWidget::showScopeMenu()
                 [this, scope, listId]() { selectScope(scope, listId); });
     };
     addScope(QStringLiteral("今天"), ViewScope::Today, QString(), IconId::Today);
+    addScope(QStringLiteral("明天"), ViewScope::Tomorrow, QString(), IconId::Tomorrow);
     addScope(QStringLiteral("最近7天"), ViewScope::Next7Days, QString(), IconId::Upcoming);
     addScope(QStringLiteral("收集箱"), ViewScope::List, m_store->inboxListId(), IconId::Inbox);
-    addScope(QStringLiteral("全部任务"), ViewScope::AllLists, QString(), IconId::All);
+    addScope(QStringLiteral("所有"), ViewScope::AllLists, QString(), IconId::All);
     menu->addSeparator();
     for (const TaskList& list : m_store->lists()) {
         if (list.inbox || list.archivedAtUtcMs > 0) continue;

@@ -20,25 +20,28 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QStyle>
 #include <QStyleOptionToolButton>
 #include <QStylePainter>
 #include <QTextEdit>
-#include <QTimeZone>
+#include <QTextLayout>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QtMath>
 #include <memory>
 #include "../app/TaskStore.h"
 #include "../app/EntityTextSession.h"
+#include "../app/Settings.h"
 #include "../domain/ViewSpec.h"
 #include "ActivityTimelineWidget.h"
 #include "AppIcons.h"
 #include "AttachmentWidget.h"
 #include "ColorTheme.h"
-#include "DatePickerPopup.h"
 #include "DetailPopups.h"
 #include "EntityCommands.h"
 #include "FormatToolbar.h"
@@ -124,10 +127,21 @@ protected:
 
 class DateChipButton final : public QPushButton {
 public:
-    explicit DateChipButton(QWidget* parent) : QPushButton(parent) {}
+    explicit DateChipButton(QWidget* parent) : QPushButton(parent) {
+        setAttribute(Qt::WA_LayoutUsesWidgetRect);
+    }
     QSize sizeHint() const override {
         ensurePolished();
-        return QSize(8 + (icon().isNull() ? 0 : iconSize().width() + 4) + fontMetrics().horizontalAdvance(text()), 30);
+        const QFontMetricsF metrics(fontMetrics());
+        const qreal textWidth = qMax(metrics.horizontalAdvance(text()), metrics.tightBoundingRect(text()).right());
+        return QSize(chromeWidth() + qCeil(textWidth), m_compact ? 20 : 30);
+    }
+    QSize minimumSizeHint() const override { return QSize(0, sizeHint().height()); }
+    void setCompact(bool compact) { m_compact = compact; }
+    int heightForDateWidth(int width) {
+        if (width >= sizeHint().width()) return 30;
+        QTextLayout layout(text(), font(), this);
+        return qMax(30, layoutText(layout, width - chromeWidth()) + 2 * kPadding);
     }
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -138,20 +152,45 @@ protected:
         option.text.clear();
         QStylePainter painter(this);
         painter.drawControl(QStyle::CE_PushButton, option);
-        const QRect content = rect().adjusted(4, 0, -4, 0);
+        const QRect content = rect().adjusted(kPadding, 0, -kPadding, 0);
         const qreal center = content.top() + content.height() / 2.0;
         const QRect iconRect(content.left(), qRound(center - iconSize().height() / 2.0),
                              iconSize().width(), iconSize().height());
         glyph.paint(&painter, iconRect, Qt::AlignCenter,
                     isEnabled() ? QIcon::Normal : QIcon::Disabled);
-        const QRect label = content.adjusted(glyph.isNull() ? 0 : iconSize().width() + 4, 0, 0, 0);
+        const QRect label = content.adjusted(iconWidth(), 0, 0, 0);
         if (label.isEmpty()) return;
         painter.setFont(font());
         painter.setPen(option.palette.buttonText().color());
-        const QFontMetricsF metrics(font());
-        const QString shown = metrics.elidedText(text(), Qt::ElideRight, label.width());
-        painter.drawText(QPointF(label.left(), textBaselineForCenter(metrics, center, shown)), shown);
+        if (!m_compact && width() < sizeHint().width()) {
+            QTextLayout layout(text(), font(), this);
+            const int height = layoutText(layout, label.width());
+            layout.draw(&painter, QPointF(label.left(), center - height / 2.0));
+        } else {
+            const QFontMetricsF metrics(fontMetrics());
+            const QString shown = m_compact ? metrics.elidedText(text(), Qt::ElideRight, label.width()) : text();
+            painter.drawText(QPointF(label.left(), textBaselineForCenter(metrics, center, shown)), shown);
+        }
     }
+private:
+    static constexpr int kPadding = 4;
+    int iconWidth() const { return icon().isNull() ? 0 : iconSize().width() + kPadding; }
+    int chromeWidth() const { return 2 * kPadding + iconWidth(); }
+    static int layoutText(QTextLayout& layout, int width) {
+        QTextOption option;
+        option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+        layout.setTextOption(option);
+        qreal height = 0;
+        layout.beginLayout();
+        for (QTextLine line = layout.createLine(); line.isValid(); line = layout.createLine()) {
+            line.setLineWidth(qMax(1, width));
+            line.setPosition(QPointF(0, height));
+            height += line.height();
+        }
+        layout.endLayout();
+        return qCeil(height);
+    }
+    bool m_compact = false;
 };
 
 class AttachmentPane final : public QWidget {
@@ -256,12 +295,9 @@ TaskDetailWidget::~TaskDetailWidget() {
 }
 
 void TaskDetailWidget::setOverlayMode(bool overlay) {
-    m_overlayMode = overlay;
-    auto* header = findChild<QFrame*>(QStringLiteral("DetailHeader"));
-    if (header && header->layout())
-        header->layout()->setContentsMargins(overlay ? 12 : 20,
-            WorkspaceGeometry::DetailHeaderContentTopMargin, overlay ? 12 : 20,
-            WorkspaceGeometry::DetailHeaderContentBottomMargin);
+    const int gutter = overlay ? 12 : 20;
+    m_header->layout()->setContentsMargins(gutter, WorkspaceGeometry::DetailHeaderContentTopMargin,
+                                          gutter, WorkspaceGeometry::DetailHeaderContentBottomMargin);
     m_closeButton->setVisible(overlay);
     m_headerSeparator->setVisible(overlay);
     updateEnabled();
@@ -274,7 +310,7 @@ void TaskDetailWidget::setDesktopMode(bool desktop) {
     const auto theme = desktop ? ColorTheme::paperTheme() : ds::Theme::Count;
     m_description->setThemeOverride(theme);
     m_attachments->setThemeOverride(theme);
-    auto* header = findChild<QFrame*>(QStringLiteral("DetailHeader"));
+    if (m_dateController) m_dateController->close();
     auto* footer = findChild<QFrame*>(QStringLiteral("DetailFooter"));
     auto* footerLayout = static_cast<QHBoxLayout*>(footer->layout());
     auto* titleHost = findChild<QWidget*>(QStringLiteral("TaskTitleHost"));
@@ -287,19 +323,21 @@ void TaskDetailWidget::setDesktopMode(bool desktop) {
     m_description->layout()->setContentsMargins(desktop ? gutter : 0, 0, gutter, 0);
     m_groupChip->setVisible(!desktop);
     m_formatButton->setVisible(!desktop);
-    header->setVisible(!desktop);
+    m_header->setVisible(!desktop);
     footer->setFixedHeight(desktop ? 26 : kDetailFooterHeight);
     footerLayout->setContentsMargins(desktop ? 10 : 16, desktop ? 0 : 6,
                                      desktop ? 8 : 16, desktop ? 3 : 6);
     if (desktop) {
-        header->layout()->removeWidget(m_dateChip);
+        m_headerRow->removeWidget(m_dateChip);
+        m_header->layout()->removeWidget(m_dateChip);
         m_dateChip->setParent(footer);
         footerLayout->insertWidget(0, m_dateChip);
     } else {
         footerLayout->removeWidget(m_dateChip);
-        m_dateChip->setParent(header);
-        static_cast<QHBoxLayout*>(header->layout())->insertWidget(3, m_dateChip);
+        m_dateChip->setParent(m_header);
+        m_headerRow->insertWidget(3, m_dateChip, 0, Qt::AlignVCenter);
     }
+    static_cast<DateChipButton*>(m_dateChip)->setCompact(desktop);
     m_dateChip->setFixedHeight(desktop ? 20 : 30);
     m_dateChip->setIconSize(desktop ? QSize() : QSize(20, 20));
     m_dateChip->setFont(ds::qfont(desktop ? ds::FontScene::Caption : ds::FontScene::Body));
@@ -336,14 +374,18 @@ void TaskDetailWidget::buildUi() {
     hostLayout->setSpacing(0);
     root->addWidget(m_detailHost, 1);
 
-    auto* header = new QFrame(m_detailHost);
-    header->setObjectName(QStringLiteral("DetailHeader"));
-    header->setFixedHeight(WorkspaceGeometry::DetailHeaderHeight);
-    auto* headerLayout = new QHBoxLayout(header);
+    m_header = new QFrame(m_detailHost);
+    m_header->setObjectName(QStringLiteral("DetailHeader"));
+    m_header->setFixedHeight(WorkspaceGeometry::DetailHeaderHeight);
+    auto* headerLayout = new QVBoxLayout(m_header);
     headerLayout->setContentsMargins(20, WorkspaceGeometry::DetailHeaderContentTopMargin,
                                      20, WorkspaceGeometry::DetailHeaderContentBottomMargin);
-    headerLayout->setSpacing(2);
-    m_closeButton = new QToolButton(header);
+    headerLayout->setSpacing(0);
+    m_headerRow = new QHBoxLayout;
+    m_headerRow->setContentsMargins(0, 0, 0, 0);
+    m_headerRow->setSpacing(2);
+    headerLayout->addLayout(m_headerRow);
+    m_closeButton = new QToolButton(m_header);
     m_closeButton->setObjectName(QStringLiteral("DetailClose"));
     m_closeButton->setFixedSize(28, 30);
     m_closeButton->setAutoRaise(true);
@@ -353,32 +395,31 @@ void TaskDetailWidget::buildUi() {
     connect(m_closeButton, &QToolButton::clicked, this, [this]() {
         if (finishEditing()) emit closeRequested();
     });
-    headerLayout->addWidget(m_closeButton, 0, Qt::AlignVCenter);
+    m_headerRow->addWidget(m_closeButton, 0, Qt::AlignVCenter);
     m_closeButton->hide();
-    m_completed = new CompletionCheckBox(header);
+    m_completed = new CompletionCheckBox(m_header);
     m_completed->setObjectName(QStringLiteral("TaskCompleted"));
     m_completed->setFixedSize(30, 30);
     m_completed->setCursor(Qt::PointingHandCursor);
     m_completed->setToolTip(QStringLiteral("完成"));
     m_completed->setAccessibleName(QStringLiteral("完成"));
-    headerLayout->addWidget(m_completed, 0, Qt::AlignVCenter);
-    m_dateSeparator = separator(header, QStringLiteral("DetailDateSeparator"), 14);
-    headerLayout->addWidget(m_dateSeparator, 0, Qt::AlignVCenter);
-    m_dateChip = new DateChipButton(header);
+    m_headerRow->addWidget(m_completed, 0, Qt::AlignVCenter);
+    m_dateSeparator = separator(m_header, QStringLiteral("DetailDateSeparator"), 14);
+    m_headerRow->addWidget(m_dateSeparator, 0, Qt::AlignVCenter);
+    m_dateChip = new DateChipButton(m_header);
     m_dateChip->setObjectName(QStringLiteral("DateChip"));
     m_dateChip->setToolTip(QStringLiteral("设置日期、时间与提醒"));
     m_dateChip->setCursor(Qt::PointingHandCursor);
     m_dateChip->setFixedHeight(30);
     m_dateChip->setIconSize(QSize(20, 20));
-    m_dateChip->setMinimumWidth(0);
     m_dateChip->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     connect(m_dateChip, &QPushButton::clicked, this, &TaskDetailWidget::openDatePicker);
-    headerLayout->addWidget(m_dateChip, 0, Qt::AlignVCenter);
-    headerLayout->addStretch(1);
-    m_headerSeparator = separator(header, QStringLiteral("DetailHeaderSeparator"), 20);
-    headerLayout->addWidget(m_headerSeparator, 0, Qt::AlignVCenter);
+    m_headerRow->addWidget(m_dateChip, 0, Qt::AlignVCenter);
+    m_headerRow->addStretch(1);
+    m_headerSeparator = separator(m_header, QStringLiteral("DetailHeaderSeparator"), 20);
+    m_headerRow->addWidget(m_headerSeparator, 0, Qt::AlignVCenter);
     m_headerSeparator->hide();
-    m_infoButton = new QToolButton(header);
+    m_infoButton = new QToolButton(m_header);
     m_infoButton->setObjectName(QStringLiteral("DetailInfo"));
     m_infoButton->setFixedSize(28, 30);
     m_infoButton->setIconSize(QSize(16, 16));
@@ -390,8 +431,8 @@ void TaskDetailWidget::buildUi() {
         if (entity.kind == EntityKind::Task) showPriorityMenu();
         else showInfoPopup();
     });
-    headerLayout->addWidget(m_infoButton, 0, Qt::AlignVCenter);
-    hostLayout->addWidget(header);
+    m_headerRow->addWidget(m_infoButton, 0, Qt::AlignVCenter);
+    hostLayout->addWidget(m_header);
 
     m_scroll = new QScrollArea(m_detailHost);
     m_scroll->setObjectName(QStringLiteral("DetailScroll"));
@@ -662,7 +703,9 @@ void TaskDetailWidget::buildUi() {
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &TaskDetailWidget::refreshIcons);
     auto* midnightTimer = new QTimer(this);
     midnightTimer->setInterval(60000);
-    connect(midnightTimer, &QTimer::timeout, this, &TaskDetailWidget::updateDateChip);
+    connect(midnightTimer, &QTimer::timeout, this, [this]() {
+        if (m_dateChip->isVisible()) updateDateChip(false);
+    });
     midnightTimer->start();
 }
 
@@ -805,55 +848,54 @@ void TaskDetailWidget::refreshIcons() {
     updateParentLink();
 }
 
-void TaskDetailWidget::updateDateChip() {
+void TaskDetailWidget::updateDateChip(bool refreshIcon) {
     if (m_id.isEmpty() || !m_store) return;
-    const Entity entity = m_store->entity(m_id);
-    const QDateTime timed = entity.hasScheduleRange ? entity.startAt : entity.dueAt;
-    const QDate today = toAppTime(appNow()).date();
-    const QDate date = effectiveDate(entity);
-    const bool active = !entity.deleted
-        && (entity.kind == EntityKind::Note || entity.status == TaskStatus::Active);
-    const qint64 days = date.isValid() ? date.daysTo(today) : 0;
-    const bool overdue = active && (days > 0 || (entity.dueAt.isValid() && entity.dueAt < appNow()));
-    const bool scheduled = date.isValid();
-    QString text = scheduled ? date.toString(QStringLiteral("yyyy/MM/dd")) : QStringLiteral("设置日期");
-    if (entity.hasScheduleRange) {
-        const QDate startDate = entity.allDayDate.isValid() ? entity.allDayDate
-            : entity.startAt.toTimeZone(QTimeZone(entity.timeZone.toUtf8())).date();
-        const QDate endDate = entity.allDayDate.isValid() ? entity.allDayEndDate
-            : entity.dueAt.toTimeZone(QTimeZone(entity.timeZone.toUtf8())).date();
-        const QString endFormat = endDate.year() == startDate.year()
-            ? QStringLiteral("MM/dd") : QStringLiteral("yyyy/MM/dd");
-        text = startDate.toString(QStringLiteral("yyyy/MM/dd")) + QStringLiteral(" – ")
-            + endDate.toString(endFormat);
-        if (!entity.allDayDate.isValid()) {
-            const QTimeZone zone(entity.timeZone.toUtf8());
-            text += QStringLiteral(" %1–%2").arg(entity.startAt.toTimeZone(zone).toString(QStringLiteral("HH:mm")),
-                                                 entity.dueAt.toTimeZone(zone).toString(QStringLiteral("HH:mm")));
-        }
-    } else if (timed.isValid()) {
-        text += timed.toTimeZone(QTimeZone(entity.timeZone.toUtf8())).toString(QStringLiteral(" HH:mm"));
-    }
-    if (active && days > 0 && entity.kind == EntityKind::Task)
-        text += QStringLiteral(", 延期%1天").arg(days);
-    if (m_desktopMode) {
-        if (scheduled && !entity.hasScheduleRange && date.year() == today.year()) {
-            text = date.toString(QStringLiteral("M月d日"));
-            if (timed.isValid()) text += timed.toTimeZone(QTimeZone(entity.timeZone.toUtf8())).toString(QStringLiteral(" HH:mm"));
-            if (days > 0 && active) text += QStringLiteral(", 延期%1天").arg(days);
-            else if (days == 0) text += QStringLiteral(", 今天");
-            else if (days == -1) text += QStringLiteral(", 明天");
-        }
-        m_dateChip->setIcon(QIcon());
-    } else m_dateChip->setIcon(AppIcons::icon(IconId::DetailCalendar,
-        !scheduled ? ds::ColorToken::TextSecondary
-        : overdue ? ds::ColorToken::Overdue : ds::ColorToken::Info, 20));
-    m_dateChip->setText(text);
-    m_dateChip->setAccessibleName(text);
-    m_dateChip->setProperty("overdue", overdue);
-    m_dateChip->setProperty("hasSchedule", scheduled && !overdue);
+    const auto caption = detailScheduleCaption(m_store->entity(m_id), appNow(), Settings::weekFirstDay());
+    const bool hasSchedule = caption.scheduled && !caption.overdue;
+    const bool changed = m_dateChip->text() != caption.text
+        || m_dateChip->property("overdue").toBool() != caption.overdue
+        || m_dateChip->property("hasSchedule").toBool() != hasSchedule;
+    if (!changed && !refreshIcon) return;
+    if (m_desktopMode) m_dateChip->setIcon(QIcon());
+    else m_dateChip->setIcon(AppIcons::icon(IconId::DetailCalendar,
+        !caption.scheduled ? ds::ColorToken::TextSecondary
+        : caption.overdue ? ds::ColorToken::Overdue : ds::ColorToken::Info, 20));
+    m_dateChip->setText(caption.text);
+    m_dateChip->setAccessibleName(caption.text);
+    m_dateChip->setProperty("overdue", caption.overdue);
+    m_dateChip->setProperty("hasSchedule", hasSchedule);
     m_dateChip->style()->unpolish(m_dateChip);
     m_dateChip->style()->polish(m_dateChip);
+    scheduleDetailLayout();
+}
+
+void TaskDetailWidget::updateDateChipLayout() {
+    if (m_desktopMode) return;
+    auto* chip = static_cast<DateChipButton*>(m_dateChip);
+    auto* layout = static_cast<QVBoxLayout*>(m_header->layout());
+    const int available = m_header->contentsRect().marginsRemoved(layout->contentsMargins()).width();
+    const int gap = m_headerRow->spacing();
+    // 单行需要日期分隔线，即使它在当前的双行布局里已隐藏。
+    int inlineWidth = available - m_dateSeparator->minimumWidth() - gap;
+    const QWidget* controls[] = {m_closeButton, m_completed, m_headerSeparator, m_infoButton};
+    for (const QWidget* control : controls)
+        if (!control->isHidden()) inlineWidth -= control->minimumWidth() + gap;
+    const bool separateRow = !chip->isHidden() && chip->sizeHint().width() > inlineWidth;
+    if (separateRow && m_headerRow->indexOf(chip) >= 0) {
+        m_headerRow->removeWidget(chip);
+        layout->addWidget(chip, 0, Qt::AlignLeft);
+    } else if (!separateRow && m_headerRow->indexOf(chip) < 0) {
+        layout->removeWidget(chip);
+        m_headerRow->insertWidget(3, chip, 0, Qt::AlignVCenter);
+    }
+    m_dateSeparator->setVisible(!chip->isHidden() && !separateRow);
+    const int height = separateRow ? chip->heightForDateWidth(available) : 30;
+    if (chip->height() != height) chip->setFixedHeight(height);
+    const int headerHeight = WorkspaceGeometry::DetailHeaderHeight + (separateRow ? height : 0);
+    if (m_header->height() != headerHeight) {
+        m_header->setFixedHeight(headerHeight);
+        if (m_dropHint->isVisible()) setDropHintVisible(true);
+    }
 }
 
 void TaskDetailWidget::updateParentLink() {
@@ -884,7 +926,9 @@ void TaskDetailWidget::openDatePicker() {
         connect(m_dateController, &TaskDateController::saveFailed, this,
                 [this](const QString& message) { setStatus(message, true); });
     }
-    m_dateController->open(m_id, QRect(m_dateChip->mapToGlobal(QPoint()), m_dateChip->size()));
+    // 便签浮层由顶层窗口持有，避免 Qt 5.12 将纸面样式应用到日期控件。
+    m_dateController->open(m_id, QRect(m_dateChip->mapToGlobal(QPoint()), m_dateChip->size()),
+                           m_desktopMode ? window() : this);
 }
 
 void TaskDetailWidget::refreshGroups() {
@@ -906,7 +950,7 @@ bool TaskDetailWidget::setTask(QString id) {
     if (m_infoPopup) m_infoPopup->hide();
     if (m_groupPopup) m_groupPopup->hide();
     if (m_formatPanel) m_formatPanel->hide();
-    for (auto* picker : findChildren<DatePickerPopup*>()) picker->reject();
+    if (m_dateController) m_dateController->close();
     m_activity->hide();
     m_activity->setEntityId(id);
     setDropHintVisible(false);
@@ -1125,7 +1169,6 @@ void TaskDetailWidget::updateEnabled() {
     const bool enabled = !entity.id.isEmpty() && !entity.deleted;
     const bool task = entity.kind == EntityKind::Task;
     m_completed->setVisible(task && !m_desktopMode);
-    m_dateSeparator->setVisible(enabled && !m_desktopMode);
     m_dateChip->setVisible(enabled);
     m_dateChip->setEnabled(enabled);
     m_completed->setEnabled(enabled && task);
@@ -1141,6 +1184,7 @@ void TaskDetailWidget::updateEnabled() {
 }
 
 void TaskDetailWidget::updateDetailLayout() {
+    updateDateChipLayout();
     if (!m_store || !m_attachmentPane || !m_attachments || !m_activity || !m_status) return;
     m_activityHost->setVisible(!m_activity->isHidden());
     const int count = m_id.isEmpty() ? 0 : m_store->attachments(m_id).size();
@@ -1151,7 +1195,7 @@ void TaskDetailWidget::updateDetailLayout() {
     // 上限来自宿主可用高度，而不是已扣除本 pane 的正文 viewport；否则会反复缩放。
     const int statusHeight = m_statusHost->isHidden() ? 0 : m_statusHost->height();
     const int available = qMax(0, m_detailHost->height()
-        - (m_desktopMode ? 0 : WorkspaceGeometry::DetailHeaderHeight)
+        - (m_desktopMode ? 0 : m_header->height())
         - (m_desktopMode ? 26 : kDetailFooterHeight) - statusHeight);
     const auto* formLayout = static_cast<QVBoxLayout*>(m_form->layout());
     const int bodyChrome = formLayout->contentsMargins().top() + formLayout->contentsMargins().bottom()
@@ -1296,7 +1340,7 @@ void TaskDetailWidget::reloadDraft() {
 bool TaskDetailWidget::finishEditing() { return flush() && endTextSession(); }
 
 bool TaskDetailWidget::canDismissWithEscape() const {
-    if (m_description->isComposing()) return false;
+    if (m_description->isComposing() || (m_dateController && m_dateController->isOpen())) return false;
     for (QWidget* popup : QApplication::topLevelWidgets())
         if (popup->isVisible() && (isAncestorOf(popup) || m_description->ownsPopup(popup))) return false;
     return true;
@@ -1305,9 +1349,9 @@ bool TaskDetailWidget::canDismissWithEscape() const {
 void TaskDetailWidget::setDropHintVisible(bool visible) {
     m_dropHint->setVisible(visible);
     if (!visible) return;
-    m_dropHint->setGeometry(12, WorkspaceGeometry::DetailHeaderHeight + 8,
-        qMax(0, m_detailHost->width() - 24),
-        qMax(0, m_detailHost->height() - WorkspaceGeometry::DetailHeaderHeight - 64));
+    const int headerHeight = m_desktopMode ? WorkspaceGeometry::DetailHeaderHeight : m_header->height();
+    m_dropHint->setGeometry(12, headerHeight + 8, qMax(0, m_detailHost->width() - 24),
+                           qMax(0, m_detailHost->height() - headerHeight - 64));
     m_dropHint->raise();
 }
 
@@ -1372,12 +1416,21 @@ bool TaskDetailWidget::eventFilter(QObject* watched, QEvent* event) {
         return true;
     }
     if (handleFileDrop(watched, event)) return true;
+    if (watched == this && event->type() == QEvent::Show) updateDateChip(false);
     if (watched == this || watched == m_detailHost || watched == m_form
         || watched == m_scroll->viewport() || watched == m_statusHost
         || watched == m_activity || watched == m_parentHost) {
         if (event->type() == QEvent::Resize || event->type() == QEvent::Show
             || event->type() == QEvent::Hide || event->type() == QEvent::ParentChange
             || event->type() == QEvent::LayoutRequest) scheduleDetailLayout();
+    }
+    if (watched == m_header && event->type() == QEvent::Resize) {
+        const auto* resize = static_cast<QResizeEvent*>(event);
+        if (resize->oldSize().width() != resize->size().width()) updateDateChipLayout();
+    }
+    if (watched == m_header || watched == m_dateChip) {
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::LayoutRequest)
+            scheduleDetailLayout();
     }
     if (watched == m_formatPanel && event->type() == QEvent::Hide) m_formatButton->setChecked(false);
     auto* widget = qobject_cast<QWidget*>(watched);

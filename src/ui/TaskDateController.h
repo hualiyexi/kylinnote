@@ -16,7 +16,7 @@ class TaskDateController : public QObject {
     Q_OBJECT
 public:
     TaskDateController(TaskStore* store, QWidget* owner);
-    void open(const QString& entityId, const QRect& globalAnchor);
+    void open(const QString& entityId, const QRect& globalAnchor, QWidget* popupParent = nullptr);
     void openDraft(const Entity& draft, const QRect& globalAnchor);
     void openDraft(const Entity& draft, const ScheduleValue& schedule, const QRect& globalAnchor);
     bool isOpen() const;
@@ -30,7 +30,7 @@ signals:
 
 private:
     void openEntity(const Entity& entity, const QString& entityId, const QRect& globalAnchor,
-                    const ScheduleValue& initial);
+                    const ScheduleValue& initial, QWidget* popupParent = nullptr);
 
     TaskStore* m_store;
     QWidget* m_owner;

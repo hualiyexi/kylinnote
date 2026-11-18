@@ -19,6 +19,7 @@ public:
     PopupMenu* addMenu(const QIcon& icon, const QString& title);
     QAction* addMenu(QMenu* menu);
     static int shadowMargin();
+    void setCardPadding(int horizontal, int vertical);
 
     // 按实例主题覆盖，默认关闭：开启后卡片、边框、阴影与动作文字/图标色全部
     // 改从指定主题取值；未开启时仍走全局 ThemeManager，行为与原先完全一致。

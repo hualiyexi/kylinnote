@@ -1294,7 +1294,6 @@ void TaskPanel::setDetailVisible(bool visible) {
         m_detailOverlay = visible && !m_selectedId.isEmpty();
         if (m_detailOverlay && m_detailFrame->parentWidget() != m_surface) {
             m_detailFrame->setParent(m_surface);
-            m_detailFrame->setMinimumWidth(0);
             m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
             m_detailFrame->setProperty("overlay", true);
             m_detail->setOverlayMode(true);
@@ -1308,7 +1307,7 @@ void TaskPanel::setDetailVisible(bool visible) {
         if (m_detailFrame->parentWidget() != m_splitter || m_splitter->indexOf(m_detailFrame) != 2) {
             m_detailFrame->clearMask();
             m_splitter->insertWidget(2, m_detailFrame);
-            m_detailFrame->setMinimumWidth(300);
+            m_detailFrame->setMinimumWidth(m_preferDetailOverlay ? 300 : 260);
             m_detailFrame->setProperty("overlay", false);
             m_detail->setOverlayMode(false);
             m_detailFrame->style()->unpolish(m_detailFrame);
@@ -1341,7 +1340,6 @@ void TaskPanel::reconcileWorkspaceLayout() {
     const int middleMinimum = m_preferDetailOverlay ? 320 : 260;
     const int detailMinimum = m_preferDetailOverlay ? 300 : 260;
     m_middle->setMinimumWidth(middleMinimum);
-    m_detailFrame->setMinimumWidth(detailMinimum);
     const int available = m_splitter->width();
     const bool oldDetailAutoHidden = m_detailAutoHidden;
     const bool oldSidebarAutoHidden = m_sidebarAutoHidden;
@@ -1362,7 +1360,6 @@ void TaskPanel::reconcileWorkspaceLayout() {
                                                         : static_cast<QWidget*>(m_splitter))) {
         if (wantOverlay) {
             m_detailFrame->setParent(m_surface);
-            m_detailFrame->setMinimumWidth(0);
             m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
             m_detailFrame->setProperty("overlay", true);
             m_detail->setOverlayMode(true);
@@ -1370,7 +1367,6 @@ void TaskPanel::reconcileWorkspaceLayout() {
             // 覆盖时的 surface 裁剪会随控件保留；停靠后由 splitter 统一裁剪。
             m_detailFrame->clearMask();
             m_splitter->insertWidget(2, m_detailFrame);
-            m_detailFrame->setMinimumWidth(300);
             m_detailFrame->setMaximumWidth(QWIDGETSIZE_MAX);
             m_detailFrame->setProperty("overlay", false);
             m_detail->setOverlayMode(false);
@@ -1378,6 +1374,7 @@ void TaskPanel::reconcileWorkspaceLayout() {
         m_detailFrame->style()->unpolish(m_detailFrame);
         m_detailFrame->style()->polish(m_detailFrame);
     }
+    if (showDockedDetail) m_detailFrame->setMinimumWidth(detailMinimum);
     m_detailOverlay = wantOverlay;
     m_sidebar->setVisible(showSidebar);
     m_middle->show();
@@ -1441,6 +1438,7 @@ void TaskPanel::updateDetailOverlayGeometry() {
     const QRect content = m_surface->rect().adjusted(inset, inset, -inset, -inset);
     const int maximum = qMax(260, qMin(480, content.width() - 260));
     m_overlayWidth = qBound(260, m_overlayWidth, maximum);
+    m_detailFrame->setMinimumWidth(260);
     m_detailFrame->setGeometry(content.right() - m_overlayWidth + 1, content.top(),
                                m_overlayWidth, content.height());
     if (m_detailOverlayShadow) {
@@ -1467,15 +1465,7 @@ void TaskPanel::updateWindowControlsPosition() {
     m_windowControls->setGeometry(width() - m_windowControls->width() - inset, inset,
                                  m_windowControls->width(), m_windowControls->height());
     if (auto* header = m_detail->findChild<QFrame*>(QStringLiteral("DetailHeader"))) {
-        if (auto* layout = qobject_cast<QHBoxLayout*>(header->layout())) {
-            const bool overlay = m_detailFrame && m_detailFrame->property("overlay").toBool();
-            layout->setContentsMargins(overlay ? 12 : 20,
-                                       WorkspaceGeometry::DetailHeaderContentTopMargin,
-                                       overlay ? 12 : 20,
-                                       WorkspaceGeometry::DetailHeaderContentBottomMargin);
-            layout->invalidate();
-            layout->activate();
-        }
+        header->layout()->activate();
     }
 }
 

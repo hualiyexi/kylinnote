@@ -225,7 +225,7 @@
 |---|---|---|
 | 分隔线 | 工作区列表与详情之间 1 逻辑像素；日期栏下 1 像素细线 | `TaskPanel`、`QssBuilder` |
 | 顶栏 | 任务完成框、日期／提醒在左、信息图标在右；优先级收进更多菜单。覆盖详情关闭在最左且右侧信息前有分割线，普通停靠不显示关闭；子任务父级链接为 13px/22px、距标题 8px，可点击跳转 | `TaskDetailWidget` |
-| 日期状态 | 上海时区显示 `yyyy/MM/dd`；有效未完成任务显示「延期 N 天」，逾期文字和日历图标同色 | `updateDateChip()` |
+| 日期状态 | 本年显示「M月d日」，其他年份用 `yyyy/MM/dd`，起止时刻紧跟对应日期。相对说明及逾期状态以时间段结束日判断；窄栏可换行 | `detailScheduleCaption()`、`updateDateChip()` |
 | 标题与正文 | 仍为两个字段；标题无框、同背景、同左边缘，与正文一起滚动，靠字重字号区分 | `TaskDetailForm`、`MarkdownEditor::setFlowLayout()` |
 | 检查项与附件 | 每项一行、内容决定高度、无常驻分区标题、无空态占位；一个外层滚动区 | `TaskChecklist`、`AttachmentWidget::setInlineMode()` |
 | 信息浮层 | 字数、字符数、创建于、修改于；统计当前可见文字，日期读取实体真实时间 | `EntityInfoPopup` |

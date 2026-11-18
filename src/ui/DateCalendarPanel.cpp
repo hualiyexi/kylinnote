@@ -10,10 +10,29 @@
 
 #include <algorithm>
 
+#include "AppIcons.h"
+#include "design/ThemeManager.h"
+
 namespace kl {
 namespace {
 
 constexpr int kCalendarCell = 30;
+
+QToolButton* makeNavButton(QWidget* parent, const QString& label, const QString& iconName, int size = 12)
+{
+    auto* button = new QToolButton(parent);
+    button->setObjectName(QStringLiteral("DatePickerNav"));
+    button->setToolTip(label);
+    button->setAccessibleName(label);
+    button->setFixedSize(24, 24);
+    button->setIconSize(QSize(size, size));
+    const auto refreshIcon = [button, iconName, size]() {
+        button->setIcon(AppIcons::icon(iconName, ds::ColorToken::TextSecondary, size));
+    };
+    refreshIcon();
+    QObject::connect(&ThemeManager::instance(), &ThemeManager::themeChanged, button, refreshIcon);
+    return button;
+}
 
 void repolish(QWidget* widget)
 {
@@ -53,25 +72,10 @@ DateCalendarPanel::DateCalendarPanel(QWidget* parent)
     m_monthLabel->setFixedHeight(28);
     monthRow->addWidget(m_monthLabel);
     monthRow->addStretch();
-    auto* previous = new QToolButton(this);
-    previous->setObjectName(QStringLiteral("DatePickerNav"));
-    previous->setText(QStringLiteral("‹"));
-    previous->setToolTip(QStringLiteral("上一月"));
-    previous->setAccessibleName(QStringLiteral("上一月"));
-    auto* todayButton = new QToolButton(this);
-    todayButton->setObjectName(QStringLiteral("DatePickerNav"));
-    todayButton->setText(QStringLiteral("○"));
-    todayButton->setToolTip(QStringLiteral("今天"));
-    todayButton->setAccessibleName(QStringLiteral("今天"));
-    auto* next = new QToolButton(this);
-    next->setObjectName(QStringLiteral("DatePickerNav"));
-    next->setText(QStringLiteral("›"));
-    next->setToolTip(QStringLiteral("下一月"));
-    next->setAccessibleName(QStringLiteral("下一月"));
-    for (QToolButton* button : {previous, todayButton, next}) {
-        button->setFixedSize(24, 24);
-        monthRow->addWidget(button);
-    }
+    auto* previous = makeNavButton(this, QStringLiteral("上一月"), QStringLiteral("kalendae-chevron-left"));
+    auto* todayButton = makeNavButton(this, QStringLiteral("今天"), QStringLiteral("quick-today"), 16);
+    auto* next = makeNavButton(this, QStringLiteral("下一月"), QStringLiteral("kalendae-chevron-right"));
+    for (QToolButton* button : {previous, todayButton, next}) monthRow->addWidget(button);
 
     auto* weekdays = new QGridLayout;
     weekdays->setContentsMargins(0, 0, 0, 0);

@@ -17,7 +17,6 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
-#include <QSettings>
 #include <QSpinBox>
 #include <QStyle>
 #include <QStylePainter>
@@ -72,15 +71,6 @@ QIcon quickIcon(int index)
     if (index < 0 || index >= 4) return QIcon();
     return AppIcons::icon(QString::fromLatin1(kIds[index]),
                           ds::ColorToken::TextSecondary, 26);
-}
-
-int configuredFirstDay()
-{
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                       QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
-    const int value = settings.value(QStringLiteral("ui/weekFirstDay"), static_cast<int>(Qt::Monday)).toInt();
-    return value >= static_cast<int>(Qt::Monday) && value <= static_cast<int>(Qt::Sunday)
-        ? value : static_cast<int>(Qt::Monday);
 }
 
 void repolish(QWidget* widget)
@@ -196,7 +186,7 @@ DatePickerPopup::DatePickerPopup(QWidget* parent)
     disableNativeWindowShadows();
     setModal(false);
     setFont(ds::qfont(ds::FontScene::Body));
-    m_firstDay = configuredFirstDay();
+    m_firstDay = Settings::weekFirstDay();
 
     buildUi();
     applyTheme();
@@ -2110,7 +2100,7 @@ void DatePickerPopup::popupAt(const QRect& globalAnchor)
     m_popupPositioned = true;
     closeSubPopups();
     clearCardError();
-    const int firstDay = configuredFirstDay();
+    const int firstDay = Settings::weekFirstDay();
     if (m_firstDay != firstDay) {
         m_firstDay = firstDay;
         refreshAll();

@@ -43,6 +43,8 @@ private slots:
     void groupKeyOrdering();
     void groupModeNames();
     void timeBucketBoundaries();
+    void detailScheduleCaptionUsesCalendarWeeks();
+    void detailScheduleCaptionKeepsRangeEndpointsTogether();
     void createdBucketBoundaries();
     void groupOfPrecedence();
     void taskDropTargetSemantics();
@@ -206,6 +208,82 @@ void GroupModelTests::timeBucketBoundaries()
     QCOMPARE(timeBucketOf(range, today), TimeBucket::Next7Days);
     range.allDayEndDate = today.addDays(-1);
     QCOMPARE(timeBucketOf(range, today), TimeBucket::Overdue);
+}
+
+void GroupModelTests::detailScheduleCaptionUsesCalendarWeeks()
+{
+    const QDate today(2026, 11, 19); // 周四，离下周日还有十天。
+    const QDateTime now = QDateTime(today, QTime(0, 30), appTimeZone()).toUTC();
+    QCOMPARE(now.date(), today.addDays(-1));
+    Entity entity = task(QStringLiteral("caption"));
+    const auto undated = detailScheduleCaption(entity, now);
+    QCOMPARE(undated.text, QStringLiteral("设置日期"));
+    QVERIFY(!undated.scheduled && !undated.overdue);
+    const struct { int offset; const char* text; } cases[] = {
+        {-3, "11月16日, 延期3天"}, {-1, "11月18日, 昨天"}, {0, "11月19日, 今天"},
+        {1, "11月20日, 明天"}, {2, "11月21日, 后天"}, {3, "11月22日, 周日"},
+        {4, "11月23日, 下周一"}, {5, "11月24日, 下周二"}, {10, "11月29日, 下周日"},
+        {11, "11月30日, 剩余11天"}, {43, "2027/01/01, 剩余43天"}
+    };
+    for (const auto &value : cases) {
+        entity.allDayDate = today.addDays(value.offset);
+        const auto caption = detailScheduleCaption(entity, now);
+        QCOMPARE(caption.text, QString::fromUtf8(value.text));
+        QVERIFY(caption.scheduled);
+        QCOMPARE(caption.overdue, value.offset < 0);
+    }
+    entity.allDayDate = today.addDays(3);
+    QCOMPARE(detailScheduleCaption(entity, now, Qt::Sunday).text, QStringLiteral("11月22日, 下周日"));
+    entity.allDayDate = today.addDays(1);
+    const auto tomorrowAtMidnight = detailScheduleCaption(entity, now.addDays(1));
+    QCOMPARE(tomorrowAtMidnight.text, QStringLiteral("11月20日, 今天"));
+    entity.allDayDate = QDate();
+    entity.dueAt = QDateTime(today, QTime(0, 0), appTimeZone()).toUTC();
+    const auto midnight = detailScheduleCaption(entity, now);
+    QCOMPARE(midnight.text, QStringLiteral("11月19日, 00:00, 今天"));
+    QVERIFY(midnight.overdue);
+
+    entity.dueAt = QDateTime();
+    entity.allDayDate = today.addDays(-3);
+    for (TaskStatus status : {TaskStatus::Completed, TaskStatus::Abandoned}) {
+        entity.status = status;
+        const auto caption = detailScheduleCaption(entity, now);
+        QCOMPARE(caption.text, QStringLiteral("11月16日"));
+        QVERIFY(!caption.overdue);
+    }
+    entity.allDayDate = today.addDays(43);
+    QCOMPARE(detailScheduleCaption(entity, now).text, QStringLiteral("2027/01/01"));
+}
+
+void GroupModelTests::detailScheduleCaptionKeepsRangeEndpointsTogether()
+{
+    const auto at = [](const QDate &date, int hour, int minute) {
+        return QDateTime(date, QTime(hour, minute), appTimeZone()).toUTC();
+    };
+    const QDate today(2026, 12, 31), tomorrow = today.addDays(1);
+    const QDateTime now = at(today, 12, 0);
+    Entity entity = task(QStringLiteral("range-caption"));
+    entity.hasScheduleRange = true;
+    entity.startAt = at(today.addDays(-2), 9, 17);
+    entity.dueAt = at(tomorrow, 0, 30);
+    const auto crossing = detailScheduleCaption(entity, now);
+    QCOMPARE(crossing.text, QStringLiteral("12月29日, 09:17 - 2027/01/01, 00:30, 明天"));
+    QVERIFY(!crossing.overdue);
+
+    entity.startAt = at(today, 9, 0);
+    entity.dueAt = at(today, 10, 30);
+    const auto sameDay = detailScheduleCaption(entity, now);
+    QCOMPARE(sameDay.text, QStringLiteral("12月31日, 09:00 - 10:30, 今天"));
+    QVERIFY(sameDay.overdue);
+
+    entity.startAt = entity.dueAt = QDateTime();
+    entity.allDayDate = today.addDays(-2);
+    entity.allDayEndDate = today.addDays(-1);
+    const auto allDay = detailScheduleCaption(entity, now);
+    QCOMPARE(allDay.text, QStringLiteral("12月29日 - 12月30日, 昨天"));
+    QVERIFY(allDay.overdue);
+    entity.allDayEndDate = entity.allDayDate;
+    QCOMPARE(detailScheduleCaption(entity, now).text, QStringLiteral("12月29日, 延期2天"));
 }
 
 void GroupModelTests::createdBucketBoundaries()

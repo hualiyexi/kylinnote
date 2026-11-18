@@ -42,6 +42,9 @@ public:
     QDate lastUpdateNoticeDate() const;
     void setLastUpdateNoticeDate(const QDate& date);
 
+    // 日期选择器与详情的本周／下周说明使用同一个周起始日。
+    static Qt::DayOfWeek weekFirstDay();
+
     // 日期选择器的本地最近自定义提醒；只保存规则，不包含任务或标题数据。
     QStringList recentReminderRules(bool allDay) const;
     void addRecentReminderRule(const QString& ruleJson);

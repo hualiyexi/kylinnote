@@ -155,6 +155,61 @@ QVector<ViewSection> buildFolderSections(const QVector<Entity> &entities, const 
     return sections;
 }
 
+DetailScheduleCaption detailScheduleCaption(const Entity &entity, const QDateTime &now,
+                                            Qt::DayOfWeek firstDay)
+{
+    const QDate first = scheduleStartDate(entity), last = scheduleEndDate(entity);
+    if (!first.isValid() || !last.isValid()) return {QStringLiteral("设置日期"), false, false};
+
+    const QDate today = toAppTime(now).date();
+    const auto dateText = [&today](const QDate &date) {
+        return date.toString(date.year() == today.year() ? QStringLiteral("M月d日")
+                                                       : QStringLiteral("yyyy/MM/dd"));
+    };
+    const QTimeZone zone(entity.timeZone.toUtf8());
+    const auto timeText = [&zone](const QDateTime &dateTime) {
+        return dateTime.isValid() ? QStringLiteral(", ") + dateTime.toTimeZone(zone).toString(QStringLiteral("HH:mm"))
+                                  : QString();
+    };
+    const QString separator = QStringLiteral(" - ");
+    const bool timed = !entity.allDayDate.isValid();
+    QString text = dateText(first);
+    if (timed) text += timeText(entity.hasScheduleRange ? entity.startAt : entity.dueAt);
+    if (entity.hasScheduleRange) {
+        if (first != last) {
+            text += separator + dateText(last);
+            if (timed) text += timeText(entity.dueAt);
+        } else if (timed) {
+            text += separator + entity.dueAt.toTimeZone(zone).toString(QStringLiteral("HH:mm"));
+        }
+    }
+
+    if (!today.isValid()) return {text, true, false};
+
+    // 整个时间段的相对说明以结束日为准，不能把已开始但尚未结束的任务标成逾期。
+    const qint64 days = today.daysTo(last);
+    const bool active = !entity.deleted
+        && (entity.kind == EntityKind::Note || entity.status == TaskStatus::Active);
+    const bool showDayCount = active && entity.kind == EntityKind::Task;
+    const bool overdue = active && (days < 0 || (timed && entity.dueAt < now));
+    QString suffix;
+    if (days == 0) suffix = QStringLiteral("今天");
+    else if (days == 1) suffix = QStringLiteral("明天");
+    else if (days == 2) suffix = QStringLiteral("后天");
+    else if (days == -1) suffix = QStringLiteral("昨天");
+    else if (days < -1 && showDayCount) suffix = QStringLiteral("延期%1天").arg(-days);
+    else if (days > 2) {
+        const int daysIntoWeek = (today.dayOfWeek() - firstDay + 7) % 7;
+        const int daysUntilWeekEnd = 6 - daysIntoWeek;
+        if (days <= daysUntilWeekEnd + 7) {
+            suffix = days <= daysUntilWeekEnd ? QStringLiteral("周") : QStringLiteral("下周");
+            suffix += QStringLiteral("一二三四五六日").at(last.dayOfWeek() - 1);
+        } else if (showDayCount) suffix = QStringLiteral("剩余%1天").arg(days);
+    }
+    if (!suffix.isEmpty()) text += QStringLiteral(", ") + suffix;
+    return {text, true, overdue};
+}
+
 QString scheduleLabel(const Entity &entity)
 {
     const QTimeZone zone(entity.timeZone.toUtf8());

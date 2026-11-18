@@ -21,6 +21,7 @@
 #include "platform/SystemShadow.h"
 #include "ui/AppStyle.h"
 #include "ui/ColorTheme.h"
+#include "ui/DateCalendarPanel.h"
 #include "ui/DatePickerPopup.h"
 #include "ui/MarkdownEditor.h"
 #include "ui/NoteWidget.h"
@@ -50,6 +51,7 @@
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QScrollBar>
 #include <QScrollArea>
@@ -378,6 +380,7 @@ private slots:
     void chromeGeometryQuietControlsAndResizeHitboxes();
     void hoverRevealsTinyControlsAndFooterChipStays();
     // 小控件与菜单
+    void colorMenuFromTinyButtonChangesProjectionColor_data();
     void colorMenuFromTinyButtonChangesProjectionColor();
     void pinTogglesNoteLayerKeepsTaskPinnedAt();
     void closeKeepsTaskAndRemovesProjection();
@@ -396,6 +399,7 @@ private slots:
     // 回收站与恢复
     void trashedThenRestoredViewBindsSessionAndSaves();
     // 字段提交与投影
+    void dateChipCommitMirrorsBothViews_data();
     void dateChipCommitMirrorsBothViews();
     void resizeAreaDragResizesPaperAndPersists();
     void titleBarDragSnapsPaperToPeersAndScreen();
@@ -664,8 +668,20 @@ void DesktopNotesTest::hoverRevealsTinyControlsAndFooterChipStays()
 // ---------------------------------------------------------------------------
 
 // 18x18 颜色按钮真实可点：打开 NoteColorMenu，选中后只改投影外观并落桌面状态。
+void DesktopNotesTest::colorMenuFromTinyButtonChangesProjectionColor_data()
+{
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
 void DesktopNotesTest::colorMenuFromTinyButtonChangesProjectionColor()
 {
+    QFETCH(bool, dark);
+    auto& theme = ThemeManager::instance();
+    const auto previous = theme.preference();
+    auto restoreTheme = qScopeGuard([&]() { theme.setPreference(previous); });
+    theme.setPreference(dark ? ThemeManager::Preference::Dark : ThemeManager::Preference::Light);
     const QString id = seedProjectedTask(QStringLiteral("颜色便签"), QString(), seedPaper(0));
     QVERIFY(!id.isEmpty());
     NoteManager notes(m_store.get());
@@ -678,6 +694,20 @@ void DesktopNotesTest::colorMenuFromTinyButtonChangesProjectionColor()
     PopupMenu* menu = openMenuByClick(*note, color, "NoteColorMenu");
     QVERIFY(menu);
     QCOMPARE(menu->actions().size(), ColorCount);
+    const QColor paperBg = ds::color(ds::ColorToken::MenuBg, ColorTheme::paperTheme());
+    const QColor hoverBg = ds::color(ds::ColorToken::MenuHover, ColorTheme::paperTheme());
+    QAction* active = menu->actions().at(colorToInt(NoteColor::Green));
+    menu->setActiveAction(active);
+    const QRect row = menu->actionGeometry(active);
+    QVERIFY(row.left() - PopupShadowMargin >= 8);
+    QVERIFY(menu->width() - PopupShadowMargin - row.right() - 1 >= 8);
+    const QImage image = renderWidgetToImage(menu);
+    const qreal dpr = image.devicePixelRatio();
+    const int y = row.center().y();
+    QCOMPARE(logicalPixel(image, dpr, PopupShadowMargin + 4, y), paperBg);
+    QCOMPARE(logicalPixel(image, dpr, menu->width() - PopupShadowMargin - 5, y), paperBg);
+    QCOMPARE(logicalPixel(image, dpr, row.left() + 8, y), hoverBg);
+    QCOMPARE(logicalPixel(image, dpr, row.left() + 21, y), QColor(ColorTheme::spec(NoteColor::Green).body));
     // 真实键盘导航到第 4 项（Pink）：无选中项时首个 Down 才选中第 1 项。
     menu->setActiveAction(nullptr);
     for (int step = 0; step < 4; ++step) QTest::keyClick(menu, Qt::Key_Down);
@@ -1530,11 +1560,23 @@ void DesktopNotesTest::imeCommitWithNextPreeditMirrorsImmediately()
 // 字段提交与投影
 // ---------------------------------------------------------------------------
 
-// 底栏日期胶囊打开现有 DatePickerPopup：字段提交后两视图胶囊都刷新，库已更新。
+// 底栏日期胶囊打开完整的共享弹层，快捷选择后两视图都刷新。
+void DesktopNotesTest::dateChipCommitMirrorsBothViews_data()
+{
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
 void DesktopNotesTest::dateChipCommitMirrorsBothViews()
 {
+    QFETCH(bool, dark);
+    auto& theme = ThemeManager::instance();
+    const auto previous = theme.preference();
+    auto restoreTheme = qScopeGuard([&]() { theme.setPreference(previous); });
+    theme.setPreference(dark ? ThemeManager::Preference::Dark : ThemeManager::Preference::Light);
     const QDate today = toAppTime(appNow()).date();
-    const QDate day = today.addDays(2);
+    const QDate day = today.addDays(1);
     const QString id = seedProjectedTask(QStringLiteral("日期便签"), QString(), seedPaper(0));
     QVERIFY(!id.isEmpty());
     TaskDetailWidget main(m_store.get());
@@ -1558,18 +1600,59 @@ void DesktopNotesTest::dateChipCommitMirrorsBothViews()
         picker = note->findChild<DatePickerPopup*>();
         return picker && picker->isVisible();
     }));
-    picker->setAllDayDate(day);
-    picker->accept();
+    auto* calendar = picker->findChild<DateCalendarPanel*>();
+    QVERIFY(calendar);
+    const auto quickButtons = picker->findChildren<QToolButton*>(QStringLiteral("DatePickerQuick"));
+    const auto navButtons = calendar->findChildren<QToolButton*>(QStringLiteral("DatePickerNav"));
+    QCOMPARE(quickButtons.size(), 4);
+    QCOMPARE(navButtons.size(), 3);
+    const QImage popupImage = renderWidgetToImage(picker);
+    const qreal dpr = popupImage.devicePixelRatio();
+    const QColor ink = theme.color(ds::ColorToken::TextSecondary);
+    for (QToolButton* button : quickButtons + navButtons) {
+        QVERIFY(button->isVisible() && button->isEnabled());
+        const QRect center(button->mapTo(picker, QPoint(3, 3)), button->size() - QSize(6, 6));
+        int inkPixels = 0;
+        for (int y = center.top(); y <= center.bottom(); ++y) {
+            for (int x = center.left(); x <= center.right(); ++x) {
+                const QColor pixel = logicalPixel(popupImage, dpr, x, y);
+                if (pixel.alpha() > 240 && colorDistance(pixel, ink) < 40) ++inkPixels;
+            }
+        }
+        QVERIFY2(inkPixels >= 6, qPrintable(QStringLiteral("%1 %2: %3 pixels")
+            .arg(button->objectName(), button->accessibleName()).arg(inkPixels)));
+    }
+
+    auto* confirm = picker->findChild<QPushButton*>(QStringLiteral("DatePickerConfirm"));
+    QVERIFY(confirm && confirm->isVisible());
+    const QPoint confirmLeft = confirm->mapTo(picker, QPoint(10, confirm->height() / 2));
+    const QColor confirmFill = logicalPixel(popupImage, dpr, confirmLeft.x(), confirmLeft.y());
+    QCOMPARE(confirmFill, theme.color(ds::ColorToken::Primary));
+
+    const QDate month = calendar->visibleMonth();
+    QTest::mouseClick(navButtons.at(0), Qt::LeftButton);
+    QCOMPARE(calendar->visibleMonth(), month.addMonths(-1));
+    QTest::mouseClick(navButtons.at(2), Qt::LeftButton);
+    QTest::mouseClick(navButtons.at(2), Qt::LeftButton);
+    QCOMPARE(calendar->visibleMonth(), month.addMonths(1));
+    QTest::mouseClick(navButtons.at(1), Qt::LeftButton);
+    QVERIFY(picker->isVisible());
+    QCOMPARE(calendar->visibleMonth(), month);
+    QCOMPARE(picker->allDayDate(), today);
+
+    auto* tomorrow = quickButtons.at(1);
+    QCOMPARE(tomorrow->accessibleName(), QStringLiteral("明天"));
+    QTest::mouseClick(tomorrow, Qt::LeftButton);
     QApplication::processEvents();
 
     QTRY_COMPARE(m_store->entity(id).allDayDate, day);
     QVERIFY(!m_store->entity(id).dueAt.isValid());
     QTRY_VERIFY(noteChip->text() != QStringLiteral("设置日期"));
     QTRY_VERIFY(mainChip->text() != QStringLiteral("设置日期"));
-    // 两侧胶囊都反映同一天（桌面为“M月d日”，主窗口为 yyyy/MM/dd）。
-    QVERIFY(noteChip->text().contains(QString::number(day.month())));
-    QVERIFY(noteChip->text().contains(QString::number(day.day())));
-    QVERIFY(mainChip->text().startsWith(day.toString(QStringLiteral("yyyy/MM/dd"))));
+    const QString format = day.year() == today.year() ? QStringLiteral("M月d日") : QStringLiteral("yyyy/MM/dd");
+    const QString label = day.toString(format) + QStringLiteral(", 明天");
+    QCOMPARE(noteChip->text(), label);
+    QCOMPARE(mainChip->text(), label);
 }
 
 // 命中区真实拖动改变纸面尺寸；桌面状态在 flush 后持久化。

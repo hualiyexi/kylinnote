@@ -622,6 +622,87 @@ private slots:
         QVERIFY2(labelMid >= iconMid - 1.0, "顶部日期文字不得高于图标");
     }
 
+    void narrowDateChipPaintsBothDateAndTime_data() {
+        QTest::addColumn<bool>("overlay");
+        QTest::addColumn<bool>("range");
+        QTest::newRow("docked-timed") << false << false;
+        QTest::newRow("overlay-timed") << true << false;
+        QTest::newRow("docked-overdue-range") << false << true;
+        QTest::newRow("overlay-overdue-range") << true << true;
+    }
+
+    void narrowDateChipPaintsBothDateAndTime() {
+        QFETCH(bool, overlay);
+        QFETCH(bool, range);
+        const QString id = m_store->createTask(QStringLiteral("窄栏日期渲染"));
+        QVERIFY(!id.isEmpty());
+        const QDate today = toAppTime(appNow()).date();
+        const QDate end = range ? QDate(2002, 1, 1) : today.addDays(1);
+        const QDate start(2001, 12, 31);
+        const auto at = [](const QDate& day, const QTime& time) {
+            return fromAppTime(QDateTime(day, time, Qt::LocalTime));
+        };
+        ScheduleValue schedule;
+        schedule.hasScheduleRange = range;
+        if (range) schedule.startAt = at(start, QTime(9, 22));
+        schedule.dueAt = at(end, QTime(17, 49));
+        QVERIFY(m_store->saveSchedule(m_store->entity(id), schedule));
+
+        TaskDetailWidget detail(m_store.get());
+        detail.setOverlayMode(overlay);
+        detail.resize(260, 620);
+        detail.show();
+        QVERIFY(detail.setTask(id));
+        QVERIFY(QTest::qWaitForWindowExposed(&detail));
+        auto* chip = detail.findChild<QPushButton*>(QStringLiteral("DateChip"));
+        auto* header = detail.findChild<QFrame*>(QStringLiteral("DetailHeader"));
+        auto* priority = detail.findChild<QToolButton*>(QStringLiteral("DetailPriority"));
+        QVERIFY(chip && header && priority);
+        QCOMPARE(detail.width(), 260);
+        QTRY_VERIFY(chip->isVisible() && header->rect().contains(rectIn(chip, header)));
+        if (range || overlay) QTRY_VERIFY(rectIn(chip, header).top() > rectIn(priority, header).bottom());
+        if (range) QTRY_VERIFY(chip->height() > 30);
+        const QString endDate = end.toString(end.year() == today.year() ? QStringLiteral("M月d日")
+                                                                         : QStringLiteral("yyyy/MM/dd"));
+        QVERIFY(chip->text().contains(endDate + QStringLiteral(", 17:49")));
+        if (range) {
+            QVERIFY(chip->text().contains(start.toString(QStringLiteral("yyyy/MM/dd")) + QStringLiteral(", 09:22 - ")));
+            QVERIFY(chip->text().contains(QStringLiteral("延期")));
+        }
+
+        const auto labelInk = [chip]() {
+            const qreal dpr = chip->devicePixelRatioF();
+            QImage image(qCeil(chip->width() * dpr), qCeil(chip->height() * dpr),
+                         QImage::Format_ARGB32_Premultiplied);
+            image.setDevicePixelRatio(dpr);
+            image.fill(Qt::transparent);
+            {
+                QPainter painter(&image);
+                chip->render(&painter);
+            }
+            const int left = qCeil(28 * dpr); // 4px 内缩 + 20px 图标 + 4px 文字间隔
+            return image.copy(left, 0, image.width() - left, image.height());
+        };
+        const QImage before = labelInk();
+        // 改变最后一位：若只保存原始文字但绘制时仍省略时刻，图像不会变。
+        schedule.dueAt = at(end, QTime(17, 48));
+        QVERIFY(m_store->saveSchedule(m_store->entity(id), schedule));
+        QTRY_VERIFY(chip->text().contains(QStringLiteral("17:48")));
+        QCOMPARE(labelInk().size(), before.size());
+        QVERIFY(labelInk() != before);
+        if (range) {
+            const QImage beforeStartChange = labelInk();
+            schedule.startAt = at(start, QTime(9, 23));
+            QVERIFY(m_store->saveSchedule(m_store->entity(id), schedule));
+            QTRY_VERIFY(chip->text().contains(QStringLiteral("09:23")));
+            QCOMPARE(labelInk().size(), beforeStartChange.size());
+            QVERIFY(labelInk() != beforeStartChange);
+        }
+        detail.resize(560, 620);
+        QTRY_COMPARE(chip->height(), 30);
+        QTRY_COMPARE(rectIn(chip, header).center().y(), rectIn(priority, header).center().y());
+    }
+
     void typographyUsesApprovedPointSizes() {
         QCOMPARE(ds::pointSize(ds::TypeScale::Caption), 9.0);
         QCOMPARE(ds::pointSize(ds::TypeScale::Menu), 9.75);

@@ -99,6 +99,12 @@ QDate Settings::lastUpdateNoticeDate() const {
 void Settings::setLastUpdateNoticeDate(const QDate& date) {
     m_store.setValue(QStringLiteral("updates/lastNoticeDate"), date);
 }
+Qt::DayOfWeek Settings::weekFirstDay() {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
+    const int value = settings.value(QStringLiteral("ui/weekFirstDay"), static_cast<int>(Qt::Monday)).toInt();
+    return value >= Qt::Monday && value <= Qt::Sunday ? static_cast<Qt::DayOfWeek>(value) : Qt::Monday;
+}
 QStringList Settings::recentReminderRules(bool allDay) const {
     QSettings settings(QSettings::IniFormat, QSettings::UserScope,
                        QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
