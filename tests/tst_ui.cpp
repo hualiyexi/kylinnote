@@ -2983,7 +2983,8 @@ private slots:
 
         Settings::instance().setSmartListVisibility(
             QStringLiteral("today"), Settings::SmartListVisibility::WhenNonEmpty);
-        QVERIFY(m_store->setPinnedAt(dated, appNow()));
+        // 解除置顶确保状态实际变化，连续取当前时间可能得到相同值。
+        QVERIFY(m_store->setPinnedAt(dated, QDateTime()));
         QTRY_VERIFY(rowFor(ViewScope::Today) >= 0);
         QVERIFY(m_store->trashTask(dated));
         QTRY_VERIFY(rowFor(ViewScope::Today) < 0);
