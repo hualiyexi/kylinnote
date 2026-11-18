@@ -225,7 +225,13 @@ if(BUILD_TESTING)
         else()
             target_link_libraries(test_${test} PRIVATE kylinlist_ui Qt5::Test)
         endif()
-        add_test(NAME ${test} COMMAND test_${test})
+        if(WIN32)
+            # Capture Qt Test assertions even when the runner loses redirected stdout.
+            add_test(NAME ${test} COMMAND test_${test}
+                -o -,txt -o "Testing/Temporary/qtest-${test}.log,txt")
+        else()
+            add_test(NAME ${test} COMMAND test_${test})
+        endif()
         set_tests_properties(${test} PROPERTIES
             ENVIRONMENT "${KYLINLIST_TEST_ENV}"
             TIMEOUT 180)

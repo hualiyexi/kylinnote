@@ -918,7 +918,7 @@ void LiveTextTests::importSuccessClearsSessionContext()
 
     QVERIFY(tracked.isNull());                               // 旧会话对象已销毁（QPointer 失效）
     EntityTextSession *fresh = store.textSession(id);        // 注册表按需重建
-    QVERIFY(fresh && fresh != oldSession);
+    QVERIFY(fresh);                                          // 新对象可以复用旧对象地址
     QCOMPARE(fresh->title(), QStringLiteral("恢复标题"));      // 新会话持有正确文本
     QCOMPARE(fresh->body(), QStringLiteral("恢复正文"));
     QVERIFY(!fresh->canUndoTitle() && !fresh->canRedoTitle());// 旧编辑不可重放

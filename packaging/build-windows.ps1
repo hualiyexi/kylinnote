@@ -134,7 +134,21 @@ try {
             } else {
                 Write-Host "=== Qt platform plugins directory missing: $Platforms ==="
             }
-            $TestLog = Join-Path $BuildDir 'Testing/Temporary/LastTest.log'
+            $TestResults = Join-Path $BuildDir 'Testing/Temporary'
+            $FailedTests = Join-Path $TestResults 'LastTestsFailed.log'
+            if (Test-Path -LiteralPath $FailedTests) {
+                foreach ($Entry in (Get-Content -LiteralPath $FailedTests)) {
+                    if ($Entry -match '^\d+:([a-z0-9_-]+)$') {
+                        $TestName = $Matches[1]
+                        $QtTestLog = Join-Path $TestResults "qtest-$TestName.log"
+                        if (Test-Path -LiteralPath $QtTestLog) {
+                            Write-Host "=== Qt Test: $TestName ==="
+                            Get-Content -LiteralPath $QtTestLog
+                        }
+                    }
+                }
+            }
+            $TestLog = Join-Path $TestResults 'LastTest.log'
             if (Test-Path -LiteralPath $TestLog) {
                 Write-Host '=== LastTest.log (tail 120) ==='
                 Get-Content -LiteralPath $TestLog -Tail 120
