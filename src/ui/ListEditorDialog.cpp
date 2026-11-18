@@ -134,10 +134,9 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(token(ds::ColorToken::Field));
-        const auto border = property("focused").toBool() ? ds::ColorToken::FocusRing
-                                                        : ds::ColorToken::Border;
-        painter.setPen(QPen(token(border), 1.0));
+        painter.setBrush(token(property("focused").toBool() ? ds::ColorToken::FieldHover
+                                                           : ds::ColorToken::Field));
+        painter.setPen(QPen(token(ds::ColorToken::Border), 1.0));
         painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
     }
 };
@@ -487,11 +486,11 @@ void ListEditorDialog::applyTheme()
         "QToolButton#ListIconButton{background:transparent;border:1px solid transparent;"
         "border-radius:6px;padding:0;}"
         "QToolButton#ListIconButton:hover{background:%5;}"
-        "QToolButton#ListIconButton:focus{border-color:%3;}"
+        "QToolButton#ListIconButton:focus{background:%5;}"
         "QComboBox#ListFolderCombo{background:%2;border:1px solid transparent;border-radius:6px;"
-        "padding:5px 8px;color:%1;}"
+        "padding:0 8px;color:%1;}"
         "QComboBox#ListFolderCombo:hover{background:%6;}"
-        "QComboBox#ListFolderCombo:focus{border-color:%3;background:%2;}"
+        "QComboBox#ListFolderCombo:focus{border-color:transparent;background:%6;}"
         "QComboBox#ListFolderCombo::drop-down{border:0;width:22px;}"
         "QComboBox QAbstractItemView{background:%7;border:1px solid %8;border-radius:6px;"
         "padding:4px;selection-background-color:%9;selection-color:%1;outline:0;}")

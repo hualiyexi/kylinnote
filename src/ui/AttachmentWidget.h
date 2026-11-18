@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QPointer>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
@@ -27,6 +28,8 @@ public:
     void setInlineMode(bool inlineMode);
     void refresh();
     QString filePath(const Attachment& attachment) const;
+    // 与文件选择入口共用逐文件导入；返回已成功添加的数量。
+    int importPaths(const QStringList& paths);
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -40,6 +43,8 @@ signals:
 private:
     void clearRows();
     void addRow(const Attachment& attachment);
+    bool currentAttachment(const QPointer<TaskStore>& store, const QString& entityId,
+                           const QString& attachmentId, Attachment* result = nullptr) const;
 
     QPointer<TaskStore> m_store;
     QString m_entityId;

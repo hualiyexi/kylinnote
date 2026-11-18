@@ -5,6 +5,7 @@
 #include "design/QssBuilder.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
+#include "design/FontManager.h"
 
 namespace kl {
 namespace AppStyle {
@@ -73,7 +74,7 @@ QFont font(Font role) {
 
 void apply(QApplication& app) {
     ThemeManager::instance().applyBootstrap(app);
-    app.setFont(ds::qfont(ds::FontScene::Base));
+    FontManager::instance().applyBootstrap(app);
     AppToolTip::install(app);
 }
 

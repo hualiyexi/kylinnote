@@ -35,9 +35,9 @@ void GlyphButton::paintEvent(QPaintEvent*)
         painter.setBrush(token(ds::ColorToken::Hover));
         painter.drawRoundedRect(frame, 8, 8);
     }
-    if (hasFocus()) {
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(token(ds::ColorToken::FocusRing), 1.0));
+    if (hasFocus() && !underMouse()) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(token(ds::ColorToken::Hover));
         painter.drawRoundedRect(frame, 8, 8);
     }
     const QRectF glyphRect(rect().center().x() - 9, rect().center().y() - 9, 18, 18);

@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QSet>
 #include "../domain/Entity.h"
+#include "AutostartSettings.h"
 namespace kl {
 class TaskStore;
 class NoteWidget;
@@ -13,6 +14,7 @@ class NoteManager : public QObject {
 public:
     explicit NoteManager(TaskStore* store, QObject* parent = nullptr);
     ~NoteManager() override;
+    void setAutostart(AutostartSettings* autostart) { m_autostart = autostart; }
     bool restoreAll();
     NoteWidget* createNote();
     void showAll();
@@ -34,17 +36,22 @@ public:
     }
 signals:
     void taskOpenRequested(QString id);
+    void taskWidgetRequested();
+    // 正文内链改经独立关联弹窗；与标题栏 taskOpenRequested 的原导航分离。
+    void relatedDetailRequested(QString id);
 public slots:
     void handleSave(NoteWidget* note);
 
 private:
     void syncTask(QString id);
     void closeNote(NoteWidget* note);
+    void arrangeNotes(NoteWidget* anchor, bool vertical);
     // finishEditing 落盘会经 taskChanged 重新进入 syncTask 的关窗分支；
     // m_finishing 让同步重入的刷新/关窗等待最外层保存结束；
     // 重入或保存失败返回 false，保留窗口供最外层收尾或后续重试。
     bool finishNoteEditing(NoteWidget* note);
-    TaskStore* m_store;
+    QPointer<TaskStore> m_store;
+    QPointer<AutostartSettings> m_autostart;
     QMap<QString, NoteWidget*> m_notes;
     QPointer<NoteWidget> m_active;
     QSet<QString> m_finishing;

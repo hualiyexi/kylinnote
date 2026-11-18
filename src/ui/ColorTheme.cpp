@@ -1,83 +1,76 @@
 #include "ColorTheme.h"
+#include "design/ThemeManager.h"
+#include "design/TypeSystem.h"
 
 #include <QPalette>
 #include <QWidget>
 
 namespace kl {
 
-ColorTheme::Spec ColorTheme::spec(NoteColor c) {
-    switch (c) {
-        case NoteColor::Yellow:
-            return {"yellow", "奶油黄", "#FFF4BF", "#FFF4BF", "#F0D889", "#37342A", "#82734B", "#E5CF86"};
-        case NoteColor::Blue:
-            return {"blue", "天空蓝", "#E0EEF8", "#E0EEF8", "#BDD5E8", "#263640", "#5A7383", "#BAD5E9"};
-        case NoteColor::Green:
-            return {"green", "鼠尾草绿", "#E5F1DE", "#E5F1DE", "#C4DAB8", "#2C392B", "#657B5D", "#C2DAB4"};
-        case NoteColor::Pink:
-            return {"pink", "淡樱粉", "#F9E8EE", "#F9E8EE", "#E7C9D4", "#423039", "#8C6877", "#E7C8D6"};
-        case NoteColor::Purple:
-            return {"purple", "雾紫", "#EDE8F7", "#EDE8F7", "#D4C9E7", "#373043", "#776B8C", "#D2C6E5"};
-        case NoteColor::White:
-        default:
-            return {"white", "纸白", "#FFFFFF", "#FFFFFF", "#E4E7ED", "#292D35", "#828A98", "#D5E0F5"};
-    }
+ColorTheme::Spec ColorTheme::spec(NoteColor color) {
+    static const char* keys[] = {"yellow", "blue", "green", "pink", "purple", "white"};
+    static const char* labels[] = {"奶油黄", "天空蓝", "鼠尾草绿", "淡樱粉", "雾紫", "纸白"};
+    static const ds::ColorToken papers[] = {
+        ds::ColorToken::NotePaperYellow, ds::ColorToken::NotePaperBlue, ds::ColorToken::NotePaperGreen,
+        ds::ColorToken::NotePaperPink, ds::ColorToken::NotePaperPurple, ds::ColorToken::NotePaperWhite
+    };
+    const int index = toInt(fromInt(toInt(color)));
+    const auto& theme = ThemeManager::instance();
+    const QString paper = theme.color(papers[index]).name();
+    QColor border = theme.color(ds::ColorToken::NoteBorder);
+    border.setAlpha(110);
+    return {keys[index], labels[index], paper, paper, border.name(QColor::HexArgb),
+            theme.color(ds::ColorToken::NoteText).name(), theme.color(ds::ColorToken::NoteMuted).name(),
+            theme.color(ds::ColorToken::Selection).name()};
 }
 
-NoteColor ColorTheme::next(NoteColor c) {
-    return fromInt((toInt(c) + 1) % ColorCount);
-}
+NoteColor ColorTheme::next(NoteColor color) { return fromInt((toInt(color) + 1) % ColorCount); }
+NoteColor ColorTheme::fromInt(int value) { return colorFromInt(value); }
+int ColorTheme::toInt(NoteColor color) { return colorToInt(color); }
 
-NoteColor ColorTheme::fromInt(int v) {
-    return v >= 0 && v < ColorCount ? static_cast<NoteColor>(v) : NoteColor::Yellow;
-}
-
-int ColorTheme::toInt(NoteColor c) {
-    return static_cast<int>(c);
-}
-
-QString ColorTheme::windowStyle(NoteColor c) {
-    const Spec s = spec(c);
+QString ColorTheme::windowStyle(NoteColor color) {
+    const Spec s = spec(color);
+    const auto& theme = ThemeManager::instance();
+    const QString hover = theme.color(ds::ColorToken::SurfaceHover).name();
     return QStringLiteral(
-               "#NoteWidget{background:transparent;border:0;}"
-               "#TitleBar{background:transparent;border:0;}"
-               "#NoteWidget QLabel{background:transparent;color:%4;}"
-               "#NoteSchedule,#NoteStatus{color:%6;font-size:9pt;}"
-               "#NoteWidget QTextBrowser,#NoteWidget QTextEdit{background:transparent;color:%4;border:0;}"
-               "#NoteWidget #DescriptionEditor{selection-background-color:%5;padding:0;}"
-               "#NoteEditButton{background:transparent;border:0;color:%6;padding:4px 6px;font-size:9pt;}"
-               "#NoteEditButton:hover{color:%4;background:rgba(0,0,0,0.04);border-radius:4px;}"
-               "#NoteWidget QCheckBox{background:transparent;border:0;spacing:0;}"
-               "#NoteWidget QCheckBox::indicator{width:17px;height:17px;border:1.5px solid %6;"
-               "border-radius:4px;background:transparent;}"
-               "#NoteWidget QCheckBox::indicator:checked{background:%4;border-color:%4;}"
-               "#TitleBar QToolButton{background:transparent;border:0;color:%6;padding:0;margin:0;}"
-               "#TitleBar QToolButton:hover{background:rgba(0,0,0,0.05);border-radius:4px;}"
-               "#TitleBar QToolButton:pressed{background:rgba(0,0,0,0.09);border-radius:4px;}"
-               "#NoteWidget #EditorToolbar{background:transparent;border:0;}"
-               "#NoteWidget #EditorToolbar QToolButton{border:0;background:transparent;color:%4;padding:3px;}"
-               "#NoteWidget QTabBar{background:transparent;border:0;}"
-               "#NoteWidget QTabBar::tab{background:transparent;color:%6;padding:3px 9px;border:0;}"
-               "#NoteWidget QTabBar::tab:selected{color:%4;border-bottom:1px solid %4;}"
-               "#NoteWidget QScrollBar:vertical{background:transparent;width:5px;}"
-               "#NoteWidget QScrollBar::handle:vertical{background:%3;border-radius:2px;}"
-               "#NoteWidget QScrollBar::add-line:vertical,#NoteWidget "
-               "QScrollBar::sub-line:vertical{height:0;}")
-        .arg(QLatin1String(s.border),
-             QLatin1String(s.text),
-             QLatin1String(s.selection),
-             QLatin1String(s.barText));
+        "QWidget#NoteWidget,QWidget#NotePaper,QWidget#TitleBar{background:transparent;border:0;}"
+        "QWidget#NoteWidget QWidget#TaskDetailHost,QWidget#NoteWidget QWidget#TaskDetailForm,"
+        "QWidget#NoteWidget QScrollArea#DetailScroll,QWidget#NoteWidget QScrollArea#DetailAttachmentScroll,"
+        "QWidget#NoteWidget QWidget#DetailAttachmentPane,QWidget#NoteWidget QFrame#DetailFooter"
+        "{background:transparent;border:0;}"
+        "QWidget#NoteWidget QScrollArea>QWidget>QWidget{background:transparent;}"
+        "QWidget#NoteWidget QLabel,QWidget#NoteWidget QLineEdit#TaskTitle,"
+        "QWidget#NoteWidget QTextEdit#DescriptionEditor{background:transparent;color:%1;border:0;padding:0;}"
+        "QWidget#NoteWidget QLineEdit#TaskTitle{font-size:%5pt;font-weight:600;}"
+        "QWidget#NoteWidget QTextEdit#DescriptionEditor{selection-background-color:%3;}"
+        "QWidget#NoteWidget QPushButton#DateChip{background:transparent;border:0;color:%2;"
+        "padding:0;font-size:%6pt;font-weight:400;min-width:0;}"
+        "QWidget#NoteWidget QPushButton#DateChip:hover{background:transparent;color:%1;}"
+        "QWidget#NoteWidget QToolButton#DetailMore,QWidget#TitleBar QToolButton"
+        "{background:transparent;border:0;color:%2;padding:0;margin:0;}"
+        "QWidget#NoteWidget QToolButton#DetailMore:hover,QWidget#TitleBar QToolButton:hover"
+        "{background:%4;border-radius:3px;}"
+        "QWidget#NoteWidget QScrollBar:vertical{background:transparent;width:5px;}"
+        "QWidget#NoteWidget QScrollBar::handle:vertical{background:%2;border-radius:2px;min-height:18px;}"
+        "QWidget#NoteWidget QScrollBar::add-line:vertical,QWidget#NoteWidget QScrollBar::sub-line:vertical"
+        "{height:0;}"
+        "QWidget#NoteWidget QLabel#NoteStatus{background:transparent;color:%7;font-size:%6pt;}"
+    ).arg(s.text, s.barText, s.selection, hover)
+     .arg(ds::qfont(ds::FontScene::ListSection).pointSizeF())
+     .arg(ds::qfont(ds::FontScene::Caption).pointSizeF())
+     .arg(theme.color(ds::ColorToken::Danger).name());
 }
 
-void ColorTheme::apply(QWidget* window, NoteColor c) {
-    if (!window)
-        return;
-    window->setStyleSheet(windowStyle(c));
+void ColorTheme::apply(QWidget* window, NoteColor color) {
+    if (!window) return;
+    const Spec s = spec(color);
+    window->setStyleSheet(windowStyle(color));
     QPalette palette = window->palette();
-    palette.setColor(QPalette::Window, QColor(spec(c).body));
-    palette.setColor(QPalette::Base, QColor(spec(c).body));
-    palette.setColor(QPalette::Text, QColor(spec(c).text));
-    palette.setColor(QPalette::WindowText, QColor(spec(c).text));
+    palette.setColor(QPalette::Window, QColor(s.body));
+    palette.setColor(QPalette::Base, QColor(s.body));
+    palette.setColor(QPalette::Text, QColor(s.text));
+    palette.setColor(QPalette::WindowText, QColor(s.text));
     window->setPalette(palette);
 }
 
-}  // namespace kl
+} // namespace kl

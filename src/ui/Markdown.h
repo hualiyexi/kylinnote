@@ -22,7 +22,8 @@ QString toHtml(const QString& source, const EntityMap& targets = EntityMap());
 QString displayHtml(const Entity& task, const EntityMap& targets = EntityMap());
 QString plainText(const Entity& task, const EntityMap& targets = EntityMap());
 }  // namespace Markdown
-// 预览不加载外部/本地图片；内链只在预览中激活，编辑区始终为纯文本。
+// Read-only HTML previews never load external/local images; native rich-text
+// editing and its interactive block markers live in MarkdownEditor.
 class DocumentPreview : public QTextBrowser {
     Q_OBJECT
 public:

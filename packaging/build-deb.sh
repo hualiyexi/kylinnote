@@ -266,7 +266,7 @@ else
         # this generated file inside our new private staging root, not a reused
         # build directory where it could overwrite an existing file or symlink.
         mkdir -m 0700 "$STAGING_ROOT/debian"
-        printf 'Source: kylinlist\nSection: utils\nPriority: optional\nMaintainer: KylinList <kylinlist@localhost>\n\nPackage: kylinlist\nArchitecture: any\nDescription: Local tasks and checklists\n' > "$STAGING_ROOT/debian/control"
+        printf 'Source: kylinlist\nSection: utils\nPriority: optional\nMaintainer: KylinList <kylinlist@localhost>\n\nPackage: kylinlist\nArchitecture: any\nDescription: Local tasks\n' > "$STAGING_ROOT/debian/control"
         DEPS="$(cd "$STAGING_ROOT" && dpkg-shlibdeps -O -e"$BIN")" || die 'dpkg-shlibdeps failed'
         [[ "$DEPS" == shlibs:Depends=* && -n "${DEPS#shlibs:Depends=}" ]] || die 'dpkg-shlibdeps returned no dependencies'
         DEPENDS="${DEPS#shlibs:Depends=}, tzdata, $QT_DEPENDS"

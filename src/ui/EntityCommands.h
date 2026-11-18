@@ -32,11 +32,10 @@ enum class EntityCommand {
     UploadAttachment, ViewActivity, SaveAsTemplate, Export,
     // 已完成与多选
     EditCompletionTime, Complete, CopyText, Merge,
-    // 视图级
-    ViewList, ViewBoard, ViewTime, HideCompleted, ShowDetail, DisplaySettings,
     // 侧栏
     RenameList, DeleteList, RenameFolder, DeleteFolder, CreateListInFolder,
     Edit, ShowWhenNonEmpty, Hide, Share, Archive,
+    Reactivate,
     Count
 };
 
@@ -67,10 +66,9 @@ public:
     QMenu *buildEntityMenu(const MenuContext &ctx, const QString &entityId, QWidget *parent);
     // R11 详情底部更多；不重复日期、优先级和移动到入口。
     QMenu *buildDetailMoreMenu(const MenuContext &ctx, const QString &entityId, QWidget *parent);
+    QMenu *buildPriorityMenu(const QString &entityId, QWidget *parent);
     // R01-R05 侧栏对象菜单。
     QMenu *buildNavigationMenu(const MenuContext &ctx, const QString &objectId, QWidget *parent);
-    // R12 列表/看板工作区更多，仅管理“怎么看”。
-    QMenu *buildWorkspaceMenu(QWidget *parent);
 
     // 唯一命令执行入口。flush() 等编辑提交由调用方在触发前负责。
     // 无 TaskStore 业务契约的界面命令通过 commandExecuted 交由宿主继续处理。
@@ -88,7 +86,6 @@ private:
     QAction *makeAction(EntityCommand cmd, const QString &entityId, QWidget *parent);
     void addQuickDateBar(QMenu *menu, const MenuContext &ctx, const QString &entityId);
     void addPriorityBar(QMenu *menu, const MenuContext &ctx, const QString &entityId);
-    void addViewBar(QMenu *menu);
     void addMoveToMenu(QMenu *menu, const QString &entityId);
     void addFocusMenu(QMenu *menu, const QString &entityId);
     void executeMoveTo(const QString &entityId, const QString &listId);

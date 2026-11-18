@@ -1,6 +1,110 @@
 # 数据模型重构实施指引
 
-本文件是给实施代理的操作手册：按阶段改哪几个文件、改什么、每阶段怎么验收。**语义以[数据模型文档](data-model.md)为准**，本文只讲动作。
+本文件保留最初实体模型改造的决策与实施历史，并在前部维护本轮实施契约。**当前语义以[数据模型文档](data-model.md)及下方 2026-11-17 规格为准**；历史指引不是当前待办，也不能作为测试通过记录。
+
+## 2026-11-17 当前实施契约：完整调度，开发库直接重建
+
+1. 当前只初始化 schema10，不做 v9→v10 或其他旧库迁移，也不做 v5 备份导入转换。开发预览使用新的空数据目录；已有不匹配数据库仍只读拒绝，不能擅自删除或重置。
+2. `ScheduleValue` 一次携带时刻／全天范围、多个正常提醒和完整 `RecurrenceSpec`。`all_day_end_date` 与 `has_schedule_range` 明确表达包含式范围；同一天两端也不能压成单点。
+3. `recurrence_series.rule_json` 是权威规则，`occurrence_ordinal`／`completion_count` 保存进度；`rrule` 仅为非权威频率摘要。原始 `dtstart`／时区必须传入推进引擎，保持间隔相位与农历锚点。
+4. `reminders.rule_json` 保存正常一次性提醒的锚点、偏移和全天本地时间，`trigger_at_utc_ms` 为已解析UTC。修改日期重算相对提醒，稍后提醒仅修改本次绝对时刻。**没有持续提醒开关、字段或逻辑**。
+5. 任务和笔记都允许日期及提醒；笔记不进入任务时间聚合，第三列不显示笔记日期，提醒弹窗无完成。没有法定节假日、跳过节假日或艾宾浩斯记忆法。
+6. 日期弹窗外层确认才提交；保存前比较调度基线，避免覆盖其他编辑器的日期／提醒。完成最后一次重复正常结束，安全撤销继续保护附件、子任务和后续修改。
+7. 当前备份为 `KylinList.Entities` v6，完整保存范围、规则、进度与提醒规则；恢复路径所有显式SQL列和绑定必须同步。测试只覆盖当前格式新建／重开／往返和旧版本拒绝，不编写迁移或回滚到旧版的兼容层。
+
+以下 2026-11-16 及更早段落为历史实施记录，版本号和已被取代的单日期／任务专属提醒描述不适用于当前代码。
+
+## 2026-11-16 历史实施契约
+
+本轮在 Qt 5.12.8／C++14、Ubuntu 20.04 容器构建基线上继续使用 Qt Widgets；不增加依赖、不重做兼容性调研，也不迁移到 QML／WebView。这里只同步已批准规格与落盘入口；全量构建、CTest、原生手势与目标机结论须按实际执行补录，不能把历史指引里的“应通过”写成“已通过”。
+
+### 1. schema v9：仅新库与当前库，不做旧版升级
+
+涉及 `src/db/Database.*`、仓储与当前实体 codec；旧内容迁移器不再是当前入口。
+
+1. 保留 `application_id=0x4B4C5354`，完全空库直接建立 v9；已有数据库必须是标识正确的当前 v9。**v5/v6/v7/v8、错误标识及未知／未来版本一律拒绝**。
+2. 已有文件先以只读连接检查，再进入可写 pragma／建库流程；拒绝发生在任何写入、WAL 切换或模式变更之前。不得先改文件再报告不支持。
+3. 没有自动升级、补列、旧检查项转正文、迁移回放或升级前 `VACUUM INTO`／文件副本；不静默删除、重置用户旧库，不以旧产品文件回退。旧 `notes.db` 不读取、不转换、不删除。
+4. 当前 schema 直接包含事件 `context_json`、清单／文件夹外观等现行结构，没有独立检查项表或领域集合。正文任务列表通过 `- [ ]`／`- [x]` 表示，点击只改 Markdown 源码、进入正文撤销与编辑会话，不产生独立完成对象或业务进度。
+
+### 2. 备份元数据 v5：只保留当前格式
+
+涉及 `src/domain/BackupCodec.h`、`EntityCodec.h`、`TaskRepository::replaceAll()` 和既有附件交换／覆盖恢复链路。
+
+- 导出与读入均为 `KLB1`／`KylinList.Entities` 元数据版本 **5**；根无 `checklistItems`、实体无 `checklist`，事件 `context` 为 JSON 对象。当前格式夹带旧字段即拒绝，不能悄悄忽略。
+- v2/v3/v4、其他旧格式和未知未来版本在修改本机库／附件前拒绝。不保留旧 codec、冗余双表示转换、旧外观补齐或旧链接迁移回退。
+- 全量覆盖、先暂存附件、可恢复文件交换、单事务替换、失败回滚、导入后历史提醒不补发等契约不变；UUID／revision／更新时间与重复凭证仍按当前镜像恢复契约保存。容器 2 GiB／元数据 256 MiB／单附件 2 MiB 上限不变。
+
+### 3. 活动白名单、context 与内嵌时间线
+
+涉及 `ActivityPolicy.h`、`EntityEvent`、`Journal`、`TaskStore`、`TaskRepository`、`BackupCodec` 和 `ActivityTimelineWidget`。
+
+- `EntityEvent.context` 是 JSON 对象，SQL 列为 `context_json`，备份键为 `context`，默认 `{}`。父项标题、清单名与附件名保存为当时快照，不能把当前查询到的新名称冒充历史；没有名称上下文时用通用文案，不泄露技术 ID。
+- 写入端与展示端共用 `ActivityPolicy` 白名单，只记实质字段和生命周期；排序／pin／section／文件夹／外观与本机显示偏好不记。保留旧原始事件供追溯，不必因过滤噪声删除历史。
+- 标题／正文编辑会话只比较文本；详情和便签独立基线，失焦／切换／关闭／退出结束。仅日志落盘也要在提交后发 `eventsChanged(entityId)`，不能依赖 `taskChanged` 碰巧刷新。
+- 时间线位于第四列 `DetailScroll` 正文流下部，附件另置底部独立滚动面板；时间线可关闭、最新在前。20px 标记、14px 摘要、12px 时间、32px 左缩、20px 间距与 1px 连接线。创建摘要有标题，父级称“主任务”，无账号不伪造 Actor，不弹旧日志对话框。
+
+### 4. 五分组与类型化拖放
+
+涉及 `TaskGrouping.*`、`ViewSpec.*`、`TaskDrop.*`、`TaskListModel`／`TaskListView`、`TaskPanel`、`DisplaySettingsDialog` 与 `TaskStore`。
+
+- GroupMode 为 List／Time／Created／Priority／None；`contains()` 只管范围／搜索／资格，分组不能改变筛选 ID 集。文件夹默认 List，其他 Time；单清单／收集箱隐藏 List。本机 QSettings 以 `grouping/<scope>/<id>` 保存字符串，各范围独立。
+- 活动视角顺序 pinned → 普通模式组 → notes → completed → abandoned；None 只隐藏普通任务组标题。`showCompleted` 同时控制完成与放弃，显示设置复选框与菜单 quick toggle 共用状态。
+- 历史 Completed／Abandoned／Trash 支持全部五模式并真正分组，忽略 pin，不追加活动特殊页脚，所有模式只读禁拖，不伪造状态。
+- Time 六桶 expired（实现 `time:overdue`）／today／tomorrow／next7days（+2..+6）／later（+7 起）／undated；Created 为 0..6／7..29／≥30／未知（含未来）。组内 sortOrder ASC → 自然字段 → id，终态默认对应时间倒序；无排序／顺序 UI。
+- 只传 `TaskDrop::Intent`，由 `TaskStore::applyDropIntent()` 重读最新快照，校验源／目标组、锚点、唯一顺序、清单与完整祖先链；显式移动共用 `moveEntityToList()`。不保留多 bool 旧拖放 API 的并行分支。
+- 同父级、同显示组重排只改 rank；同显示组 Before／After 跨父级时按锚点进入目标同级，脱父后按真实属性补齐目标组条件。跨 Time 取昨天／今天／明天／后天／+7 最近合法日期，支持无日期互转并保留时刻、跨度、提醒与重复身份，旧非连续 rank 也适用。Priority 目标为 0..3；跨 List 带完整子树（含隐藏、折叠、终态后代），独立跨组子项脱父、离 pin 清 pin；AsChild 只 parent／order，不暗改 date／priority／pin。
+- 可见 `orderedIds` 仅作落点提示：以最新完整兄弟集合为基础，仅移动源项，保留隐藏项及非源成员的最新相对顺序；可见同级顺序未变则零写。实际重编号的隐藏成员同样参与 GroupMove／CAS／事务。置顶任务和笔记共用 rank，不以类别覆盖手动顺序。
+- Created 实际起拖在第三列底部 WorkspaceToast 提示且零写入；终态目标拒绝，Notes 不隐式转 Task。非法／陈旧／循环及 CAS 失败原子回滚；变更按 ID 合并，不能同一事务重复 touch 导致正常提交冲突。
+
+### 5. UI 与输入边界
+
+具体几何以 [UI 设计](ui-design.md)和 [UI 对齐契约](ui-alignment-contract.md)为准，此处保留跨数据／UI 的准入点。
+
+- Caption 9pt=12px，Windows 优先 Microsoft YaHei UI／YaHei 等可缩放中文无衬线，Linux 走 Noto 等；PreferAntialias|PreferOutline，不安装或分发专有字体。
+- 主任务链接／标题／正文 origin 24px，body documentMargin 为 0，title 用 textMargins.left=-2 抵消 Qt5.12 固定2px文字内缩；不改既有 28px 控制条／52px 首行中心／48px header／7px 与 5px 补偿。完成框 17px、日历 date-unselected 20px、30px 命中及中间 1×14px 分隔；overlay 旧 info 前分隔保留。
+- Footer 右侧只有 A／more 两个 18px 图标；详情更多复用 EntityCommands 164px 卡片／34px 行／18px icon／12px 圆角／4px 行外缩进／12px 行内图标起点／8px 图文间距。WorkspaceMenu 父卡片 202px，GroupingMenu 164px。
+- 第四列底栏上方设独立附件区，左右 24px、空时整体隐藏、自己的有界滚动；高度同时受三张卡片、可用高度 1/3 和正文至少 120px 预算约束。标题／正文／动态保留 `DetailScroll`；空和短正文都由真实编辑 viewport 填满余白，不覆盖点击层，不把附件塞回正文流。
+- `EditorTextEdit` 提供真实 gutter 和块菜单；加号仅在光标所在的真正空源码普通段落聚焦且可编辑、无选区／IME预编辑时显示，不跟随悬停行，不画交互背景，按字体／QTextLayout基线定位。段落／三级标题／无序、有序、Markdown任务列表／引用／分割线均只写Markdown，非空段落转换走格式入口。选区岛32px、底栏格式岛36px（常规宽304px），18px glyph、10px圆角；选区按钮24px与上下各4px实际布局边距。更多与色板都是同类PopupMenu，34px行／4px外缩进／12px圆角，窄边界折叠进同一列表，不打开第二条横向岛。
+- 不创建或保留隐藏／屏幕外 `EditorToolbar`、`format0..` 等替身控件；所有格式入口和测试都使用真实可见工具栏、选区、gutter 与菜单。浮层共用 `PopupShadow` 的整图高斯阴影，不用 graphics effect／mask 掩盖几何。
+- 正文内部引用只有 `[[UUID|literalalias]]`／`[[UUID]]`，别名字面保留，无别名才显示当前标题；内部导航 href 为裸 UUID，不读旧 scheme、不双读或迁移。标题包含补全为非模态，IME preedit 不误确认，Escape 只关候选；链接悬浮复制／编辑，编辑弹层仅“文本”和“链接”两字段。
+- 格式、块、补全与链接动作保存绝对 UTF-16 源偏移，通过 sourceSelection／selectSource 恢复，附 contextGeneration；setContent／setStore／setEntityId 后旧弹层与迟到回调必须失效。自有弹层以 markdownEditor 属性／ownsPopup 识别，焦点交接不丢选区或误结束编辑会话。
+- 正文关联打开独立卡片宿主并复用完整`TaskDetailWidget`，不替换源第四列；同目标不重置，循环关联复用单卡片，便签正文同路由，主任务／创建结果／便签标题栏导航保留。关闭／换目标先finishEditing，失败留草稿；外点不穿透、Esc先交子交互，纳入退出／恢复冻结及Store生命周期。
+- 文本使用瞬态`TextDraft`字段三方比较，未改字段保留当前值、同字段冲突整份零写，不恢复回收站／不存在实体。会话取消只结清自身已保存字段，日志失败保留会话，成功终结与归因在对外信号前完成；不改schema或备份格式。便签正文与桌面状态分开提交，原生键盘编辑与呈现共用Qt事务，保留源码撤销／重做。
+- 名称与logo的本机定制只通过外部`Branding`配置；第一列首行透明原Logo，窗口／任务栏／托盘共用固定白底版本，不改原图、不扩展安装身份；私有显示名、配置路径和logo不进入任何受跟踪文件。
+- 本地单／多文件 dragCopy 覆盖详情及子控件，预先 finishEditing 失败则 0 导入；共用原选择器的 2 MiB 校验与逐文件成功语义，不递归目录、不动原文件、不往正文插 URL。
+- 日期子层 AnchoredListPopup 为 252px／34px 行／12px 圆角，时间总高≤280px，固定输入不压缩；下方 4px 锚定，不足先缩列表再上翻。模式按钮 StrongFocus／autoDefault=false、无 focus 边框；只真实支持 daily／weekly／monthly／custom。子取消不关父，父取消 0 写入。
+
+### 6. 验证覆盖与结果交接
+
+下表说明测试职责，不代表运行结果；实际执行环境、通过／失败／跳过与警告统一见[当前验证记录](updates.md#当前实现与验证状态)：
+
+| 入口 | 应覆盖 |
+|---|---|
+| `tests/tst_database.cpp`（取代 `migrations`） | v9 新库／当前库准入、无旧表、旧 v5–v8／错误标识／未来版本在写入前拒绝且不生成副本；备份仅当前 v5、旧版本及旧字段拒绝、context 往返与事务失败边界 |
+| `tests/tst_groupmodel.cpp` | 五模式边界与特殊区、showCompleted 两终态、历史真实分组、筛选 ID 集不变、层级与全序、Created／历史禁拖 |
+| `tests/tst_dropgroups.cpp` | 日期／无日期／Priority／pin／完整子树／AsChild、源与锚点验证、CAS 与最新快照、白名单与事件上下文 |
+| `tests/tst_activitytimeline.cpp` | 摘要无技术噪声、创建标题、顺序、实体隔离、关闭、eventsChanged 与隐藏 dirty 刷新 |
+| `tests/tst_datepopup.cpp` | 子卡片尺寸与锚点、先缩列表再翻转、自然高度、键盘焦点、真实选项、取消／父确认才写入 |
+| `tests/tst_detail.cpp`、`tests/tst_attachmentcards.cpp` | 实际文字原点／图标墨迹、仅真实控件、短／空正文可编辑填满、独立底部附件预算／滚动、拖放与文件操作失败准入、菜单键盘、分组偏好、持焦点销毁和删除后关闭 |
+| `tests/tst_editorlinks.cpp` | 双中括号解析／字面别名／无别名标题、裸 UUID href、旧 scheme 不识别、反向引用、源码与渲染映射 |
+| `tests/tst_editortools.cpp` | 真实32／36px格式岛、24px选区按钮及4px上下边距、主题与共享菜单、动作顺序、源码选区保持、代际失效、窄宽度与滚动裁剪 |
+| `tests/tst_editorinteraction.cpp` | 真实 gutter／加号／块菜单、Markdown-only checkbox、补全包含匹配／IME／Escape、链接悬浮复制和双字段编辑、上下文竞态、剪贴板源码往返与一次撤销；文件及目标均已补齐 |
+| `tests/tst_brandicons.cpp` | 第一列透明原Logo／固定白底软件图标、多尺寸／DPR／主题、坏图回退、重载及源文件不改写 |
+| `tests/tst_relateddetail.cpp` | 正文真实点击、单卡片复用、源搜索／撤销、外点不穿透与子交互Esc、字段冲突／保存失败／确认重载、便签正文路由、恢复与退出／Store销毁 |
+| `tests/tst_tasks.cpp`、`tests/tst_ui.cpp` 及既有更新／统计／品牌套件 | 业务保留、字体与详情 origin／菜单／拖入准入、时间线编辑会话、更新退出与其他集成回归 |
+
+沿用既有构建目录及隔离合成数据，不接触真实用户数据。集成方应按现有流程构建并运行完整 `ctest --test-dir <build> --output-on-failure`；窗口与浮层相关验证必须区分 offscreen 与原生 Windows，不能拿 offscreen 判定合成与手势已验。本轮按用户要求不生成人工截图。
+
+**该历史轮次的验证记录**：schema9、当时备份5及当时编辑器／附件布局的构建、完整 CTest、相关原生 Windows 套件与警告保留在 updates.md 对应的2026-11-16历史条目；不把历史计数作为当前schema10的结果。当前原生视觉、实际手势与银河麒麟／飞腾 ARM64 真机仍由用户验收。
+
+历史追溯：前序 2026-11-16 数据收敛轮次曾记录 Windows Qt5.12.8／C++14 完整 CTest 11/11套通过，原生 ui／detail／activitytimeline／datepopup 四套0失败、0跳过；那是 schema8／旧兼容入口的对应结果，不是本轮 schema9 的结果，原始明细保留在 [updates.md 历史记录](updates.md#已经验证到什么程度)。
+
+---
+
+## 历史实施指引：最初 v4→v5（以下全部为追溯材料）
+
+> 下文完整保留最初 Task→Entity、本地优先、日志与镜像备份等设计背景。**其版本号、旧库／旧备份处理、独立检查项、旧内链、双视图、置顶／分区日志及旧日志界面等要求均已被文首当前契约取代，不得照此重新实现或作为当前验收清单。** 当前只接受空库或标识正确的 schema9，旧 v5–v8 也在写入前拒绝；不存在下文迁移流程或旧 `.knb` 兼容入口。历史测试命令和用例名称只记录当时覆盖意图，不表示当前集成 CTest 已通过。
 
 ## 目的与边界
 

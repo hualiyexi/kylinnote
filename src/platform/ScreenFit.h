@@ -14,6 +14,7 @@ public:
 
     // 将历史几何修正到当前屏幕布局内，返回值可直接用于 setGeometry
     static QRect fit(const QRect &geometry);
+    static QRect fitPaper(const QRect &windowGeometry, int shadowMargin, const QSize &minimumPaper);
 
     // 新便签的默认几何：主屏可用区左上偏移处，带层叠位移
     static QRect defaultGeometry(int cascadeIndex = 0);

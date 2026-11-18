@@ -138,7 +138,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/build-windows.
     -InnoSetupCompiler "$PWD/.tools/InnoSetup/ISCC.exe"
 ```
 
-CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe`。安装器面向 Windows 10/11 x64，默认安装至当前用户的 `%LOCALAPPDATA%\Programs\KylinList`，无需管理员权限，支持中文/空格路径；Qt 与插件都随包携带，目标机不必安装 Qt。正式安装版首次运行默认开启登录自启，用户关闭后不会被再次自动打开；便携版、开发构建与隔离测试运行不自动登记真实自启动。卸载只移除应用文件和指向本安装的登录启动项，保留应用数据目录中的 SQLite 与设置。便携 ZIP 也使用当前用户数据目录，可用 `--data-dir` 指定独立目录。
+CI 使用 Windows runner 自带的 `C:/Program Files (x86)/Inno Setup 6/ISCC.exe`。安装器面向 Windows 10/11 x64，默认安装至当前用户的 `%LOCALAPPDATA%\Programs\KylinList`，无需管理员权限，支持中文/空格路径；Qt 与插件都随包携带，目标机不必安装 Qt。正式安装版首次运行默认开启开机自启，用户可在设置→通用中关闭，之后不会被再次自动打开；便携版、开发构建与隔离测试运行不自动登记真实自启动。开发预览使用显式 `--preview-autostart --data-dir <绝对路径>` 时，可在设置中手动登记独立预览启动项。该启动项带上数据目录以恢复同一工作区。卸载只移除应用文件和指向本安装的登录启动项，保留应用数据目录中的 SQLite 与设置。便携 ZIP 也使用当前用户数据目录，可用 `--data-dir` 指定独立目录。
 
 `-BuildDir`、`-OutputDir`、`-CTest`、`-Parallel` 可显式覆盖；所有工具参数都接受完整路径。`-SkipArchive` 适合重复开发构建，`-SkipTests` 仅用于本地诊断；CI 不跳过测试。MSVC 可直接用 CMake 配置并编译，已启用 `/utf-8`；现有部署脚本固定使用 MinGW，不混用 MSVC 与 MinGW Qt。
 

@@ -27,17 +27,19 @@ public:
         ListColorRole,
         ScheduleRole,
         ScheduleTooltipRole,
-        SectionKeyRole,
+        SectionKeyRole,     // GroupKey::stableId()（委托与旧调用兼容）
+        GroupKeyRole,       // QVariant 携带 kl::GroupKey（Q_DECLARE_METATYPE）
         HeaderActionRole,
         HeaderEntityIdsRole,
         ParentIdRole,
         DepthRole,
         HasChildrenRole,
         ChildrenCollapsedRole,
-        UnpinnedSectionRole,
         SectionCollapsedRole,
-        DetailRole,          // 单行纯文本摘要：正文与检查项进度。
-        DetailsVisibleRole
+        DetailRole,          // 单行纯文本正文摘要。
+        DetailsVisibleRole,
+        ReminderVisibleRole,
+        AttachmentVisibleRole
     };
     explicit TaskListModel(TaskStore* store, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -50,6 +52,7 @@ public:
     bool setData(const QModelIndex& index, const QVariant& value, int role) override;
     void setFilter(const ViewSpec& filter);
     ViewSpec filter() const { return m_filter; }
+    GroupMode grouping() const { return m_filter.grouping; }
     QModelIndex indexForTask(QString id) const;
     QString entityId(const QModelIndex& index) const;
     int entityCount() const { return m_entityCount; }
@@ -57,6 +60,11 @@ public:
     void expandChildren(const QString& id);
     void toggleSection(const QString& key);
     void setDragActive(bool active, const QString& sourceId = QString());
+    // 该行所在显示组；无效索引返回 Invalid 组。
+    GroupKey groupKeyAt(const QModelIndex& index) const;
+    // 拖动拦截原因：空 = 允许拖动。Created 分组禁拖、终态/回收站实体禁拖。
+    // flags()/mimeData() 用同一规则兜底，视图手势层用它发 dragBlocked(QString)。
+    QString dragBlockReason(const QModelIndex& index) const;
 public slots:
     void refresh();
 
@@ -64,19 +72,24 @@ private:
     struct Row {
         Entity entity;
         QString header;
-        QString sectionKey;
+        GroupKey group;
         QStringList sectionEntityIds;
         int depth = 0;
         bool hasChildren = false;
         bool isHeader = false;
+        bool hasAttachments = false;
     };
-    QString unpinnedSection(const Entity& entity) const;
+    void rebuildRows(const Grouping& grouping, const QDate& today);
+    void appendDragTargetHeaders(const QDate& today);
 
     TaskStore* m_store;
     ViewSpec m_filter;
     QVector<Row> m_rows;
+    QSet<QString> m_existingGroups;   // 本次刷新已出现的组（stableId），空组投放区去重用
     QSet<QString> m_collapsedTasks;
     QSet<QString> m_collapsedSections;
+    QHash<QString, TaskList> m_listsById;
+    QSet<QString> m_attachmentEntityIds;
     QString m_dragSourceId;
     bool m_dragActive = false;
     int m_entityCount = 0;

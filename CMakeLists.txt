@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kylinlist
-        VERSION 1.3.0
+        VERSION 1.0.0
         DESCRIPTION "KylinList local tasks, calendar and desktop notes"
         LANGUAGES C CXX)
 
@@ -35,19 +35,27 @@ message(STATUS "Qt version: ${Qt5Core_VERSION}; Qt directory: ${Qt5_DIR}")
 set(KYLINLIST_CORE_SOURCES
     src/Common.cpp
     src/domain/ViewSpec.cpp
+    src/domain/TaskGrouping.cpp
     src/domain/TaskDrop.cpp
     src/domain/InternalLink.cpp
+    src/domain/RecurrenceRule.cpp
+    src/domain/RecurrenceEngine.cpp
+    src/domain/LunarCalendar.cpp
+    src/domain/ReminderRule.cpp
     src/db/Database.cpp
     src/db/TaskRepository.cpp
     src/app/Settings.cpp
+    src/app/AutostartSettings.cpp
     src/app/Branding.cpp
     src/app/UsageStatistics.cpp
     src/app/StatsService.cpp
     src/app/AttachmentStore.cpp
     src/app/Journal.cpp
+    src/app/EntityTextSession.cpp
     src/app/TaskStore.cpp
     src/app/ReminderScheduler.cpp
     src/app/SingleInstanceGuard.cpp
+    src/app/DemoData.cpp
     src/app/updates/InstallIdentity.cpp
     src/app/updates/UpdateManifest.cpp
     src/app/updates/UpdateService.cpp
@@ -71,24 +79,34 @@ set(KYLINLIST_UI_SOURCES
     src/platform/SystemShadow.cpp
     src/platform/GlobalHotkey.cpp
     src/ui/NoteWidget.cpp
+    src/ui/NoteSnap.cpp
     src/ui/TitleBar.cpp
     src/ui/ResizeGrip.cpp
     src/ui/ColorTheme.cpp
-    src/ui/NoteChecklist.cpp
     src/ui/AttachmentWidget.cpp
+    src/ui/AttachmentAppearance.cpp
     src/ui/design/DesignTokens.cpp
     src/ui/design/ThemeManager.cpp
     src/ui/design/TypeSystem.cpp
+    src/ui/design/FontManager.cpp
+    src/ui/design/WorkspaceStyle.cpp
     src/ui/design/QssBuilder.cpp
     src/ui/AppIcons.cpp
+    src/ui/BrandingIcons.cpp
     src/ui/AppToolTip.cpp
     src/ui/icons/IconData.gen.cpp
     src/ui/AppStyle.cpp
     src/ui/Markdown.cpp
+    src/ui/MarkdownDocument.cpp
     src/ui/EntityHoverPreview.cpp
     src/ui/EntityPicker.cpp
-    src/ui/ActivityLogDialog.cpp
+    src/ui/ActivityTimelineWidget.cpp
+    src/ui/AnchoredListPopup.cpp
     src/ui/MarkdownEditor.cpp
+    src/ui/MarkdownEditorInteractions.cpp
+    src/ui/EditorTextEdit.cpp
+    src/ui/EditorPopups.cpp
+    src/ui/PopupShadow.cpp
     src/ui/TaskListModel.cpp
     src/ui/TaskListView.cpp
     src/ui/TaskDelegate.cpp
@@ -107,10 +125,16 @@ set(KYLINLIST_UI_SOURCES
     src/ui/EmojiPickerPopup.cpp
     src/ui/SettingsDialog.cpp
     src/ui/TaskDetailWidget.cpp
+    src/ui/RelatedDetailPopup.cpp
     src/ui/DisplaySettingsDialog.cpp
     src/ui/TaskPanel.cpp
+    src/ui/TaskWidget.cpp
     src/ui/ReminderPopup.cpp
     src/ui/EntityCommands.cpp
+    src/ui/DateCalendarPanel.cpp
+    src/ui/DatePickerControls.cpp
+    src/ui/DatePickerReminderEditor.cpp
+    src/ui/DatePickerRecurrenceEditor.cpp
     src/ui/DatePickerPopup.cpp
     src/ui/DetailPopups.cpp
     src/ui/FormatToolbar.cpp
@@ -183,12 +207,12 @@ if(BUILD_TESTING)
     find_package(Qt5 5.12 REQUIRED COMPONENTS Test)
     # Windows 的 offscreen 平台插件不读系统字体目录，会退化成无字形渲染
     # 并刷 QFontDatabase 警告。显式指向系统字体，让截图与文本度量可信。
-    set(KYLINLIST_TEST_ENV "QT_QPA_PLATFORM=offscreen" "KYLINLIST_EMOJI_FONT=${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/NotoEmoji-Regular.ttf")
+    set(KYLINLIST_TEST_ENV "QT_QPA_PLATFORM=offscreen" "KYLINLIST_EMOJI_FONT=${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/NotoEmoji-Regular.ttf" "KYLINLIST_FONT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts")
     if(WIN32)
         file(TO_CMAKE_PATH "$ENV{WINDIR}/Fonts" KYLINLIST_WIN_FONTS)
         list(APPEND KYLINLIST_TEST_ENV "QT_QPA_FONTDIR=${KYLINLIST_WIN_FONTS}")
     endif()
-    foreach(test IN ITEMS tasks ui updates stats branding)
+    foreach(test IN ITEMS tasks ui updates stats branding brandicons database dropgroups groupmodel datepopup activitytimeline detail attachmentcards editorlinks editortools editorinteraction relateddetail recurrence demo instantmarkdown livetext notesnap desktopnotes)
         if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tst_${test}.cpp")
             message(FATAL_ERROR "BUILD_TESTING requires tests/tst_${test}.cpp")
         endif()
@@ -196,7 +220,7 @@ if(BUILD_TESTING)
         target_compile_definitions(test_${test} PRIVATE KYLINLIST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         if(test STREQUAL "tasks" OR test STREQUAL "branding")
             target_link_libraries(test_${test} PRIVATE kylinlist_core Qt5::Test Qt5::Widgets)
-        elseif(test STREQUAL "updates" OR test STREQUAL "stats")
+        elseif(test STREQUAL "updates" OR test STREQUAL "stats" OR test STREQUAL "database" OR test STREQUAL "dropgroups" OR test STREQUAL "recurrence" OR test STREQUAL "demo")
             target_link_libraries(test_${test} PRIVATE kylinlist_core Qt5::Test)
         else()
             target_link_libraries(test_${test} PRIVATE kylinlist_ui Qt5::Test)
@@ -208,24 +232,45 @@ if(BUILD_TESTING)
     endforeach()
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/NotoEmoji-Regular.ttf")
-    if(WIN32)
-        install(FILES src/resources/fonts/NotoEmoji-Regular.ttf DESTINATION fonts)
-        install(FILES src/resources/fonts/OFL.txt DESTINATION . RENAME NotoEmoji-OFL.txt)
-    elseif(KYLINLIST_BUNDLE_QT)
-        install(FILES src/resources/fonts/NotoEmoji-Regular.ttf DESTINATION lib/kylinlist/fonts)
-        install(FILES src/resources/fonts/OFL.txt DESTINATION share/doc/kylinlist RENAME NotoEmoji-OFL.txt)
-    else()
-        install(FILES src/resources/fonts/NotoEmoji-Regular.ttf DESTINATION share/kylinlist/fonts)
-        install(FILES src/resources/fonts/OFL.txt DESTINATION share/doc/kylinlist RENAME NotoEmoji-OFL.txt)
+set(KYLINLIST_FONT_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/NotoEmoji-Regular.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/NotoSansCJKsc-Regular.otf
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/NotoSansCJKsc-Bold.otf
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/LXGWWenKai-Regular.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/fonts/LXGWWenKai-Medium.ttf)
+foreach(font IN LISTS KYLINLIST_FONT_FILES)
+    if(NOT EXISTS "${font}")
+        message(FATAL_ERROR "Required offline font is missing: ${font}")
     endif()
+endforeach()
+if(WIN32)
+    set(KYLINLIST_FONT_DESTINATION fonts)
+elseif(KYLINLIST_BUNDLE_QT)
+    set(KYLINLIST_FONT_DESTINATION lib/kylinlist/fonts)
+else()
+    set(KYLINLIST_FONT_DESTINATION share/kylinlist/fonts)
 endif()
+install(FILES ${KYLINLIST_FONT_FILES} DESTINATION ${KYLINLIST_FONT_DESTINATION})
+set(KYLINLIST_FONT_LICENSES src/resources/fonts/NotoSansCJK-OFL.txt src/resources/fonts/LXGWWenKai-OFL.txt)
+if(WIN32)
+    install(FILES src/resources/fonts/OFL.txt DESTINATION . RENAME NotoEmoji-OFL.txt)
+    install(FILES ${KYLINLIST_FONT_LICENSES} DESTINATION .)
+else()
+    install(FILES src/resources/fonts/OFL.txt DESTINATION share/doc/kylinlist RENAME NotoEmoji-OFL.txt)
+    install(FILES ${KYLINLIST_FONT_LICENSES} DESTINATION share/doc/kylinlist)
+endif()
+add_custom_command(TARGET kylinlist POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:kylinlist>/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        ${KYLINLIST_FONT_FILES} "$<TARGET_FILE_DIR:kylinlist>/fonts"
+    COMMENT "Copying offline interface fonts")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY.md")
     install(FILES THIRD_PARTY.md DESTINATION share/doc/kylinlist)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c/LICENSE.md")
     install(FILES third_party/md4c/LICENSE.md DESTINATION share/doc/kylinlist)
 endif()
+install(FILES third_party/lunar-calendar/LICENSE DESTINATION share/doc/kylinlist RENAME lunar-calendar-LICENSE.txt)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Qt-LICENSE.LGPLv3.txt")
     install(FILES packaging/windows/Qt-LICENSE.LGPLv3.txt DESTINATION share/doc/kylinlist)
 endif()
@@ -237,6 +282,7 @@ if(WIN32)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c/LICENSE.md")
         install(FILES third_party/md4c/LICENSE.md DESTINATION . RENAME md4c-LICENSE.txt)
     endif()
+    install(FILES third_party/lunar-calendar/LICENSE DESTINATION . RENAME lunar-calendar-LICENSE.txt)
 elseif(KYLINLIST_BUNDLE_QT)
     set_target_properties(kylinlist PROPERTIES
         INSTALL_RPATH "$ORIGIN"

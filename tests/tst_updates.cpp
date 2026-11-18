@@ -16,8 +16,10 @@
 #include <QTimer>
 
 #include "Common.h"
+#include "app/AutostartSettings.h"
 #include "app/Settings.h"
 #include "app/updates/InstallIdentity.h"
+#include "platform/Autostart.h"
 #include "platform/UpdateInstaller.h"
 #include "app/updates/UpdateManifest.h"
 #include "app/updates/UpdateService.h"
@@ -197,6 +199,41 @@ bool waitFor(int timeoutMs, const std::function<bool()> &condition)
     return condition();
 }
 
+// 自启策略替身后端：内存登记状态 + 调用计数 + 可编程失败。
+// 生命周期必须覆盖用它构造的 AutostartSettings（先声明、后销毁）。
+struct FakeAutostart {
+    int installedCalls = 0;
+    int setCalls = 0;
+    bool installed = false;
+    bool failSet = false;        // setEnabled 直接失败，状态不变
+    bool mutateThenFail = false; // 先改状态再失败（模拟半写成功）
+
+    AutostartSettings::Backend backend()
+    {
+        return {
+            [this]() { ++installedCalls; return installed; },
+            [this](bool enabled, QString *error) {
+                ++setCalls;
+                if (mutateThenFail) installed = enabled;
+                if (failSet || mutateThenFail) {
+                    if (error) *error = QStringLiteral("写入自启失败(测试)");
+                    return false;
+                }
+                installed = enabled;
+                return true;
+            }
+        };
+    }
+};
+
+// Settings 单例在本测试进程内共享，逐用例显式设定自启一次性标记。
+void setAutostartMarker(bool done)
+{
+    Settings &settings = Settings::instance();
+    settings.setAutostartInitialized(done);
+    settings.sync();
+}
+
 } // namespace
 
 class UpdatesTest : public QObject {
@@ -239,6 +276,17 @@ private slots:
     void serviceDownloadStall();
     void serviceRespectsBasePrefix();
     void installerHandOffFake();
+
+    // ---------- 自启共享策略（AutostartSettings，替身后端） ----------
+    void autostartFirstDefaultRegistersOnce();
+    void autostartAlreadyRegisteredMarksWithoutWrite();
+    void autostartFailedInitializationRetries();
+    void autostartExplicitDisablePersists();
+    void autostartIsolatedAndUnavailableInert();
+    void autostartPreviewOptInWithoutDefault();
+    void autostartWindowsCommandQuotesArguments();
+    void autostartPortableOptInOnly();
+    void autostartBackendFailureSurfacesError();
 
 private:
     QScopedPointer<QTemporaryDir> m_settingsDir;
@@ -1142,6 +1190,218 @@ void UpdatesTest::installerHandOffFake()
     QVERIFY2(appeared, "fake installer marker not found");
     // 文件不存在时交接必须失败。
     QVERIFY(!updates::handOffToInstaller(m_dir->path() + QStringLiteral("/no-such-file.deb"), &error));
+}
+
+// ---------- 自启共享策略（全部走替身后端，不触碰真实注册表/自启文件） ----------
+
+// Installed 首次运行：默认登记一次并落盘标记；重复初始化不再触碰后端。
+void UpdatesTest::autostartFirstDefaultRegistersOnce()
+{
+    setAutostartMarker(false);
+    FakeAutostart fake;
+    AutostartSettings settings(AutostartSettings::Mode::Installed, fake.backend());
+    QCOMPARE(settings.mode(), AutostartSettings::Mode::Installed);
+    QVERIFY(settings.isAvailable());
+    QSignalSpy spy(&settings, &AutostartSettings::enabledChanged);
+    QString error;
+    QVERIFY(settings.initializeDefault(&error));
+    QVERIFY(error.isEmpty());
+    QCOMPARE(fake.setCalls, 1);  // 默认登记恰好写一次
+    QVERIFY(settings.isEnabled());
+    QVERIFY(Settings::instance().autostartInitialized());  // 成功后标记落盘
+    QCOMPARE(spy.size(), 1);     // 状态从无到有要通知界面
+    // 同一会话再次初始化：标记短路，不重复登记。
+    QVERIFY(settings.initializeDefault(&error));
+    QCOMPARE(fake.setCalls, 1);
+    QCOMPARE(spy.size(), 1);
+}
+
+// 升级前版本已留下自启项：只补标记，不重写内容，也无状态变化信号。
+void UpdatesTest::autostartAlreadyRegisteredMarksWithoutWrite()
+{
+    setAutostartMarker(false);
+    FakeAutostart fake;
+    fake.installed = true;
+    AutostartSettings settings(AutostartSettings::Mode::Installed, fake.backend());
+    QSignalSpy spy(&settings, &AutostartSettings::enabledChanged);
+    QString error;
+    QVERIFY(settings.initializeDefault(&error));
+    QCOMPARE(fake.setCalls, 0);  // 已存在：不重写
+    QVERIFY(settings.isEnabled());
+    QVERIFY(Settings::instance().autostartInitialized());
+    QCOMPARE(spy.size(), 0);
+}
+
+// 默认登记写入失败：透出错误、标记不落盘；下次启动（新会话对象）可重试。
+void UpdatesTest::autostartFailedInitializationRetries()
+{
+    setAutostartMarker(false);
+    FakeAutostart fake;
+    fake.failSet = true;
+    QString error;
+    {
+        AutostartSettings settings(AutostartSettings::Mode::Installed, fake.backend());
+        QVERIFY(!settings.initializeDefault(&error));
+        QVERIFY(!error.isEmpty());
+        QVERIFY(!Settings::instance().autostartInitialized());  // 失败保持可重试
+        QVERIFY(!settings.isEnabled());
+    }
+    // 模拟重启：新的会话对象 + 替身后端恢复可用。
+    fake.failSet = false;
+    AutostartSettings next(AutostartSettings::Mode::Installed, fake.backend());
+    QVERIFY(next.initializeDefault(&error));
+    QCOMPARE(fake.setCalls, 2);  // 上次 1 次 + 本次 1 次
+    QVERIFY(next.isEnabled());
+    QVERIFY(Settings::instance().autostartInitialized());
+}
+
+// 用户显式关闭后：标记保持落盘，下一次初始化不得复活自启。
+void UpdatesTest::autostartExplicitDisablePersists()
+{
+    setAutostartMarker(false);
+    FakeAutostart fake;
+    AutostartSettings settings(AutostartSettings::Mode::Installed, fake.backend());
+    QString error;
+    QVERIFY(settings.initializeDefault(&error));
+    QVERIFY(settings.isEnabled());
+    QSignalSpy spy(&settings, &AutostartSettings::enabledChanged);
+    QVERIFY(settings.setEnabled(false, &error));
+    QVERIFY(error.isEmpty());
+    QVERIFY(!settings.isEnabled());
+    QVERIFY(Settings::instance().autostartInitialized());  // 显式选择落盘
+    QCOMPARE(spy.size(), 1);
+    // 模拟重启：标记已落盘，即使自启项不存在也不得自动再登记。
+    FakeAutostart carried;  // installed == false，与上一会话的显式关闭一致
+    AutostartSettings next(AutostartSettings::Mode::Installed, carried.backend());
+    QVERIFY(next.initializeDefault(&error));
+    QCOMPARE(carried.setCalls, 0);
+    QCOMPARE(carried.installedCalls, 0);  // 标记短路：连后端读都不发生
+    QVERIFY(!next.isEnabled());  // isEnabled 反映真实登记，而非标记
+}
+
+// Isolated/Unavailable：任何路径都不触达后端与一次性标记。
+void UpdatesTest::autostartIsolatedAndUnavailableInert()
+{
+    setAutostartMarker(false);
+    const AutostartSettings::Mode modes[] = {
+        AutostartSettings::Mode::Isolated, AutostartSettings::Mode::Unavailable};
+    for (const AutostartSettings::Mode mode : modes) {
+        FakeAutostart fake;
+        AutostartSettings settings(mode, fake.backend());
+        QCOMPARE(settings.mode(), mode);
+        QVERIFY(!settings.isAvailable());
+        QVERIFY(!settings.isEnabled());
+        QString error;
+        QVERIFY(!settings.setEnabled(true, &error));  // 显式开关也不触达后端
+        QVERIFY(!error.isEmpty());
+        QVERIFY(settings.initializeDefault(&error));  // 无事可做：成功且不报错
+        QVERIFY(error.isEmpty());
+        QCOMPARE(fake.installedCalls, 0);
+        QCOMPARE(fake.setCalls, 0);
+        QVERIFY(!Settings::instance().autostartInitialized());  // 也不落盘标记
+    }
+}
+
+// Preview：开发预览允许用户手动登记（登录命令由 KylinListApp 固定带上
+// --data-dir），但 initializeDefault 绝不自动登记，不落一次性标记。
+void UpdatesTest::autostartPreviewOptInWithoutDefault()
+{
+    setAutostartMarker(false);
+    const QTemporaryDir fixture;
+    QVERIFY(fixture.isValid());
+    const QString previewDir = fixture.filePath(QStringLiteral("预览 合成数据"));
+    const QStringList loginArgs{QStringLiteral("--background"), QStringLiteral("--data-dir"),
+                                previewDir, QStringLiteral("--preview-autostart")};
+    QCOMPARE(Autostart::previewArguments(previewDir), loginArgs);
+    QVERIFY(Autostart::previewFilePath() != Autostart::filePath());
+    AutostartSettings isolatedPreview(AutostartSettings::Mode::Preview);
+    QVERIFY(!isolatedPreview.isAvailable());
+    AutostartSettings explicitPreview(AutostartSettings::Mode::Preview, previewDir);
+    QVERIFY(explicitPreview.isAvailable());  // 仅验证接线，不查询系统条目
+    QCOMPARE(explicitPreview.previewDataDir(), previewDir);
+
+    FakeAutostart fake;
+    AutostartSettings settings(AutostartSettings::Mode::Preview, fake.backend());
+    QCOMPARE(settings.mode(), AutostartSettings::Mode::Preview);
+    QVERIFY(settings.isAvailable());
+    QString error;
+    QVERIFY(settings.initializeDefault(&error));
+    QVERIFY(error.isEmpty());
+    QCOMPARE(fake.setCalls, 0);                    // 预览没有默认登记
+    QCOMPARE(fake.installedCalls, 0);               // 也不查询后端
+    QVERIFY(!Settings::instance().autostartInitialized());
+    QVERIFY(!settings.isEnabled());
+    QSignalSpy spy(&settings, &AutostartSettings::enabledChanged);
+    QVERIFY(settings.setEnabled(true, &error));     // 用户点击后允许登记
+    QVERIFY(settings.isEnabled());
+    QCOMPARE(fake.setCalls, 1);
+    QCOMPARE(spy.size(), 1);
+    QVERIFY(Settings::instance().autostartInitialized());
+}
+
+// Windows Run 命令行：含空格的参数必须加引号，否则 --data-dir 会被拆成
+// 两个参数，登录后落回默认数据目录。反斜杠按命令解析规则转义。
+void UpdatesTest::autostartWindowsCommandQuotesArguments()
+{
+#ifdef Q_OS_WIN
+    const QString cmd = Autostart::commandLineFor(
+        QStringLiteral("C:/Program Files/KylinList/kylinlist.exe"),
+        {QStringLiteral("--background"), QStringLiteral("--data-dir"),
+         QStringLiteral("C:/Users/A B/麒麟 预览")});
+    QCOMPARE(cmd, QStringLiteral("\"C:\\Program Files\\KylinList\\kylinlist.exe\" "
+                                 "--background --data-dir \"C:/Users/A B/麒麟 预览\""));
+    QCOMPARE(Autostart::commandLineFor(QStringLiteral("x.exe"), {QStringLiteral("a\"b")}),
+             QStringLiteral("\"x.exe\" \"a\\\"b\""));
+    QCOMPARE(Autostart::commandLineFor(QStringLiteral("x.exe"),
+                                       {QStringLiteral("C:\\dir with space\\")}),
+             QStringLiteral("\"x.exe\" \"C:\\dir with space\\\\\""));
+#else
+    QSKIP("Windows Run 命令行只在 Windows 构建验证");
+#endif
+}
+
+// Portable：绝不默认登记（initializeDefault 零写入、零标记）；显式开启才登记，
+// 成功的显式选择同样落盘标记，避免未来自动初始化覆盖用户决定。
+void UpdatesTest::autostartPortableOptInOnly()
+{
+    setAutostartMarker(false);
+    FakeAutostart fake;
+    AutostartSettings settings(AutostartSettings::Mode::Portable, fake.backend());
+    QVERIFY(settings.isAvailable());
+    QString error;
+    QVERIFY(settings.initializeDefault(&error));
+    QCOMPARE(fake.setCalls, 0);  // 便携版没有自动登记
+    QVERIFY(!Settings::instance().autostartInitialized());  // 也不写标记
+    QVERIFY(!settings.isEnabled());
+    QSignalSpy spy(&settings, &AutostartSettings::enabledChanged);
+    QVERIFY(settings.setEnabled(true, &error));  // 显式开启允许
+    QVERIFY(settings.isEnabled());
+    QVERIFY(Settings::instance().autostartInitialized());  // 显式选择落盘
+    QCOMPARE(fake.setCalls, 1);
+    QCOMPARE(spy.size(), 1);
+}
+
+// 后端失败：错误透出、标记不落盘；真实状态变化（半写成功）时仍发信号供界面重读。
+void UpdatesTest::autostartBackendFailureSurfacesError()
+{
+    setAutostartMarker(false);
+    FakeAutostart fake;
+    fake.mutateThenFail = true;
+    AutostartSettings settings(AutostartSettings::Mode::Portable, fake.backend());
+    QSignalSpy spy(&settings, &AutostartSettings::enabledChanged);
+    QString error;
+    QVERIFY(!settings.setEnabled(true, &error));
+    QVERIFY(error.contains(QStringLiteral("测试")));  // 后端错误原样透出
+    QVERIFY(settings.isEnabled());  // 以真实登记为准：确实已写入
+    QCOMPARE(spy.size(), 1);        // 状态变了要通知界面重读
+    QVERIFY(!Settings::instance().autostartInitialized());  // 失败不落盘标记
+    // 纯失败（状态未变）：返回错误但不发信号。
+    fake.mutateThenFail = false;
+    fake.failSet = true;
+    QVERIFY(!settings.setEnabled(false, &error));
+    QVERIFY(!error.isEmpty());
+    QVERIFY(settings.isEnabled());
+    QCOMPARE(spy.size(), 1);
 }
 
 QTEST_MAIN(UpdatesTest)

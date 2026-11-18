@@ -99,6 +99,13 @@ void SidebarSectionHeader::setDisclosureEnabled(bool enabled) {
     applyTheme();
 }
 
+void SidebarSectionHeader::setFolderPresentation(bool enabled) {
+    m_folderPresentation = enabled;
+    if (auto* layout = qobject_cast<QHBoxLayout*>(m_card->layout()))
+        layout->setSpacing(enabled ? NavigationGeometry::IconLabelGap : 4);
+    applyTheme();
+}
+
 void SidebarSectionHeader::setExpanded(bool expanded) {
     if (m_expanded == expanded) return;
     m_expanded = expanded;
@@ -132,8 +139,11 @@ void SidebarSectionHeader::mouseReleaseEvent(QMouseEvent* event) {
 
 void SidebarSectionHeader::applyTheme() {
     auto& theme = ThemeManager::instance();
-    m_title->setStyleSheet(QStringLiteral("color:%1;font-weight:600;")
-        .arg(theme.color(ds::ColorToken::TextSecondary).name()));
+    m_title->setFont(ds::qfont(m_folderPresentation ? ds::FontScene::Body : ds::FontScene::Caption));
+    m_title->setStyleSheet(QStringLiteral("color:%1;font-weight:%2;")
+        .arg(theme.color(m_folderPresentation ? ds::ColorToken::Text
+                                              : ds::ColorToken::TextSecondary).name())
+        .arg(m_folderPresentation ? 400 : 600));
     m_card->setStyleSheet(QStringLiteral(
         "QFrame#SidebarSectionCard{background:transparent;border:0;border-radius:6px;}"
         "QFrame#SidebarSectionCard[hovered=\"true\"]{background:%1;}")
@@ -157,7 +167,8 @@ void SidebarSectionHeader::applyTheme() {
                 NavigationGeometry::DisclosureGlyphSize, NavigationGeometry::DisclosureGlyphSize);
             m_disclosure->setIcon(QIcon(down.transformed(QTransform().rotate(-90))));
         }
-        m_disclosure->setVisible(m_disclosureEnabled && (m_hovered || m_disclosure->hasFocus()));
+        m_disclosure->setVisible(m_disclosureEnabled
+            && (m_folderPresentation || m_hovered || m_disclosure->hasFocus()));
         if (m_disclosureEnabled) m_disclosure->raise();
     }
     if (m_action && !m_collapseAction && !m_hovered && !m_action->hasFocus())

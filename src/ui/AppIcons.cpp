@@ -28,6 +28,7 @@ QString iconNameFor(IconId id) {
         case IconId::Trash: return "delete";
         case IconId::Folder: return "folder";
         case IconId::Note: return "note";
+        case IconId::RowNote: return "item-note";
         case IconId::TaskList: return "normal-list";
         case IconId::Pin: return "pin-task";
         case IconId::Unpin: return "unpin-task";
@@ -40,13 +41,16 @@ QString iconNameFor(IconId id) {
         case IconId::Unarchive: return "unarchive";
         case IconId::ArchivedLists: return "closed-list";
         case IconId::SmartSettings: return "setting-smart";
+        case IconId::WorkspaceTasks: return "list-sidebar";
 
         case IconId::Search: return "search";
         case IconId::More: return "more";
         case IconId::Add: return "add";
         case IconId::Close: return "close";
         case IconId::Check: return "selected";
+        case IconId::Grouping: return "section-list";
         case IconId::Calendar: return "calendar-schedule";
+        case IconId::DetailCalendar: return "date-unselected";
         case IconId::Clock: return "timecard_time";
         case IconId::Reminder: return "item-reminder";
         case IconId::Repeat: return "item-repeat";
@@ -56,11 +60,14 @@ QString iconNameFor(IconId id) {
         case IconId::FlagNone: return "priority-0";
         case IconId::Attachment: return "attachment";
         case IconId::Tag: return "tag";
-        case IconId::ActivityLog: return "timeline";
+        case IconId::ActivityLog: return "version-history";
         case IconId::Convert: return "convert-task";
         case IconId::Restore: return "restore";
         case IconId::Delete: return "delete";
         case IconId::DesktopNote: return "mobile-edit";
+        case IconId::DesktopWidget: return "section-list";
+        case IconId::Lock: return "lock";
+        case IconId::Exit: return "sign-out";
         case IconId::Settings: return "setting";
         case IconId::Backup: return "s-backup";
         case IconId::Theme: return "light";
@@ -81,8 +88,7 @@ QString iconNameFor(IconId id) {
         case IconId::Info: return "note-info";
         case IconId::ChevronDown: return "thin-triangle-down";
         case IconId::FormatClear: return "clear-input";
-        case IconId::Format: return "md-tl-text";
-        case IconId::Comment: return "comment";
+        case IconId::Format: return "td-footer-markdown";
 
         case IconId::WindowMinimize: return "minimized";
         case IconId::WindowMaximize: return "md-tl-fullscreen";
@@ -96,6 +102,15 @@ QString iconNameFor(IconId id) {
         case IconId::DisplaySettings: return "calendar-config";
         case IconId::Help: return "help";
         case IconId::Sync: return "sidebar-sync";
+        case IconId::Paragraph: return "md-tr-text";
+        case IconId::Heading1: return "md-tr-h1";
+        case IconId::Heading2: return "md-tr-h2";
+        case IconId::Heading3: return "md-tr-h3";
+        case IconId::HorizontalRule: return "md-tr-separator-line";
+        case IconId::BlockInsert: return "md-tr-add";
+        case IconId::RelatedEntity: return "md-tr-link-task";
+        case IconId::EditLink: return "edit-link";
+        case IconId::CopyLink: return "copy-link";
 
         case IconId::None:
         case IconId::Count:
@@ -248,6 +263,7 @@ QString accessibleName(IconId id) {
         case IconId::Trash: return QStringLiteral("回收站");
         case IconId::Folder: return QStringLiteral("文件夹");
         case IconId::Note: return QStringLiteral("笔记");
+        case IconId::RowNote: return QStringLiteral("笔记");
         case IconId::TaskList: return QStringLiteral("任务清单");
         case IconId::Pin: return QStringLiteral("置顶");
         case IconId::Unpin: return QStringLiteral("取消置顶");
@@ -260,12 +276,15 @@ QString accessibleName(IconId id) {
         case IconId::Unarchive: return QStringLiteral("取消归档");
         case IconId::ArchivedLists: return QStringLiteral("已归档的清单");
         case IconId::SmartSettings: return QStringLiteral("智能清单设置");
+        case IconId::WorkspaceTasks: return QStringLiteral("任务");
         case IconId::Search: return QStringLiteral("搜索");
         case IconId::More: return QStringLiteral("更多");
         case IconId::Add: return QStringLiteral("添加");
         case IconId::Close: return QStringLiteral("关闭");
         case IconId::Check: return QStringLiteral("完成");
-        case IconId::Calendar: return QStringLiteral("日期");
+        case IconId::Grouping: return QStringLiteral("分组");
+        case IconId::Calendar:
+        case IconId::DetailCalendar: return QStringLiteral("日期");
         case IconId::Clock: return QStringLiteral("时间");
         case IconId::Reminder: return QStringLiteral("提醒");
         case IconId::Repeat: return QStringLiteral("重复");
@@ -280,6 +299,9 @@ QString accessibleName(IconId id) {
         case IconId::Restore: return QStringLiteral("恢复");
         case IconId::Delete: return QStringLiteral("删除");
         case IconId::DesktopNote: return QStringLiteral("桌面便签");
+        case IconId::DesktopWidget: return QStringLiteral("桌面小部件");
+        case IconId::Lock: return QStringLiteral("锁定");
+        case IconId::Exit: return QStringLiteral("退出");
         case IconId::Settings: return QStringLiteral("设置");
         case IconId::Backup: return QStringLiteral("备份");
         case IconId::Theme: return QStringLiteral("主题");
@@ -300,7 +322,6 @@ QString accessibleName(IconId id) {
         case IconId::ChevronDown: return QStringLiteral("展开选项");
         case IconId::FormatClear: return QStringLiteral("清除格式");
         case IconId::Format: return QStringLiteral("文本格式");
-        case IconId::Comment: return QStringLiteral("活动记录");
         case IconId::WindowMinimize: return QStringLiteral("最小化");
         case IconId::WindowMaximize: return QStringLiteral("最大化");
         case IconId::WindowClose: return QStringLiteral("关闭窗口");
@@ -313,6 +334,15 @@ QString accessibleName(IconId id) {
         case IconId::DisplaySettings: return QStringLiteral("显示设置");
         case IconId::Help: return QStringLiteral("帮助");
         case IconId::Sync: return QStringLiteral("本机数据");
+        case IconId::Paragraph: return QStringLiteral("正文");
+        case IconId::Heading1: return QStringLiteral("一级标题");
+        case IconId::Heading2: return QStringLiteral("二级标题");
+        case IconId::Heading3: return QStringLiteral("三级标题");
+        case IconId::HorizontalRule: return QStringLiteral("水平分割线");
+        case IconId::BlockInsert: return QStringLiteral("插入段落内容");
+        case IconId::RelatedEntity: return QStringLiteral("关联任务/笔记");
+        case IconId::EditLink: return QStringLiteral("编辑链接");
+        case IconId::CopyLink: return QStringLiteral("复制链接");
         default: return QString();
     }
 }

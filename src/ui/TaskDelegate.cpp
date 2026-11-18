@@ -20,6 +20,32 @@ namespace {
 using AppStyle::Color;
 using AppStyle::Metric;
 
+// 镜像 AppStyle.cpp 的 mapColor：主题覆盖开启时需要把旧 Color 枚举换算成
+// ds::ColorToken 才能按指定主题取色；不改动 AppStyle 公共接口，故在此复制映射。
+ds::ColorToken mapStyleColor(Color role) {
+    using C = ds::ColorToken;
+    switch (role) {
+        case Color::Text: return C::Text;
+        case Color::Muted: return C::TextSecondary;
+        case Color::Faint: return C::TextTertiary;
+        case Color::Accent: return C::Primary;
+        case Color::AccentDark: return C::PrimaryHover;
+        case Color::OnAccent: return C::OnPrimary;
+        case Color::Selection: return C::Selection;
+        case Color::Sidebar: return C::Sidebar;
+        case Color::SidebarHover: return C::SidebarHover;
+        case Color::Surface: return C::Surface;
+        case Color::Separator: return C::Divider;
+        case Color::Hover: return C::Hover;
+        case Color::Field: return C::Field;
+        case Color::FieldHover: return C::FieldHover;
+        case Color::Danger: return C::Danger;
+        case Color::Warning: return C::Warning;
+        case Color::Star: return C::Warning;
+    }
+    return C::Text;
+}
+
 QRectF headerActionRect(const QRect& row) {
     return QRectF(row.right() - 58.0, row.center().y() - 13.0, 46.0, 26.0);
 }
@@ -37,6 +63,7 @@ constexpr qreal kTaskDetailTop = 34.0;
 constexpr qreal kTaskDetailHeight = 18.0;
 constexpr int kTaskRowHeightWithDetail = 62;
 constexpr qreal kListGlyphVerticalOffset = 1.0;
+constexpr qreal kStatusGlyphVerticalOffset = 1.0;
 // 仅绘制外扩半像素，消除高分屏抗锯齿在背景顶边留下的细缝。
 constexpr qreal kRowBackgroundVerticalBleed = 0.5;
 
@@ -59,6 +86,9 @@ struct TaskLayout {
     QRectF checkBox;
     QRectF title;
     QRectF list;
+    QRectF reminder;
+    QRectF attachment;
+    QRectF note;
     QRectF date;
     QRectF detail;
 };
@@ -76,6 +106,8 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     const bool deleted = index.data(TaskListModel::DeletedRole).toBool();
     const QString listName = index.data(TaskListModel::ListNameRole).toString();
     const QString date = index.data(TaskListModel::ScheduleRole).toString();
+    const bool isNote = static_cast<EntityKind>(index.data(TaskListModel::KindRole).toInt())
+        == EntityKind::Note;
 
     TaskLayout layout;
     // 色条和行背景覆盖详情；主行交互区域仍保持原来的 40px 高度。
@@ -96,11 +128,35 @@ TaskLayout taskLayout(const QStyleOptionViewItem& option, const QModelIndex& ind
     const qreal metadataWidth = qMax(0.0, mainRow.width() - 56.0 - titleFloor);
     // 行背景右侧留 18px；元信息再向内 8px，避免清单/日期贴住右边缘。
     qreal right = mainRow.right() - 26.0;
+    if (!deleted && (isNote || index.data(TaskListModel::ReminderVisibleRole).toBool()
+                     || index.data(TaskListModel::AttachmentVisibleRole).toBool())) {
+        const qreal glyphWidth = 18.0;
+        const qreal gap = 4.0;
+        qreal metadataRight = right;
+        qreal glyphSpace = qMax(0.0, metadataRight - left - titleFloor);
+        bool appended = false;
+        const auto appendGlyph = [&](QRectF* target) {
+            if (glyphSpace < glyphWidth) return;
+            *target = QRectF(metadataRight - glyphWidth, mainRow.center().y() - 7.0,
+                             glyphWidth, 14.0);
+            metadataRight -= glyphWidth + gap;
+            glyphSpace -= glyphWidth + gap;
+            appended = true;
+        };
+        // 从右往左分配：清单 → 闹钟 → 附件 → 笔记。
+        if (isNote) appendGlyph(&layout.note);
+        if (index.data(TaskListModel::AttachmentVisibleRole).toBool()) appendGlyph(&layout.attachment);
+        if (index.data(TaskListModel::ReminderVisibleRole).toBool()) appendGlyph(&layout.reminder);
+        right = appended ? metadataRight + gap : right;
+    }
     if (!deleted && !date.isEmpty()) {
+        const qreal available = qMax(0.0, right - left - titleFloor);
         const qreal width = qMin(qMin(112.0, smallMetrics.horizontalAdvance(date) + 8.0),
-                                metadataWidth * 0.55);
-        layout.date = QRectF(right - width, mainRow.top(), width, mainRow.height());
-        right -= width + 8.0;
+                                qMin(available, metadataWidth * 0.55));
+        if (width >= 18.0) {
+            layout.date = QRectF(right - width, mainRow.top(), width, mainRow.height());
+            right -= width + 8.0;
+        }
     }
     if (!deleted && !listName.isEmpty()) {
         const qreal nameWidth = qMin(72.0, smallMetrics.horizontalAdvance(listName) + 0.0);
@@ -135,6 +191,7 @@ struct NavigationLayout {
     QRectF icon;
     QRectF label;
     QRectF dot;
+    QRectF countRect;
     QString count;
 };
 
@@ -154,13 +211,16 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
                          layout.background.center().y() - NavigationGeometry::IconBoxSize / 2.0,
                          NavigationGeometry::IconBoxSize, NavigationGeometry::IconBoxSize);
     layout.count = index.data(NavigationDelegate::CountRole).toString();
-    const QFont countFont = AppStyle::font(AppStyle::Font::Small);
-    const int countWidth = QFontMetrics(countFont).horizontalAdvance(layout.count);
-    const qreal right = layout.background.right() - 12.0 - countWidth;
+    // 独立数量栏与 4px 间隔；数量位数增加时不移动左侧颜色点轴线。
+    const int countWidth = qMax(24, QFontMetrics(AppStyle::font(AppStyle::Font::Small))
+        .horizontalAdvance(layout.count));
+    layout.countRect = QRectF(layout.background.right() - 12.0 - countWidth,
+                             row.top(), countWidth, row.height());
+    const qreal right = layout.countRect.left() - 4.0;
     const QString listColor = index.data(NavigationDelegate::ListColorRole).toString();
     const bool colorDot = !folder && QColor(listColor).isValid();
     if (colorDot)
-        layout.dot = QRectF(right - 12.0, layout.background.center().y() - 3.0, 8.0, 8.0);
+        layout.dot = QRectF(right - 8.0, layout.background.center().y() - 4.0, 8.0, 8.0);
     const qreal labelRight = colorDot ? right - 12.0 : right;
     layout.label = QRectF(layout.icon.right() + NavigationGeometry::IconLabelGap, row.top(),
                           qMax(0.0, labelRight - layout.icon.right()
@@ -169,6 +229,29 @@ NavigationLayout navigationLayout(const QStyleOptionViewItem& option, const QMod
 }
 
 }  // namespace
+
+void TaskDelegate::setThemeOverride(ds::Theme theme) {
+    m_themeOverride = theme;
+    m_themeOverrideActive = true;
+}
+
+void TaskDelegate::clearThemeOverride() {
+    m_themeOverrideActive = false;
+}
+
+bool TaskDelegate::hasThemeOverride() const {
+    return m_themeOverrideActive;
+}
+
+QColor TaskDelegate::tokenColor(ds::ColorToken token) const {
+    return m_themeOverrideActive ? ds::color(token, m_themeOverride)
+                                 : ThemeManager::instance().color(token);
+}
+
+QColor TaskDelegate::styleColor(AppStyle::Color role) const {
+    return m_themeOverrideActive ? ds::color(mapStyleColor(role), m_themeOverride)
+                                 : AppStyle::color(role);
+}
 
 void TaskDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
     paintInternal(p, o, i, false);
@@ -183,14 +266,15 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
                                  const QModelIndex& i, bool dragPreview) const {
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
+    p->setRenderHint(QPainter::TextAntialiasing, true);
     if (i.data(TaskListModel::HeaderRole).toBool()) {
         const QRect row = o.rect;
         const QFont titleFont = ds::qfont(ds::FontScene::ListSection);
         p->setFont(titleFont);
-        p->setPen(AppStyle::color(Color::Text));
+        p->setPen(styleColor(Color::Text));
         const QString title = i.data().toString();
         const bool collapsed = i.data(TaskListModel::SectionCollapsedRole).toBool();
-        const QColor arrowColor = AppStyle::color(
+        const QColor arrowColor = styleColor(
             (o.state & QStyle::State_MouseOver) ? Color::Muted : Color::Faint);
         paintTriangle(p, sectionArrowRect(row), !collapsed, arrowColor);
         qreal textLeft = row.left() + kSectionTitleLeft;
@@ -198,7 +282,7 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
             const QRectF icon(textLeft,
                               row.center().y() - 8.0 + kSectionPinVerticalOffset,
                               16.0, 16.0);
-            AppIcons::paint(p, IconId::PinSection, icon, AppStyle::color(Color::Star));
+            AppIcons::paint(p, IconId::PinSection, icon, styleColor(Color::Star));
             textLeft = icon.right() + 5.0;
         }
         p->drawText(QRectF(textLeft, row.top(), qMax(0.0, row.width() - textLeft), row.height()),
@@ -207,7 +291,7 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
         if (count > 0) {
             const int titleWidth = p->fontMetrics().horizontalAdvance(title);
             p->setFont(AppStyle::font(AppStyle::Font::Small));
-            p->setPen(AppStyle::color(Color::Faint));
+            p->setPen(styleColor(Color::Faint));
             p->drawText(QRectF(textLeft + titleWidth + 8.0, row.top(), 36, row.height()),
                         Qt::AlignLeft | Qt::AlignVCenter, QString::number(count));
         }
@@ -215,11 +299,11 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
             const QRectF action = headerActionRect(row);
             if (o.state & QStyle::State_MouseOver) {
                 p->setPen(Qt::NoPen);
-                p->setBrush(ThemeManager::instance().color(ds::ColorToken::PrimarySoft));
+                p->setBrush(tokenColor(ds::ColorToken::PrimarySoft));
                 p->drawRoundedRect(action, 5, 5);
             }
             p->setFont(AppStyle::font(AppStyle::Font::Small));
-            p->setPen(ThemeManager::instance().color(ds::ColorToken::Primary));
+            p->setPen(tokenColor(ds::ColorToken::Primary));
             p->drawText(action, Qt::AlignCenter, QStringLiteral("顺延"));
         }
         p->restore();
@@ -239,31 +323,33 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
 
     if (selected || hovered) {
         p->setPen(Qt::NoPen);
-        p->setBrush(ThemeManager::instance().color(
+        p->setBrush(tokenColor(
             selected ? ds::ColorToken::RowSelected : ds::ColorToken::RowHover));
         p->drawRoundedRect(background, radius, radius);
-    } else {
-        p->setPen(QPen(AppStyle::color(Color::Separator), 1.0));
+    }
+    // 分隔线属于行底，不属于未选中底色；选中行的下边界也必须保留。
+    if (!dragPreview) {
+        p->setPen(QPen(styleColor(Color::Separator), 1.0));
         p->drawLine(QPointF(layout.title.left(), row.bottom() - 0.5),
-                    QPointF(row.right() - 14.0, row.bottom() - 0.5));
+                    QPointF(background.right() + 1.0, row.bottom() - 0.5));
     }
 
     const QColor listColor(i.data(TaskListModel::ListColorRole).toString());
     if (!dragPreview && !deleted && listColor.isValid())
         p->fillRect(layout.colorBar.toAlignedRect(), listColor);
     if (hovered && !deleted)
-        AppIcons::paint(p, QStringLiteral("drag"), layout.dragHandle, AppStyle::color(Color::Faint));
+        AppIcons::paint(p, QStringLiteral("drag"), layout.dragHandle, styleColor(Color::Faint));
     if (!layout.disclosure.isNull()) {
         paintTriangle(p, layout.disclosure.adjusted(2.0, 2.0, -2.0, -2.0),
                       !i.data(TaskListModel::ChildrenCollapsedRole).toBool(),
-                      AppStyle::color(hovered ? Color::Muted : Color::Faint));
+                      styleColor(hovered ? Color::Muted : Color::Faint));
     }
 
-    const QRectF box = layout.checkBox;
+    const QRectF box = layout.checkBox.translated(0.0, 1.0);
     if (kind == EntityKind::Note) {
-        AppIcons::paint(p, IconId::Note, box, AppStyle::color(Color::Muted));
+        AppIcons::paint(p, IconId::Note, box, styleColor(Color::Muted));
     } else if (completed) {
-        AppIcons::paint(p, QStringLiteral("completed"), box, AppStyle::color(Color::Muted));
+        AppIcons::paint(p, QStringLiteral("completed"), box, styleColor(Color::Muted));
     } else {
         ds::ColorToken token = deleted ? ds::ColorToken::TextTertiary : ds::ColorToken::TextSecondary;
         if (!deleted && priority > 0) {
@@ -272,20 +358,20 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
         }
         AppIcons::paint(p, hovered && !deleted ? QStringLiteral("hover-checkbox")
                                              : QStringLiteral("checkbox"),
-                        box, ThemeManager::instance().color(token));
+                        box, tokenColor(token));
     }
 
     QFont titleFont = AppStyle::font(AppStyle::Font::Body);
     titleFont.setStrikeOut(completed);
     p->setFont(titleFont);
-    p->setPen(AppStyle::color(completed ? Color::Muted : Color::Text));
+    p->setPen(styleColor(completed ? Color::Muted : Color::Text));
     p->drawText(layout.title, Qt::AlignLeft | Qt::AlignVCenter,
                 p->fontMetrics().elidedText(i.data().toString(), Qt::ElideRight,
                                             qMax(0, qRound(layout.title.width()))));
 
     p->setFont(AppStyle::font(AppStyle::Font::Small));
     if (!layout.detail.isNull()) {
-        p->setPen(AppStyle::color(Color::Muted));
+        p->setPen(styleColor(Color::Muted));
         const QString detail = i.data(TaskListModel::DetailRole).toString();
         p->drawText(layout.detail, Qt::AlignLeft | Qt::AlignVCenter,
                     p->fontMetrics().elidedText(detail, Qt::ElideRight,
@@ -296,8 +382,8 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
         const QRectF glyph(layout.list.left(),
                            layout.list.center().y() - 7.0 + kListGlyphVerticalOffset,
                            14.0, 14.0);
-        ListAppearance::paint(p, list, glyph, AppStyle::color(Color::Muted));
-        p->setPen(AppStyle::color(completed ? Color::Faint : Color::Muted));
+        ListAppearance::paint(p, list, glyph, styleColor(Color::Muted));
+        p->setPen(styleColor(completed ? Color::Faint : Color::Muted));
         const QRectF nameRect(glyph.right() + 4.0, layout.list.top(),
                               layout.list.right() - glyph.right() - 4.0, layout.list.height());
         p->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
@@ -305,12 +391,25 @@ void TaskDelegate::paintInternal(QPainter* p, const QStyleOptionViewItem& o,
                                                 qMax(0, qRound(nameRect.width()))));
     }
     if (!layout.date.isNull()) {
-        p->setPen(AppStyle::color(completed ? Color::Faint
+        p->setPen(styleColor(completed ? Color::Faint
                                             : (overdue ? Color::Danger : Color::Muted)));
         p->drawText(layout.date, Qt::AlignLeft | Qt::AlignVCenter,
                     p->fontMetrics().elidedText(i.data(TaskListModel::ScheduleRole).toString(),
                                                 Qt::ElideRight, qRound(layout.date.width())));
     }
+
+    if (!layout.reminder.isNull())
+        AppIcons::paint(p, IconId::Reminder,
+                        layout.reminder.translated(0.0, kStatusGlyphVerticalOffset),
+                        styleColor(Color::Faint));
+    if (!layout.attachment.isNull())
+        AppIcons::paint(p, IconId::Attachment,
+                        layout.attachment.translated(0.0, kStatusGlyphVerticalOffset),
+                        styleColor(Color::Faint));
+    if (!layout.note.isNull())
+        AppIcons::paint(p, IconId::RowNote,
+                        layout.note.translated(0.0, kStatusGlyphVerticalOffset),
+                        styleColor(Color::Faint));
 
     p->restore();
 }
@@ -423,6 +522,29 @@ QRect TaskDelegate::dateHitRect(const QStyleOptionViewItem& option,
     return taskLayout(option, index).date.toAlignedRect();
 }
 
+void NavigationDelegate::setThemeOverride(ds::Theme theme) {
+    m_themeOverride = theme;
+    m_themeOverrideActive = true;
+}
+
+void NavigationDelegate::clearThemeOverride() {
+    m_themeOverrideActive = false;
+}
+
+bool NavigationDelegate::hasThemeOverride() const {
+    return m_themeOverrideActive;
+}
+
+QColor NavigationDelegate::tokenColor(ds::ColorToken token) const {
+    return m_themeOverrideActive ? ds::color(token, m_themeOverride)
+                                 : ThemeManager::instance().color(token);
+}
+
+QColor NavigationDelegate::styleColor(AppStyle::Color role) const {
+    return m_themeOverrideActive ? ds::color(mapStyleColor(role), m_themeOverride)
+                                 : AppStyle::color(role);
+}
+
 void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const {
     p->save();
     const QRect row = o.rect;
@@ -430,8 +552,8 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
         p->setRenderHint(QPainter::Antialiasing, false);
         const bool after = i.data(DropLineRole).toString() == QLatin1String("after");
         const int y = after ? row.bottom() - 1 : row.top() + 16;
-        const QColor color = after ? AppStyle::color(Color::Accent)
-            : ThemeManager::instance().color(ds::ColorToken::Divider);
+        const QColor color = after ? styleColor(Color::Accent)
+            : tokenColor(ds::ColorToken::Divider);
         p->setPen(QPen(color, after ? 2.0 : 1.0));
         p->drawLine(row.left() + 10, y, row.right() - 10, y);
         p->restore();
@@ -441,7 +563,7 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const QString folderId = i.data(FolderIdRole).toString();
     if (i.data(SectionRole).toBool() && folderId.isEmpty()) {
         p->setFont(AppStyle::font(AppStyle::Font::Small));
-        p->setPen(AppStyle::color(Color::Muted));
+        p->setPen(styleColor(Color::Muted));
         p->drawText(row.adjusted(16, 8, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
                     i.data().toString());
         p->restore();
@@ -453,11 +575,11 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
     const qreal radius = 10.0;
     if (selected || hovered) {
         p->setPen(Qt::NoPen);
-        p->setBrush(ThemeManager::instance().color(
+        p->setBrush(tokenColor(
             selected ? ds::ColorToken::RowSelected : ds::ColorToken::RowHover));
         p->drawRoundedRect(layout.background, radius, radius);
     }
-    const QColor iconColor = AppStyle::color(Color::Muted);
+    const QColor iconColor = styleColor(Color::Muted);
     const QString iconName = i.data(IconNameRole).toString();
     QRectF iconGlyph = layout.icon;
     if (!i.data(ParentFolderRole).toString().isEmpty()) {
@@ -482,16 +604,16 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 
     // 滴答文件夹与普通清单均为 14px 常规字重，不额外加粗或缩小。
     p->setFont(AppStyle::font(AppStyle::Font::Body));
-    p->setPen(AppStyle::color(Color::Text));
+    p->setPen(styleColor(Color::Text));
     p->drawText(layout.label, Qt::AlignLeft | Qt::AlignVCenter,
                 p->fontMetrics().elidedText(i.data().toString(), Qt::ElideRight,
                                             qMax(0, qRound(layout.label.width()))));
 
     p->setFont(AppStyle::font(AppStyle::Font::Small));
-    p->setPen(AppStyle::color(Color::Faint));
-    p->drawText(QRectF(layout.background.left(), row.top(),
-                       layout.background.width() - 12.0, row.height()),
-                Qt::AlignRight | Qt::AlignVCenter, layout.count);
+    p->setPen(styleColor(Color::Faint));
+    p->drawText(layout.countRect, Qt::AlignRight | Qt::AlignVCenter,
+                p->fontMetrics().elidedText(layout.count, Qt::ElideRight,
+                                            qRound(layout.countRect.width())));
     if (!layout.dot.isNull()) {
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(i.data(ListColorRole).toString()));
@@ -504,17 +626,17 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
                            NavigationGeometry::DisclosureGlyphSize,
                            NavigationGeometry::DisclosureGlyphSize);
         paintTriangle(p, arrow, i.data(FolderExpandedRole).toBool(),
-                      AppStyle::color(hovered ? Color::Muted : Color::Faint));
+                      styleColor(hovered ? Color::Muted : Color::Faint));
     }
     if (!i.data(DropTargetRole).toString().isEmpty()) {
         p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(AppStyle::color(Color::Accent), 1.5));
+        p->setPen(QPen(styleColor(Color::Accent), 1.5));
         p->drawRoundedRect(layout.background.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
     }
     const QString dropLine = i.data(DropLineRole).toString();
     if (!dropLine.isEmpty()) {
         const qreal y = dropLine == QLatin1String("after") ? row.bottom() - 1.0 : row.top() + 1.0;
-        p->setPen(QPen(AppStyle::color(Color::Accent), 2.0));
+        p->setPen(QPen(styleColor(Color::Accent), 2.0));
         p->drawLine(QPointF(layout.background.left() + 4.0, y),
                     QPointF(layout.background.right() - 4.0, y));
     }
@@ -523,7 +645,8 @@ void NavigationDelegate::paint(QPainter* p, const QStyleOptionViewItem& o, const
 
 QSize NavigationDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex& i) const {
     if (i.data(DividerRole).toBool()) return QSize(160, 33);
-    return QSize(160, i.data(SectionRole).toBool() ? 30 : AppStyle::metric(Metric::NavRowHeight));
+    return QSize(160, i.data(SectionRole).toBool() ? 30
+        : i.data(SmartRowRole).toBool() ? 35 : AppStyle::metric(Metric::NavRowHeight));
 }
 
 bool NavigationDelegate::editorEvent(QEvent* event, QAbstractItemModel*,

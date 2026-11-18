@@ -1,10 +1,12 @@
 #include "KylinListApp.h"
 #include "../db/Database.h"
-#include "../platform/Autostart.h"
+#include "AutostartSettings.h"
+#include "../platform/GlobalHotkey.h"
 #include "../platform/InstanceChannel.h"
 #include "../ui/ReminderPopup.h"
 #include "../ui/StatsDialog.h"
 #include "../ui/TaskPanel.h"
+#include "../ui/TaskWidget.h"
 #include "../ui/UpdateDialog.h"
 #include "NoteManager.h"
 #include "ReminderScheduler.h"
@@ -23,6 +25,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
+#include <QKeySequence>
+#include <QSessionManager>
+#include <QSystemTrayIcon>
 #include <QTimer>
 namespace kl {
 namespace {
@@ -30,11 +36,11 @@ QString reminderPopupKey(const QString &entityId, const QString &reminderId)
 {
     return entityId + QLatin1Char('/') + reminderId;
 }
-// 弹窗存活的完整条件：任务仍存在、active、未删除、清单未归档，且提醒仍指向已到期的当前计划。
+// 弹窗存活的完整条件：实体存在、未删除、清单未归档；任务还需 active，且提醒仍是已到期的当前计划。
 bool reminderPopupValid(TaskStore *store, class ReminderPopup *popup)
 {
     const Entity task = store->entity(popup->entityId());
-    if (task.id.isEmpty() || task.kind != EntityKind::Task || task.deleted || task.status != TaskStatus::Active
+    if (task.id.isEmpty() || task.deleted || (task.kind == EntityKind::Task && task.status != TaskStatus::Active)
         || store->isListArchived(task.listId))
         return false;
     for (const TaskReminder &reminder : task.reminders) {
@@ -50,27 +56,60 @@ KylinListApp::KylinListApp(QObject* parent) : QObject(parent) {
 KylinListApp::~KylinListApp() {
     shutdown();
 }
-bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun) {
+TaskStore* KylinListApp::store() const { return m_store; }
+bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun, bool previewAutostart) {
     m_isolatedRun = isolatedRun || !qEnvironmentVariable("KYLINLIST_DATA_DIR").isEmpty();
+    const bool preview = previewAutostart && !qEnvironmentVariable("KYLINLIST_DATA_DIR").isEmpty();
     if (!Database::instance().open(error))
         return false;
     m_store = new TaskStore(Database::instance().connection(), this);
+    // 先登记会话钩子，再恢复或展示窗口。即使初始化期间收到系统会话请求，
+    // 后续顶层窗口也由应用的保存路径接管，不走“关闭便签”动作。
+    QGuiApplication::setFallbackSessionManagementEnabled(false);
+    connect(qApp, &QGuiApplication::commitDataRequest, this, &KylinListApp::commitSession,
+            Qt::DirectConnection);
     if (!m_store->load(error))
         return false;
     m_notes = new NoteManager(m_store, this);
     m_panel = new TaskPanel(m_store);
     m_panel->setWindowIcon(TrayController::trayIcon());
-    m_tray = new TrayController(m_notes, this);
+    m_taskWidget = new TaskWidget(m_store);
+    m_taskWidget->setWindowIcon(TrayController::trayIcon());
+    m_tray = new TrayController(this);
+    m_tray->setTopmostChecked(m_panel->alwaysOnTop());
+    m_tray->setTaskWidgetLocked(m_taskWidget->isLocked());
     connect(m_tray, &TrayController::panelRequested, this, [this]() { m_panel->showTask(); });
-    connect(m_tray, &TrayController::newTaskRequested, m_panel, &TaskPanel::focusQuickAdd);
+    connect(m_tray, &TrayController::addTaskWidgetRequested,
+            m_taskWidget, &TaskWidget::showWidget, Qt::QueuedConnection);
+    connect(m_panel, &TaskPanel::taskWidgetRequested,
+            m_taskWidget, &TaskWidget::showWidget, Qt::QueuedConnection);
+    connect(m_notes, &NoteManager::taskWidgetRequested,
+            m_taskWidget, &TaskWidget::showWidget, Qt::QueuedConnection);
+    connect(m_tray, &TrayController::topmostRequested,
+            m_panel, &TaskPanel::setAlwaysOnTop);
+    connect(m_tray, &TrayController::taskWidgetLockRequested, this, [this](bool locked) {
+        m_taskWidget->setLocked(locked);
+    });
+    connect(m_taskWidget, &TaskWidget::taskOpenRequested,
+            m_panel, &TaskPanel::showTask);
+    connect(m_taskWidget, &TaskWidget::lockChanged,
+            m_tray, &TrayController::setTaskWidgetLocked);
     connect(m_tray, &TrayController::taskRequested, m_panel, &TaskPanel::showTask);
     connect(m_tray, &TrayController::quitRequested, this, &KylinListApp::requestQuit);
     connect(m_panel, &TaskPanel::quitRequested, this, &KylinListApp::requestQuit);
     connect(m_panel, &TaskPanel::importBackupRequested, this, &KylinListApp::importBackup);
     connect(m_notes, &NoteManager::taskOpenRequested, m_panel, &TaskPanel::showTask);
+    connect(m_notes, &NoteManager::relatedDetailRequested, m_panel, &TaskPanel::openRelatedDetail);
     connect(m_store, &TaskStore::errorOccurred, m_tray, &TrayController::notify);
     m_tray->show();
-    m_notes->restoreAll();
+    if (TaskWidget::windowLockEnabled() && (!m_isolatedRun || preview)) {
+        m_hotkey = new GlobalHotkey(this);
+        const bool bound = m_hotkey->grab(QKeySequence(QStringLiteral("Ctrl+Shift+L")), 1);
+        m_tray->setLockShortcutAvailable(bound);
+        connect(m_hotkey, &GlobalHotkey::activated, m_taskWidget, [this](int) {
+            m_taskWidget->setLocked(!m_taskWidget->isLocked());
+        });
+    }
     m_channel = new InstanceChannel(this);
     QString ipcError;
     if (!m_channel->listen(&ipcError))
@@ -106,6 +145,19 @@ bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun) {
     connect(m_store, &TaskStore::tasksReset, this, revalidateAllPopups);
     QTimer::singleShot(500, m_reminders, &ReminderScheduler::start);
     setupUpdates();
+    m_autostart = new AutostartSettings(preview
+        ? AutostartSettings::Mode::Preview
+        : m_isolatedRun ? AutostartSettings::Mode::Isolated
+        : !m_updateService || !m_updateService->identityValid()
+            ? AutostartSettings::Mode::Unavailable
+            : m_updateService->installVariant() == QStringLiteral("portable")
+                ? AutostartSettings::Mode::Portable : AutostartSettings::Mode::Installed,
+        preview ? QDir(dataDirPath()).absolutePath() : QString(), this);
+    m_panel->setAutostart(m_autostart);
+    m_notes->setAutostart(m_autostart);
+    m_notes->restoreAll();
+    if (m_taskWidget->isOpen()) m_taskWidget->show();
+    // 保存路径已在数据打开后立即接入。
     setupStats();
     if (!startHidden || !QSystemTrayIcon::isSystemTrayAvailable())
         m_panel->showTask();
@@ -116,7 +168,7 @@ bool KylinListApp::init(QString* error, bool startHidden, bool isolatedRun) {
 }
 void KylinListApp::showReminder(QString entityId, QString reminderId) {
     const Entity task = m_store->entity(entityId);
-    if (task.id.isEmpty() || task.kind != EntityKind::Task || task.deleted || task.status != TaskStatus::Active
+    if (task.id.isEmpty() || task.deleted || (task.kind == EntityKind::Task && task.status != TaskStatus::Active)
         || m_store->isListArchived(task.listId) || reminderId.isEmpty())
         return;
     bool found = false;
@@ -159,7 +211,10 @@ bool KylinListApp::importBackup(const QString& path) {
     for (const auto& popup : popups) if (popup) popup->close();
     m_popups.clear();
     m_panel->setRestoreFrozen(true); m_notes->setRestoreFrozen(true);
-    if (!m_store->importBackup(path)) {
+    m_taskWidget->setRestoreFrozen(true);
+    const bool restored = m_store->importBackup(path);
+    m_taskWidget->setRestoreFrozen(false);
+    if (!restored) {
         const QString failure = m_store->lastError();
         m_panel->setRestoreFrozen(false); m_notes->setRestoreFrozen(false); m_reminders->start();
         m_tray->notify(QStringLiteral("恢复失败，本机数据与附件未改变：") + failure);
@@ -174,6 +229,7 @@ bool KylinListApp::importBackup(const QString& path) {
 bool KylinListApp::prepareForExit() {
     if (m_restoring || m_shutdown) return false;
     if ((m_panel && !m_panel->flush()) || (m_notes && !m_notes->flushAll())
+        || (m_taskWidget && !m_taskWidget->flush())
         || (m_store && !m_store->endAllSessions())) {
         if (m_panel)
             m_panel->showTask();
@@ -313,9 +369,11 @@ void KylinListApp::requestUpdateInstall(const QString& filePath) {
         if (m_panel) m_panel->showUpdateNotice(message);
         m_updateBusy = false;
     };
-    // 1) 快速添加、检查项等未提交草稿不属于 flush() 保存范围，先要求用户处理。
+    // 1) 快速添加框中的未提交草稿不属于 flush() 保存范围，先要求用户处理。
     QString draftWhat;
-    if (m_panel && m_panel->hasUncommittedDrafts(&draftWhat)) {
+    if ((m_panel && m_panel->hasUncommittedDrafts(&draftWhat))
+        || (m_taskWidget && m_taskWidget->hasUncommittedDraft())) {
+        if (draftWhat.isEmpty()) draftWhat = QStringLiteral("任务小部件中有未提交的任务");
         bail(draftWhat + QStringLiteral("，请先提交或清空后再安装更新。"));
         return;
     }
@@ -404,31 +462,37 @@ void KylinListApp::pruneUpdateBackups() {
         QFile::remove(entries.at(i).absoluteFilePath());
 }
 void KylinListApp::initializeDefaultAutostart() {
-    // 只有正式安装版默认登记；开发构建、便携版和隔离运行不得写真实自启动。
-    if (m_isolatedRun || !m_updateService || !m_updateService->identityValid())
-        return;
-    const QString variant = m_updateService->installVariant();
-    if (variant != QStringLiteral("setup") && variant != QStringLiteral("system-qt")
-        && variant != QStringLiteral("bundled-qt"))
-        return;
-    // 一次性键只在“已安装或本次安装成功”后落盘；失败仅告警、下次再试，
-    // 不影响本地功能；之后用户手动关闭自启不会被本逻辑复活。
-    Settings& settings = Settings::instance();
-    if (settings.autostartInitialized())
-        return;
+    if (!m_autostart) return;
     QString error;
-    if (!Autostart::isInstalled() && !Autostart::ensureInstalled(&error)) {
+    if (!m_autostart->initializeDefault(&error))
         qWarning() << "Default autostart:"
                    << (error.isEmpty() ? QStringLiteral("登记开机自启失败") : error);
-        return;
-    }
-    settings.setAutostartInitialized(true);
-    settings.sync();
+}
+bool KylinListApp::commitSession(QSessionManager& sessionManager) {
+    // Native event delivery is synchronous. Session-manager interactions must not
+    // retain a pointer after the signal returns.
+    m_sessionManager = &sessionManager;
+    const QPointer<KylinListApp> guard(this);
+    const bool ok = handleSessionEnd();
+    m_sessionManager = nullptr;
+    return guard && ok;
+}
+bool KylinListApp::handleSessionEnd() {
+    QGuiApplication::setFallbackSessionManagementEnabled(false);
+    if (m_sessionManager)
+        m_sessionManager->setRestartHint(QSessionManager::RestartNever);
+    const bool ok = prepareForExit();
+    if (!ok && m_sessionManager)
+        m_sessionManager->cancel();
+    return ok;
 }
 void KylinListApp::shutdown() {
     if (m_shutdown)
         return;
     m_shutdown = true;
+    m_sessionManager = nullptr;
+    disconnect(qApp, &QGuiApplication::commitDataRequest, this, nullptr);
+    disconnect(qApp, &QCoreApplication::aboutToQuit, this, nullptr);
     if (m_reminders)
         m_reminders->stop();
     if (m_statsService)
@@ -437,6 +501,8 @@ void KylinListApp::shutdown() {
         m_panel->flush();
     if (m_notes)
         m_notes->flushAll();
+    if (m_taskWidget)
+        m_taskWidget->flush();
     if (m_store)
         m_store->endAllSessions();
     if (m_channel)
@@ -448,6 +514,11 @@ void KylinListApp::shutdown() {
     m_popups.clear();
     delete m_panel;
     m_panel = nullptr;
+    delete m_taskWidget;
+    m_taskWidget = nullptr;
+    delete m_hotkey;
+    m_hotkey = nullptr;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     delete m_tray;
     m_tray = nullptr;
     delete m_notes;

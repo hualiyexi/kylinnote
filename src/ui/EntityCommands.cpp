@@ -1,11 +1,13 @@
 #include "EntityCommands.h"
 
 #include "../app/TaskStore.h"
-#include "ActivityLogDialog.h"
+#include "../domain/InternalLink.h"
 #include "AppIcons.h"
+#include "DetailPopups.h"
 #include "EntityPicker.h"
 #include "ListAppearance.h"
 #include "PopupMenu.h"
+#include "ToastIsland.h"
 #include "design/TypeSystem.h"
 
 #include <algorithm>
@@ -15,7 +17,6 @@
 #include <QClipboard>
 #include <QDate>
 #include <QDateTime>
-#include <QFileDialog>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -106,18 +107,6 @@ CommandInfo commandInfo(EntityCommand cmd)
         return {"copyText", QStringLiteral("复制文本"), IconId::Note};
     case EntityCommand::Merge:
         return {"merge", QStringLiteral("合并"), IconId::Checklist};
-    case EntityCommand::ViewList:
-        return {"viewList", QStringLiteral("列表"), IconId::List};
-    case EntityCommand::ViewBoard:
-        return {"viewBoard", QStringLiteral("看板"), IconId::Checklist};
-    case EntityCommand::ViewTime:
-        return {"viewTime", QStringLiteral("时间线"), IconId::Calendar};
-    case EntityCommand::HideCompleted:
-        return {"hideCompleted", QStringLiteral("隐藏已完成"), IconId::Done};
-    case EntityCommand::ShowDetail:
-        return {"showDetail", QStringLiteral("显示详细"), IconId::Note};
-    case EntityCommand::DisplaySettings:
-        return {"displaySettings", QStringLiteral("显示设置"), IconId::Settings};
     case EntityCommand::RenameList:
         return {"renameList", QStringLiteral("重命名清单…"), IconId::TaskList};
     case EntityCommand::DeleteList:
@@ -138,6 +127,8 @@ CommandInfo commandInfo(EntityCommand cmd)
         return {"share", QStringLiteral("共享"), IconId::Link};
     case EntityCommand::Archive:
         return {"archive", QStringLiteral("归档"), IconId::Archive};
+    case EntityCommand::Reactivate:
+        return {"reactivate", QStringLiteral("恢复进行中"), IconId::Restore};
     case EntityCommand::Count:
         break;
     }
@@ -361,43 +352,35 @@ QMenu *EntityCommands::buildDetailMoreMenu(const MenuContext &ctx, const QString
                                            QWidget *parent)
 {
     QMenu *menu = newMenu(QStringLiteral("EntityDetailMoreMenu"), parent);
+    menu->setMinimumWidth(164 + 2 * PopupMenu::shadowMargin());
     if (ctx.deleted) {
         menu->addAction(makeAction(EntityCommand::Restore, entityId, menu));
+        menu->addAction(makeAction(EntityCommand::ViewActivity, entityId, menu));
         addSeparator(menu);
         menu->addAction(makeAction(EntityCommand::DeletePermanently, entityId, menu));
         return menu;
     }
-
     const bool isTask = ctx.kind == EntityKind::Task;
-    const bool completedTask = isTask && ctx.completed;
-
-    // R11：添加子任务、关联主任务、置顶、放弃、标签、上传附件。
-    if (isTask && !ctx.completed)
+    const bool active = isTask && !ctx.completed && !ctx.abandoned;
+    if (active) {
         menu->addAction(makeAction(EntityCommand::AddSubtask, entityId, menu));
-    if (isTask)
         menu->addAction(makeAction(EntityCommand::LinkParent, entityId, menu));
-    QAction *pin = makeAction(EntityCommand::TogglePin, entityId, menu);
-    setActionText(pin, ctx.pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶"));
-    menu->addAction(pin);
-    if (isTask)
-        menu->addAction(makeAction(EntityCommand::Abandon, entityId, menu));
-    menu->addAction(makeAction(EntityCommand::EditTags, entityId, menu));
+    }
+    if (!isTask || active) {
+        QAction *pin = makeAction(EntityCommand::TogglePin, entityId, menu);
+        setPinAction(pin, ctx.pinned);
+        menu->addAction(pin);
+    }
+    if (active) menu->addAction(makeAction(EntityCommand::Abandon, entityId, menu));
+    else if (isTask) menu->addAction(makeAction(EntityCommand::Reactivate, entityId, menu));
     menu->addAction(makeAction(EntityCommand::UploadAttachment, entityId, menu));
-
     addSeparator(menu);
     menu->addAction(makeAction(EntityCommand::ViewActivity, entityId, menu));
-    menu->addAction(makeAction(EntityCommand::SaveAsTemplate, entityId, menu));
-    if (!completedTask)
-        menu->addAction(makeAction(EntityCommand::Clone, entityId, menu));
-    menu->addAction(makeAction(EntityCommand::CopyLink, entityId, menu));
-    if (completedTask)
-        menu->addAction(makeAction(EntityCommand::EditCompletionTime, entityId, menu));
-    if (!completedTask) {
-        QAction *convert = makeAction(EntityCommand::ConvertKind, entityId, menu);
-        setActionText(convert, isTask ? QStringLiteral("转换为笔记") : QStringLiteral("转换为任务"));
-        menu->addAction(convert);
-    }
-    menu->addAction(makeAction(EntityCommand::Export, entityId, menu));
+    menu->addAction(makeAction(EntityCommand::Clone, entityId, menu));
+    QAction *convert = makeAction(EntityCommand::ConvertKind, entityId, menu);
+    setActionText(convert, isTask ? QStringLiteral("转换为笔记") : QStringLiteral("转换为任务"));
+    menu->addAction(convert);
+    addSeparator(menu);
     menu->addAction(makeAction(EntityCommand::Delete, entityId, menu));
     return menu;
 }
@@ -468,17 +451,6 @@ QMenu *EntityCommands::buildNavigationMenu(const MenuContext &ctx, const QString
     return menu;
 }
 
-QMenu *EntityCommands::buildWorkspaceMenu(QWidget *parent)
-{
-    QMenu *menu = newMenu(QStringLiteral("WorkspaceMoreMenu"), parent);
-    addViewBar(menu);
-    addSeparator(menu);
-    menu->addAction(makeAction(EntityCommand::HideCompleted, QString(), menu));
-    menu->addAction(makeAction(EntityCommand::ShowDetail, QString(), menu));
-    menu->addAction(makeAction(EntityCommand::DisplaySettings, QString(), menu));
-    return menu;
-}
-
 QAction *EntityCommands::makeAction(EntityCommand cmd, const QString &entityId, QWidget *parent)
 {
     const CommandInfo info = commandInfo(cmd);
@@ -509,6 +481,26 @@ QAction *EntityCommands::makeAction(EntityCommand cmd, const QString &entityId, 
 
     connect(action, &QAction::triggered, this, [this, cmd, entityId]() { execute(cmd, entityId); });
     return action;
+}
+
+QMenu *EntityCommands::buildPriorityMenu(const QString &entityId, QWidget *parent)
+{
+    auto *menu = new PopupMenu(parent);
+    menu->setObjectName(QStringLiteral("PriorityMenu"));
+    menu->setProperty("entityMenu", true);
+    menu->setFixedWidth(164 + 2 * PopupMenu::shadowMargin());
+    menu->setSeparatorsCollapsible(false);
+    const int current = m_store ? m_store->entity(entityId).priority : 0;
+    const EntityCommand commands[] = {EntityCommand::SetPriorityHigh, EntityCommand::SetPriorityMedium,
+                                      EntityCommand::SetPriorityLow, EntityCommand::SetPriorityNone};
+    const int values[] = {3, 2, 1, 0};
+    for (int i = 0; i < 4; ++i) {
+        QAction* action = makeAction(commands[i], entityId, menu);
+        action->setCheckable(true);
+        action->setChecked(current == values[i]);
+        menu->addAction(action);
+    }
+    return menu;
 }
 
 void EntityCommands::addQuickDateBar(QMenu *menu, const MenuContext &ctx, const QString &entityId)
@@ -577,172 +569,19 @@ void EntityCommands::addPriorityBar(QMenu *menu, const MenuContext &ctx, const Q
                     IconId::FlagHigh);
 }
 
-void EntityCommands::addViewBar(QMenu *menu)
-{
-    QWidget *host = new QWidget(menu);
-    host->setObjectName(QStringLiteral("workspaceViewBarWidget"));
-    QHBoxLayout *layout = new QHBoxLayout(host);
-    layout->setContentsMargins(6, 0, 6, 0);
-    layout->setSpacing(2);
-
-    const auto addButton = [this, menu, host, layout](EntityCommand cmd, const QString &objectName) {
-        QAction *action = makeAction(cmd, QString(), host);
-        QToolButton *button = new QToolButton(host);
-        button->setObjectName(objectName);
-        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        button->setAutoRaise(true);
-        button->setFixedSize(34, 34);
-        button->setIconSize(QSize(18, 18));
-        button->setFocusPolicy(Qt::StrongFocus);
-        button->setDefaultAction(action);
-        button->setAccessibleName(action->property("accessibleName").toString());
-        connect(action, &QAction::triggered, menu, [menu]() { menu->close(); });
-        layout->addWidget(button);
-    };
-    addButton(EntityCommand::ViewList, QStringLiteral("view-list"));
-    addButton(EntityCommand::ViewBoard, QStringLiteral("view-board"));
-    addButton(EntityCommand::ViewTime, QStringLiteral("view-timeline"));
-
-    QAction *overflow = new QAction(AppIcons::icon(IconId::More), QStringLiteral("更多视图"), host);
-    overflow->setObjectName(QStringLiteral("viewOverflowAction"));
-    overflow->setProperty("accessibleName", QStringLiteral("更多视图"));
-    overflow->setToolTip(QStringLiteral("更多视图"));
-    overflow->setEnabled(false);
-    QToolButton *button = new QToolButton(host);
-    button->setObjectName(QStringLiteral("view-overflow"));
-    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    button->setAutoRaise(true);
-    button->setFixedSize(34, 34);
-    button->setIconSize(QSize(18, 18));
-    button->setDefaultAction(overflow);
-    layout->addWidget(button);
-
-    addWidgetAction(menu, host, QStringLiteral("workspaceViewBar"), QStringLiteral("工作区视图"),
-                    IconId::List);
-}
-
 void EntityCommands::addMoveToMenu(QMenu *menu, const QString &entityId)
 {
     QAction *moveAction = makeAction(EntityCommand::MoveTo, entityId, menu);
-    QMenu *moveMenu = newMenu(QStringLiteral("MoveToMenu"), menu);
+    auto *moveMenu = new ListDestinationMenu(menu);
+    moveMenu->setObjectName(QStringLiteral("MoveToMenu"));
     moveAction->setMenu(moveMenu);
     menu->addAction(moveAction);
-
-    QLineEdit *search = new QLineEdit(moveMenu);
-    search->setObjectName(QStringLiteral("moveToSearch"));
-    search->setPlaceholderText(QStringLiteral("搜索清单"));
-    search->setClearButtonEnabled(true);
-    search->setAccessibleName(QStringLiteral("搜索目标清单"));
-    search->setToolTip(QStringLiteral("输入名称筛选；按向下键选择，回车移动"));
-    search->installEventFilter(this);
-    QWidgetAction *searchAction = new QWidgetAction(moveMenu);
-    searchAction->setObjectName(QStringLiteral("moveToSearchAction"));
-    searchAction->setProperty("accessibleName", QStringLiteral("搜索目标清单"));
-    searchAction->setToolTip(QStringLiteral("搜索目标清单"));
-    searchAction->setIcon(AppIcons::icon(IconId::Search));
-    searchAction->setDefaultWidget(search);
-    moveMenu->addAction(searchAction);
-    addSeparator(moveMenu);
-
-    QVector<TaskList> lists = m_store ? m_store->lists() : QVector<TaskList>();
-    QVector<Folder> folders = m_store ? m_store->folders() : QVector<Folder>();
-    std::sort(lists.begin(), lists.end(), [](const TaskList &a, const TaskList &b) {
-        if (a.sortOrder != b.sortOrder)
-            return a.sortOrder < b.sortOrder;
-        return QString::localeAwareCompare(a.name, b.name) < 0;
-    });
-    std::sort(folders.begin(), folders.end(), [](const Folder &a, const Folder &b) {
-        if (a.sortOrder != b.sortOrder)
-            return a.sortOrder < b.sortOrder;
-        return QString::localeAwareCompare(a.name, b.name) < 0;
-    });
-
-    const QString currentListId = m_store ? m_store->entity(entityId).listId : QString();
-    const auto addDestination = [this, moveMenu, entityId, currentListId](const TaskList &list,
-                                                                          const QString &folderId,
-                                                                          bool indented) {
-        QAction *action = new QAction(ListAppearance::icon(list, 18, QColor()),
-                                      indented ? QStringLiteral("    ") + list.name : list.name,
-                                      moveMenu);
-        action->setObjectName(QStringLiteral("moveToList.%1").arg(list.id));
-        action->setProperty("accessibleName", QStringLiteral("移动到%1").arg(list.name));
-        action->setToolTip(QStringLiteral("移动到“%1”").arg(list.name));
-        action->setStatusTip(QStringLiteral("移动到“%1”").arg(list.name));
-        action->setProperty("targetListId", list.id);
-        action->setProperty("targetListName", list.name);
-        action->setProperty("moveFolderId", folderId);
-        action->setEnabled(list.id != currentListId);
-        moveMenu->addAction(action);
-        connect(action, &QAction::triggered, this,
-                [this, entityId, listId = list.id]() { executeMoveTo(entityId, listId); });
-    };
-
-    // v5 只有一层文件夹；文件夹标题不可作为目标，清单才是目标节点。
-    for (const Folder &folder : folders) {
-        QAction *heading = new QAction(AppIcons::icon(IconId::Folder, 18), folder.name, moveMenu);
-        heading->setObjectName(QStringLiteral("moveFolder.%1").arg(folder.id));
-        heading->setProperty("accessibleName", QStringLiteral("文件夹%1").arg(folder.name));
-        heading->setToolTip(QStringLiteral("文件夹：%1").arg(folder.name));
-        heading->setProperty("moveFolderHeading", folder.id);
-        heading->setProperty("moveFolderName", folder.name);
-        heading->setEnabled(false);
-        moveMenu->addAction(heading);
-        for (const TaskList &list : lists) {
-            if (list.folderId == folder.id)
-                addDestination(list, folder.id, true);
-        }
-    }
-    for (const TaskList &list : lists) {
-        if (list.folderId.isEmpty())
-            addDestination(list, QString(), false);
-    }
-
-    QAction *empty = new QAction(AppIcons::icon(IconId::Search), QStringLiteral("没有匹配清单"), moveMenu);
-    empty->setObjectName(QStringLiteral("moveToEmpty"));
-    empty->setProperty("accessibleName", QStringLiteral("没有匹配清单"));
-    empty->setToolTip(QStringLiteral("没有匹配清单"));
-    empty->setEnabled(false);
-    empty->setVisible(false);
-    moveMenu->addAction(empty);
-    moveAction->setEnabled(!lists.isEmpty());
-
-    connect(search, &QLineEdit::textChanged, moveMenu, [moveMenu, empty](const QString &text) {
-        const QString needle = text.trimmed();
-        QSet<QString> visibleFolders;
-        int visibleCount = 0;
-        const QList<QAction *> actions = moveMenu->actions();
-        for (QAction *action : actions) {
-            const QString listId = action->property("targetListId").toString();
-            if (listId.isEmpty())
-                continue;
-            const QString folderId = action->property("moveFolderId").toString();
-            QString folderName;
-            for (QAction *candidate : actions) {
-                if (candidate->property("moveFolderHeading").toString() == folderId) {
-                    folderName = candidate->property("moveFolderName").toString();
-                    break;
-                }
-            }
-            const bool matches = needle.isEmpty()
-                || action->property("targetListName").toString().contains(needle, Qt::CaseInsensitive)
-                || folderName.contains(needle, Qt::CaseInsensitive);
-            action->setVisible(matches);
-            if (matches) {
-                ++visibleCount;
-                if (!folderId.isEmpty())
-                    visibleFolders.insert(folderId);
-            }
-        }
-        for (QAction *action : actions) {
-            const QString folderId = action->property("moveFolderHeading").toString();
-            if (!folderId.isEmpty())
-                action->setVisible(visibleFolders.contains(folderId));
-        }
-        empty->setVisible(visibleCount == 0);
-    });
-    connect(moveMenu, &QMenu::aboutToShow, search, [search]() {
-        QTimer::singleShot(0, search, [search]() { search->setFocus(Qt::TabFocusReason); });
-    });
+    moveMenu->setLists(m_store ? m_store->lists() : QVector<TaskList>(),
+                       m_store ? m_store->folders() : QVector<Folder>(),
+                       m_store ? m_store->entity(entityId).listId : QString());
+    moveAction->setEnabled(m_store && !m_store->lists().isEmpty());
+    connect(moveMenu, &ListDestinationMenu::listSelected, this,
+            [this, entityId](const QString& listId) { executeMoveTo(entityId, listId); });
 }
 
 void EntityCommands::addFocusMenu(QMenu *menu, const QString &entityId)
@@ -823,10 +662,15 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
         Entity entity;
         if (!loadEntity(&entity))
             return;
+        ScheduleValue schedule = m_store->schedule(entityId);
+        schedule.startAt = QDateTime();
+        schedule.dueAt = QDateTime();
+        schedule.allDayEndDate = QDate();
+        schedule.hasScheduleRange = false;
         if (cmd == EntityCommand::SetDateNone || cmd == EntityCommand::ClearDate) {
-            entity.allDayDate = QDate();
-            entity.startAt = QDateTime();
-            entity.dueAt = QDateTime();
+            schedule.allDayDate = QDate();
+            schedule.reminders.clear();
+            schedule.repeating = false;
         } else {
             const QDate today = toAppTime(appNow()).date();
             int days = 0;
@@ -834,11 +678,9 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
                 days = 1;
             else if (cmd == EntityCommand::SetDateNextWeek)
                 days = 7;
-            entity.allDayDate = today.addDays(days);
-            entity.startAt = QDateTime();
-            entity.dueAt = QDateTime();
+            schedule.allDayDate = today.addDays(days);
         }
-        finish(cmd, entityId, m_store->saveTask(entity));
+        finish(cmd, entityId, m_store->saveSchedule(entity, schedule));
         return;
     }
     case EntityCommand::SetPriorityHigh:
@@ -894,18 +736,21 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             emit errorOccurred(QStringLiteral("仅任务可关联主任务"));
             return;
         }
+        const QPointer<EntityCommands> guard(this);
+        const QPointer<TaskStore> store(m_store);
         EntityPickerDialog picker(m_store, dialogParent());
         picker.setWindowTitle(QStringLiteral("关联主任务"));
-        if (picker.exec() != QDialog::Accepted)
-            return;
-        const Entity parent = picker.selectedEntity();
+        if (picker.exec() != QDialog::Accepted || !guard || !store) return;
+        const Entity parent = store->entity(picker.selectedEntity().id);
+        Entity latest = store->entity(entityId);
+        if (latest.id.isEmpty() || latest.deleted || latest.kind != EntityKind::Task) return;
         if (parent.id.isEmpty() || parent.kind != EntityKind::Task || parent.deleted
-            || parent.id == entity.id) {
+            || parent.id == latest.id) {
             emit errorOccurred(QStringLiteral("请选择另一项有效任务作为主任务"));
             return;
         }
-        entity.parentId = parent.id;
-        finish(cmd, entityId, m_store->saveTask(entity));
+        latest.parentId = parent.id;
+        finish(cmd, entityId, store->saveTask(latest));
         return;
     }
     case EntityCommand::TogglePin: {
@@ -939,9 +784,7 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
         Entity entity;
         if (!loadEntity(&entity))
             return;
-        entity.listId = m_moveTargetListId;
-        entity.sectionId.clear();
-        finish(cmd, entityId, m_store->saveTask(entity));
+        finish(cmd, entityId, m_store->moveEntityToList(entityId, m_moveTargetListId));
         return;
     }
     case EntityCommand::Complete: {
@@ -953,6 +796,16 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             return;
         }
         finish(cmd, entityId, m_store->setCompleted(entityId, !entity.completed));
+        return;
+    }
+    case EntityCommand::Reactivate: {
+        Entity entity;
+        if (!loadEntity(&entity)) return;
+        if (entity.kind != EntityKind::Task) {
+            emit errorOccurred(QStringLiteral("笔记没有任务状态"));
+            return;
+        }
+        finish(cmd, entityId, m_store->setStatus(entityId, TaskStatus::Active));
         return;
     }
     case EntityCommand::Clone: {
@@ -968,7 +821,10 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
         return;
     }
     case EntityCommand::CopyLink: {
-        if (entityId.isEmpty()) {
+        Entity entity;
+        if (!loadEntity(&entity)) return;
+        const QString reference = entityReference(entity.id, entity.title);
+        if (reference.isEmpty()) {
             emit errorOccurred(QStringLiteral("实体不存在"));
             return;
         }
@@ -977,8 +833,7 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
             emit errorOccurred(QStringLiteral("剪贴板不可用"));
             return;
         }
-        // 与 Markdown 内链一致：kl:<entity-id>。
-        clipboard->setText(QStringLiteral("kl:") + entityId);
+        clipboard->setText(reference);
         emit commandExecuted(cmd, entityId);
         return;
     }
@@ -987,15 +842,12 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
         if (!loadEntity(&entity))
             return;
         const EntityKind target = entity.kind == EntityKind::Task ? EntityKind::Note : EntityKind::Task;
-        const QString text = target == EntityKind::Note
-            ? QStringLiteral("完成状态、日期、提醒、重复、优先级和贴桌面行为将暂停；字段、提醒、附件与清单均原样保留，转回任务后恢复。是否继续？")
-            : QStringLiteral("将恢复任务状态、日期、提醒、重复、优先级及贴桌面行为；字段、提醒、附件与清单均已保留。是否继续？");
-        if (QMessageBox::question(dialogParent(), QStringLiteral("类型转换"), text,
-                                  QMessageBox::Yes | QMessageBox::No,
-                                  QMessageBox::No) != QMessageBox::Yes) {
-            return;
+        if (m_store->convertKind(entityId, target)) {
+            finish(EntityCommand::ConvertKind, entityId, true);
+            if (QWidget* parent = dialogParent()) ToastIsland::showTransient(parent->window(), QStringLiteral("已转换"));
+        } else {
+            finish(EntityCommand::ConvertKind, entityId, false);
         }
-        finish(cmd, entityId, m_store->convertKind(entityId, target));
         return;
     }
     case EntityCommand::Delete: {
@@ -1028,24 +880,15 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
         finish(cmd, entityId, m_store->deletePermanently(entityId));
         return;
     }
-    case EntityCommand::UploadAttachment: {
-        Entity entity;
-        if (!loadEntity(&entity))
-            return;
-        const QString path = QFileDialog::getOpenFileName(dialogParent(), QStringLiteral("上传附件"));
-        if (path.isEmpty())
-            return;
-        const Attachment attachment = m_store->importAttachment(entityId, path);
-        finish(cmd, entityId, !attachment.id.isEmpty());
-        return;
-    }
+    case EntityCommand::UploadAttachment:
     case EntityCommand::ViewActivity: {
-        if (!m_store || entityId.isEmpty()) {
-            emit errorOccurred(QStringLiteral("任务动态不可用"));
+        Entity entity;
+        if (!loadEntity(&entity)) return;
+        if (cmd == EntityCommand::UploadAttachment && entity.deleted) {
+            emit errorOccurred(QStringLiteral("回收站中的内容不能添加附件"));
             return;
         }
-        ActivityLogDialog dialog(m_store, entityId, dialogParent());
-        dialog.exec();
+        // 宿主将附件交给共享导入组件，将动态展开在当前详情内。
         emit commandExecuted(cmd, entityId);
         return;
     }
@@ -1152,12 +995,6 @@ void EntityCommands::execute(EntityCommand cmd, const QString &entityId)
     case EntityCommand::EditCompletionTime:
     case EntityCommand::CopyText:
     case EntityCommand::Merge:
-    case EntityCommand::ViewList:
-    case EntityCommand::ViewBoard:
-    case EntityCommand::ViewTime:
-    case EntityCommand::HideCompleted:
-    case EntityCommand::ShowDetail:
-    case EntityCommand::DisplaySettings:
     case EntityCommand::Edit:
     case EntityCommand::ShowWhenNonEmpty:
     case EntityCommand::Hide:

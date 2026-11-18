@@ -1,8 +1,13 @@
 #include "TaskStore.h"
 
+#include "EntityTextSession.h"
+
+#include "../domain/ActivityPolicy.h"
 #include "../domain/AttachmentCodec.h"
 #include "../domain/BackupCodec.h"
 #include "../domain/EntityCodec.h"
+#include "../domain/RecurrenceEngine.h"
+#include "../domain/ReminderRule.h"
 #include "../domain/ViewSpec.h"
 
 #include <QFile>
@@ -20,36 +25,63 @@
 namespace kl {
 namespace {
 
-QDateTime plannedAt(const Entity &task) { return task.dueAt.isValid() ? task.dueAt : task.startAt; }
+QDateTime plannedAt(const Entity &task) {
+    return task.hasScheduleRange && task.startAt.isValid() ? task.startAt : task.dueAt;
+}
+QDate plannedLocalDate(const Entity& task) {
+    if (task.allDayDate.isValid()) return task.allDayDate;
+    const QDateTime plan = plannedAt(task);
+    return plan.isValid() ? plan.toTimeZone(QTimeZone(task.timeZone.toUtf8())).date() : QDate();
+}
 QString occurrenceKey(const Entity &task)
 {
     if (task.allDayDate.isValid()) return task.allDayDate.toString(Qt::ISODate);
     const QDateTime plan = plannedAt(task);
     return plan.isValid() ? QString::number(utcMs(plan)) : QString();
 }
-QDateTime nextTimedRecurrence(const Entity &task, int anchorDay)
-{
-    const QDateTime plan = plannedAt(task);
-    if (!plan.isValid()) return QDateTime();
-    const QTimeZone zone(task.timeZone.toUtf8());
-    const QDateTime local = plan.toTimeZone(zone);
-    return nextRecurrence(local, task.rrule, anchorDay).toUTC();
+const RecurrenceSeries* seriesFor(const EntitySnapshot& snapshot, const QString& id) {
+    if (id.isEmpty()) return nullptr;
+    for (const RecurrenceSeries& series : snapshot.recurrenceSeries) if (series.id == id) return &series;
+    return nullptr;
 }
-bool sameChecklist(const ChecklistItem &a, const ChecklistItem &b)
-{
-    return a.text == b.text && a.done == b.done && a.sortOrder == b.sortOrder;
+bool simpleRecurrence(const Entity& value, RecurrenceSpec* spec, bool* enabled) {
+    QString rule = value.rrule.isEmpty() ? value.recurrence : value.rrule;
+    if (rule.isEmpty() || rule == QLatin1String("none")) {
+        *enabled = false;
+        return true;
+    }
+    QString frequency;
+    int interval = 1;
+    if (!parseRecurrence(rule, &frequency, &interval) || frequency.isEmpty()) return false;
+    spec->kind = RecurrenceSpec::Kind::Gregorian;
+    spec->basis = RecurrenceSpec::Basis::DueDate;
+    spec->frequency = frequency == QLatin1String("DAILY") ? RecurrenceSpec::Frequency::Daily
+        : frequency == QLatin1String("WEEKLY") ? RecurrenceSpec::Frequency::Weekly
+        : RecurrenceSpec::Frequency::Monthly;
+    spec->interval = interval;
+    spec->lunarLeapMonthRepeat = false;
+    if (spec->frequency == RecurrenceSpec::Frequency::Monthly)
+        spec->monthDays.append(plannedLocalDate(value).day());
+    *enabled = true;
+    return isValidRecurrence(*spec);
 }
 bool sameReminder(const TaskReminder &a, const TaskReminder &b)
 {
-    return a.triggerAt == b.triggerAt && a.sortOrder == b.sortOrder;
+    return a.triggerAt == b.triggerAt && a.sortOrder == b.sortOrder && a.ruleJson == b.ruleJson;
 }
 TaskTag makeTaskTag(const QString &entityId, const QString &tagId)
 {
     TaskTag link; link.id = newUuid(); link.entityId = entityId; link.tagId = tagId; return link;
 }
-// 顶层“平铺清单 + 文件夹”混合序列的稳定顺序：sortOrder 优先；同序号时平铺清单在文件夹前
-// （旧 UI 把文件夹排在全部平铺清单之后），再按 id。旧全 0 数据因此退化为
-// “平铺清单在前、文件夹在后、各自 (sortOrder,id)”，与历史 UI 展示一致。
+void queueSeriesSave(EntityChanges* changes, const RecurrenceSeries& series)
+{
+    for (RecurrenceSeries& pending : changes->seriesSaves) if (pending.id == series.id) {
+        pending = series;
+        return;
+    }
+    changes->seriesSaves.append(series);
+}
+// 顶层“平铺清单 + 文件夹”混合序列的稳定顺序：sortOrder 优先；同序号时平铺清单在文件夹前，再按 id。
 struct TopLevelRow {
     const TaskList *list = nullptr;
     const Folder *folder = nullptr;
@@ -64,11 +96,13 @@ bool topLevelLess(const TopLevelRow &a, const TopLevelRow &b)
     return a.id() < b.id();
 }
 void addEvent(EntityChanges *changes, const Entity &entity, const QString &type, const QString &field,
-              const QVariant &oldValue, const QVariant &newValue, const QDateTime &occurredAt)
+              const QVariant &oldValue, const QVariant &newValue, const QDateTime &occurredAt,
+              const QJsonObject &context = QJsonObject())
 {
     EntityEvent event; event.entityId = entity.id; event.entityKind = entity.kind; event.entityTitle = entity.title;
     event.type = type; event.field = field; event.oldValue = oldValue; event.newValue = newValue;
-    event.occurredAt = occurredAt; changes->eventSaves.append(event);
+    event.occurredAt = occurredAt; event.context = context;
+    if (isVisibleActivityEvent(event)) changes->eventSaves.append(event);
 }
 QVariant msValue(const QDateTime &date)
 {
@@ -81,12 +115,6 @@ QVariant idValue(const QString &id)
 QString createdSnapshot(const Entity &entity)
 {
     QJsonObject root; root.insert(QStringLiteral("title"), entity.title); root.insert(QStringLiteral("body"), entity.body);
-    QJsonArray checklist;
-    for (const ChecklistItem &item : entity.checklist) {
-        QJsonObject row; row.insert(QStringLiteral("id"), item.id); row.insert(QStringLiteral("text"), item.text);
-        row.insert(QStringLiteral("done"), item.done); checklist.append(row);
-    }
-    root.insert(QStringLiteral("checklist"), checklist);
     return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
 }
 QString tagSnapshot(const QStringList &tags)
@@ -99,6 +127,373 @@ QString tagSnapshot(const QStringList &tags)
     QJsonArray array; for (const QString &tag : normalized) array.append(tag);
     return QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
 }
+const Entity *snapshotEntity(const EntitySnapshot &snapshot, const QString &id)
+{
+    for (const StoredEntity &row : snapshot.entities) if (row.entity.id == id) return &row.entity;
+    return nullptr;
+}
+const TaskList *snapshotList(const EntitySnapshot &snapshot, const QString &id)
+{
+    for (const TaskList &row : snapshot.lists) if (row.id == id) return &row;
+    return nullptr;
+}
+void completeActivityContexts(EntityChanges *changes, const EntitySnapshot &snapshot)
+{
+    const auto currentEntity = [&](const QString &id) -> const Entity * {
+        for (const StoredEntity &row : changes->saves) if (row.entity.id == id) return &row.entity;
+        return snapshotEntity(snapshot, id);
+    };
+    const auto parentTitle = [&](const QString &id, bool current) {
+        const Entity *parent = current ? currentEntity(id) : snapshotEntity(snapshot, id);
+        return parent ? parent->title : QString();
+    };
+    const auto listName = [&](const QString &id, bool current) {
+        if (current) for (const TaskList &row : changes->groupSaves) if (row.id == id) return row.name;
+        const TaskList *list = snapshotList(snapshot, id);
+        return list ? list->name : QString();
+    };
+    for (EntityEvent &event : changes->eventSaves) {
+        const Entity *entity = currentEntity(event.entityId);
+        if (event.type == QStringLiteral("changed") && event.field == QStringLiteral("parent")) {
+            event.context.insert(QStringLiteral("oldParentTitle"), parentTitle(event.oldValue.toString(), false));
+            event.context.insert(QStringLiteral("newParentTitle"), parentTitle(event.newValue.toString(), true));
+        } else if (entity && !entity->parentId.isEmpty()) {
+            event.context.insert(QStringLiteral("newParentTitle"), parentTitle(entity->parentId, true));
+        }
+        if (event.type == QStringLiteral("changed") && event.field == QStringLiteral("list")) {
+            event.context.insert(QStringLiteral("oldListName"), listName(event.oldValue.toString(), false));
+            event.context.insert(QStringLiteral("newListName"), listName(event.newValue.toString(), true));
+        }
+        if (entity && !event.context.contains(QStringLiteral("listName")))
+            event.context.insert(QStringLiteral("listName"), listName(entity->listId, true));
+        if (event.type == QStringLiteral("attachment_added") || event.type == QStringLiteral("attachment_removed")) {
+            const QString id = event.type == QStringLiteral("attachment_added")
+                ? event.newValue.toString() : event.oldValue.toString();
+            const Attachment *attachment = nullptr;
+            for (const Attachment &row : changes->attachmentSaves) if (row.id == id) attachment = &row;
+            for (const Attachment &row : changes->attachmentRemovals) if (row.id == id) attachment = &row;
+            if (!attachment) for (const Attachment &row : snapshot.attachments) if (row.id == id) attachment = &row;
+            if (attachment) event.context.insert(QStringLiteral("attachmentName"), attachment->originalName);
+        }
+    }
+}
+
+// DropPlan 只保存经完整快照验证后的最终实体值；可见顺序不参与子树闭包计算。
+struct DropPlan {
+    QVector<Entity> updates;
+};
+struct DropSnapshot {
+    explicit DropSnapshot(const EntitySnapshot &snapshot)
+    {
+        for (const StoredEntity &row : snapshot.entities) {
+            entities.insert(row.entity.id, row.entity);
+            children[row.entity.parentId].append(row.entity.id);
+        }
+        for (const TaskList &list : snapshot.lists) lists.insert(list.id, list);
+    }
+    QHash<QString, Entity> entities;
+    QHash<QString, QStringList> children;
+    QHash<QString, TaskList> lists;
+};
+bool dropFailure(QString *error, const QString &message)
+{
+    if (error) *error = message;
+    return false;
+}
+bool availableList(const DropSnapshot &snapshot, const QString &id)
+{
+    const auto list = snapshot.lists.constFind(id);
+    return list != snapshot.lists.constEnd() && list->archivedAtUtcMs == 0;
+}
+bool activeDropEntity(const Entity &entity, const DropSnapshot &snapshot)
+{
+    return !entity.deleted && (entity.kind == EntityKind::Task || entity.kind == EntityKind::Note)
+        && (entity.kind == EntityKind::Note || entity.status == TaskStatus::Active)
+        && availableList(snapshot, entity.listId);
+}
+bool groupMatchesMode(const GroupKey &group, GroupMode mode, const DropSnapshot &snapshot)
+{
+    switch (group.kind) {
+    case GroupKey::Pinned:
+    case GroupKey::Notes: return true;
+    case GroupKey::List: return mode == GroupMode::List && isUuid(group.listId) && availableList(snapshot, group.listId);
+    case GroupKey::Time: return mode == GroupMode::Time && group.bucket >= static_cast<int>(TimeBucket::Overdue)
+            && group.bucket <= static_cast<int>(TimeBucket::Undated);
+    case GroupKey::Priority: return mode == GroupMode::Priority && group.bucket >= 0 && group.bucket <= 3;
+    case GroupKey::Flat: return mode == GroupMode::None;
+    default: return false; // Created、终态和未知组均不接受拖放，绝不仅排序伪成功。
+    }
+}
+bool validateAncestors(const DropSnapshot &snapshot, const QString &id, const QString &forbiddenId, QString *error)
+{
+    QSet<QString> visited;
+    QString current = id;
+    while (!current.isEmpty()) {
+        if (current == forbiddenId) return dropFailure(error, QStringLiteral("不能把任务移动到自身或其后代下"));
+        if (visited.contains(current)) return dropFailure(error, QStringLiteral("任务层级存在循环"));
+        visited.insert(current);
+        const auto entity = snapshot.entities.constFind(current);
+        if (entity == snapshot.entities.constEnd()) return dropFailure(error, QStringLiteral("任务祖先链不完整"));
+        current = entity->parentId;
+    }
+    return true;
+}
+bool collectSubtree(const DropSnapshot &snapshot, const QString &sourceId, QSet<QString> *ids, QString *error)
+{
+    QStringList pending{sourceId};
+    for (int index = 0; index < pending.size(); ++index) {
+        const QString id = pending.at(index);
+        if (ids->contains(id)) return dropFailure(error, QStringLiteral("任务子树存在循环"));
+        if (!snapshot.entities.contains(id)) return dropFailure(error, QStringLiteral("任务子树不完整"));
+        ids->insert(id);
+        pending.append(snapshot.children.value(id));
+    }
+    return true;
+}
+bool canShowInGroup(const Entity &entity, const DropSnapshot &snapshot, const GroupKey &group,
+                    GroupMode mode, const QDate &today)
+{
+    // 筛选或折叠可能隐藏父项；显示组可以取自身或连续同状态同清单祖先的属性组。
+    // 此处只验证可能性，不能把 orderedIds 当成完整可见树，更不能当成真实子树。
+    const Entity *current = &entity;
+    QSet<QString> visited;
+    while (current && !visited.contains(current->id)) {
+        visited.insert(current->id);
+        if (groupOf(*current, mode, today) == group) return true;
+        const auto parent = snapshot.entities.constFind(current->parentId);
+        if (parent == snapshot.entities.constEnd() || parent->kind != entity.kind
+            || parent->status != entity.status || parent->deleted != entity.deleted
+            || parent->listId != entity.listId) break;
+        current = &parent.value();
+    }
+    return false;
+}
+bool moveSubtreeToList(DropSnapshot *snapshot, const QString &sourceId, const QString &targetListId,
+                       const QSet<QString> &subtree, QString *error)
+{
+    if (!availableList(*snapshot, targetListId)) return dropFailure(error, QStringLiteral("目标清单不存在或已归档"));
+    const Entity source = snapshot->entities.value(sourceId);
+    bool crossing = false;
+    for (const QString &id : subtree) {
+        const Entity &entity = snapshot->entities.value(id);
+        if (entity.kind != source.kind) return dropFailure(error, QStringLiteral("子树实体类型不一致"));
+        crossing = crossing || entity.listId != targetListId;
+    }
+    if (!crossing) return true;
+    for (const QString &id : subtree) {
+        Entity &entity = snapshot->entities[id];
+        entity.listId = targetListId;
+        entity.sectionId.clear();
+    }
+    // 独立移动子项不拖走其祖先，旧父项不在本次闭包中，必须脱父。
+    snapshot->entities[sourceId].parentId.clear();
+    return true;
+}
+bool changedByDrop(const Entity &before, const Entity &after)
+{
+    return before.sortOrder != after.sortOrder || before.parentId != after.parentId
+        || before.pinnedAt != after.pinnedAt || before.listId != after.listId
+        || before.sectionId != after.sectionId || before.priority != after.priority
+        || before.allDayDate != after.allDayDate || before.allDayEndDate != after.allDayEndDate
+        || before.hasScheduleRange != after.hasScheduleRange
+        || before.startAt != after.startAt || before.dueAt != after.dueAt;
+}
+void finishDropPlan(const EntitySnapshot &snapshot, const DropSnapshot &planned, DropPlan *plan)
+{
+    for (const StoredEntity &row : snapshot.entities) {
+        const Entity value = planned.entities.value(row.entity.id);
+        if (changedByDrop(row.entity, value)) plan->updates.append(value);
+    }
+}
+void reorderDropSiblings(DropSnapshot *snapshot, const TaskDrop::Intent &intent, const QDate &today,
+                         bool sourceWasSibling)
+{
+    const Entity source = snapshot->entities.value(intent.sourceId);
+    QStringList siblings;
+    QSet<QString> siblingIds;
+    for (const Entity &entity : snapshot->entities) {
+        // 扁平提示中的后代和其他父级的行不是 source 的排序同级；终态/回收站/归档
+        // 也不参与活动排序。根行可跨清单汇总，子级只和同清单的真正兄弟比较。
+        if (entity.parentId != source.parentId
+            || (!source.parentId.isEmpty() && entity.listId != source.listId)
+            || !activeDropEntity(entity, *snapshot)
+            || !canShowInGroup(entity, *snapshot, intent.targetGroup, intent.mode, today)) continue;
+        siblings.append(entity.id);
+        siblingIds.insert(entity.id);
+    }
+    std::sort(siblings.begin(), siblings.end(), [&](const QString &a, const QString &b) {
+        return groupLessThan(snapshot->entities.constFind(a).value(), snapshot->entities.constFind(b).value(),
+                             intent.mode, today);
+    });
+
+    QStringList visibleOrder, currentVisibleOrder;
+    QSet<QString> visibleIds;
+    for (const QString &id : intent.orderedIds) if (siblingIds.contains(id)) {
+        visibleOrder.append(id);
+        visibleIds.insert(id);
+    }
+    for (const QString &id : siblings) if (visibleIds.contains(id)) currentVisibleOrder.append(id);
+    // 搜索/折叠后的同组手势没有改变可见同级顺序时，保留原 rank（含非连续值），
+    // 不因规范化而推进 revision、扰动隐藏项或生成无意义的写入。
+    if (sourceWasSibling && currentVisibleOrder == visibleOrder) return;
+
+    QStringList merged = siblings;
+    merged.removeAll(intent.sourceId);
+    int insertAt = merged.size();
+    if ((intent.placement == TaskDrop::Placement::Before || intent.placement == TaskDrop::Placement::After)
+        && siblingIds.contains(intent.anchorId)) {
+        insertAt = merged.indexOf(intent.anchorId)
+            + (intent.placement == TaskDrop::Placement::After ? 1 : 0);
+    } else if (intent.placement != TaskDrop::Placement::IntoGroup) {
+        // 参照行可能是其他根行的后代；只把可见提示投影为真正同级的落点。
+        // 除 source 外的成员始终沿用最新快照里的逻辑顺序，不能被陈旧提示互换。
+        const int sourceIndex = visibleOrder.indexOf(intent.sourceId);
+        bool found = false;
+        for (int index = sourceIndex + 1; index < visibleOrder.size(); ++index) {
+            insertAt = merged.indexOf(visibleOrder.at(index));
+            if (insertAt >= 0) { found = true; break; }
+        }
+        if (!found) for (int index = sourceIndex - 1; index >= 0; --index) {
+            const int previous = merged.indexOf(visibleOrder.at(index));
+            if (previous >= 0) { insertAt = previous + 1; found = true; break; }
+        }
+        if (!found) insertAt = intent.placement == TaskDrop::Placement::AsChild ? 0 : merged.size();
+    }
+    merged.insert(insertAt, intent.sourceId);
+    if (merged == siblings) return;
+    // 只有真正移动了 source 才规范化完整目标同级序列；隐藏但 rank 改变的成员也会
+    // 经 finishDropPlan 进入同一次 GroupMove 保存与仓储 CAS，失败整批回滚。
+    for (int index = 0; index < merged.size(); ++index)
+        snapshot->entities[merged.at(index)].sortOrder = index;
+}
+
+bool buildDropPlan(const TaskDrop::Intent &intent, const EntitySnapshot &snapshot, const QDate &today,
+                   DropPlan *plan, QString *error)
+{
+    DropSnapshot planned(snapshot);
+    if (!intent.isValid()) return dropFailure(error, QStringLiteral("拖放意图结构非法"));
+    if (intent.mode != GroupMode::List && intent.mode != GroupMode::Time
+        && intent.mode != GroupMode::Priority && intent.mode != GroupMode::None)
+        return dropFailure(error, QStringLiteral("当前分组不允许拖放"));
+    if (!groupMatchesMode(intent.sourceGroup, intent.mode, planned)
+        || !groupMatchesMode(intent.targetGroup, intent.mode, planned))
+        return dropFailure(error, QStringLiteral("源组或目标组不可用，或与分组模式不一致"));
+    const auto sourceFound = planned.entities.constFind(intent.sourceId);
+    if (sourceFound == planned.entities.constEnd() || !activeDropEntity(sourceFound.value(), planned))
+        return dropFailure(error, QStringLiteral("源实体必须是未删除且清单可用的进行中任务或笔记"));
+    const Entity originalSource = sourceFound.value();
+    if (!validateAncestors(planned, intent.sourceId, QString(), error)) return false;
+    const bool matchesSource = canShowInGroup(originalSource, planned, intent.sourceGroup, intent.mode, today);
+    const bool alreadyInTarget = canShowInGroup(originalSource, planned, intent.targetGroup, intent.mode, today);
+    if (!matchesSource && !alreadyInTarget) return dropFailure(error, QStringLiteral("源实体已不在拖动时的显示组，请重试"));
+    QSet<QString> subtree;
+    if (!collectSubtree(planned, intent.sourceId, &subtree, error)) return false;
+
+    const QDate mappedDate = TaskDrop::dateForGroup(intent.targetGroup, today);
+    if (intent.targetDate.isValid() && (intent.targetGroup.kind != GroupKey::Time || intent.targetDate != mappedDate))
+        return dropFailure(error, QStringLiteral("目标日期与时间组不一致"));
+    const bool crossing = intent.sourceGroup != intent.targetGroup && matchesSource;
+    if (intent.placement == TaskDrop::Placement::AsChild) {
+        const auto parent = planned.entities.constFind(intent.targetParentId);
+        if (originalSource.kind != EntityKind::Task || parent == planned.entities.constEnd()
+            || parent->kind != EntityKind::Task || !activeDropEntity(parent.value(), planned)
+            || parent->listId != originalSource.listId)
+            return dropFailure(error, QStringLiteral("设父需要同清单、未删除的进行中任务"));
+        if (!validateAncestors(planned, intent.targetParentId, intent.sourceId, error)) return false;
+        if (!canShowInGroup(parent.value(), planned, intent.targetGroup, intent.mode, today))
+            return dropFailure(error, QStringLiteral("父任务不属于目标显示组"));
+        planned.entities[intent.sourceId].parentId = intent.targetParentId;
+    } else {
+        if (!intent.targetParentId.isEmpty()) return dropFailure(error, QStringLiteral("仅设父意图可指定父任务"));
+        if (originalSource.kind == EntityKind::Note && intent.targetGroup.kind != GroupKey::Pinned
+            && intent.targetGroup.kind != GroupKey::Notes)
+            return dropFailure(error, QStringLiteral("笔记不能拖入任务属性组"));
+        if (originalSource.kind == EntityKind::Task && intent.targetGroup.kind == GroupKey::Notes)
+            return dropFailure(error, QStringLiteral("拖放不能隐式把任务转换为笔记"));
+        Entity &source = planned.entities[intent.sourceId];
+        if (crossing) {
+            source.parentId.clear();
+        } else if (intent.placement == TaskDrop::Placement::Before || intent.placement == TaskDrop::Placement::After) {
+            const auto anchor = planned.entities.constFind(intent.anchorId);
+            if (anchor == planned.entities.constEnd() || !activeDropEntity(anchor.value(), planned)
+                || subtree.contains(intent.anchorId)
+                || !canShowInGroup(anchor.value(), planned, intent.targetGroup, intent.mode, today))
+                return dropFailure(error, QStringLiteral("参照行不可用或属于源子树"));
+            const QString siblingParentId = anchor->parentId;
+            if (siblingParentId != source.parentId) {
+                if (!siblingParentId.isEmpty()) {
+                    const auto parent = planned.entities.constFind(siblingParentId);
+                    if (source.kind != EntityKind::Task || parent == planned.entities.constEnd()
+                        || parent->kind != EntityKind::Task || !activeDropEntity(parent.value(), planned)
+                        || parent->listId != source.listId || anchor->listId != source.listId)
+                        return dropFailure(error, QStringLiteral("同级落点需要同清单、未删除的进行中父任务"));
+                    if (!validateAncestors(planned, siblingParentId, intent.sourceId, error)) return false;
+                }
+                source.parentId = siblingParentId;
+            }
+        }
+        // 展示组相同不代表层级相同：子项落到独立根行的前后同样会脱父。
+        // 仅脱父后才需用真实属性匹配目标；普通同父排序与设父都不能暗改日期/置顶。
+        const bool detached = source.parentId.isEmpty() && source.parentId != originalSource.parentId;
+        if (crossing || detached) {
+            if (intent.targetGroup.kind == GroupKey::Pinned) {
+                if (!source.pinnedAt.isValid()) source.pinnedAt = utcNow();
+            } else source.pinnedAt = QDateTime();
+            if (intent.targetGroup.kind == GroupKey::Time
+                && (crossing || timeBucketOf(source, today) != intent.targetGroup.timeBucket())) {
+                if (intent.targetGroup.timeBucket() == TimeBucket::Undated) {
+                    source.allDayDate = QDate(); source.allDayEndDate = QDate();
+                    source.startAt = QDateTime(); source.dueAt = QDateTime(); source.hasScheduleRange = false;
+                } else {
+                    if (!mappedDate.isValid() || intent.targetDate != mappedDate)
+                        return dropFailure(error, QStringLiteral("跨时间组或脱父拖放必须指定匹配的目标日期"));
+                    const QDate from = effectiveDate(source);
+                    if (!from.isValid()) source.allDayDate = mappedDate;
+                    else {
+                        const qint64 days = from.daysTo(mappedDate);
+                        if (source.allDayDate.isValid()) {
+                            source.allDayDate = source.allDayDate.addDays(days);
+                            if (source.allDayEndDate.isValid()) source.allDayEndDate = source.allDayEndDate.addDays(days);
+                        }
+                        const QTimeZone zone(source.timeZone.toUtf8());
+                        if (source.startAt.isValid()) source.startAt = source.startAt.toTimeZone(zone).addDays(days).toUTC();
+                        if (source.dueAt.isValid()) source.dueAt = source.dueAt.toTimeZone(zone).addDays(days).toUTC();
+                    }
+                }
+            } else if (intent.targetGroup.kind == GroupKey::Priority) source.priority = TaskDrop::priorityForGroup(intent.targetGroup);
+        }
+        if (intent.targetGroup.kind == GroupKey::List
+            && !moveSubtreeToList(&planned, intent.sourceId, intent.targetGroup.listId, subtree, error)) return false;
+    }
+
+    QSet<QString> seen;
+    for (const QString &id : intent.orderedIds) {
+        const auto entity = planned.entities.constFind(id);
+        if (seen.contains(id) || entity == planned.entities.constEnd() || !activeDropEntity(entity.value(), planned))
+            return dropFailure(error, QStringLiteral("目标顺序有重复、缺失或不可用实体"));
+        seen.insert(id);
+        if (!canShowInGroup(entity.value(), planned, intent.targetGroup, intent.mode, today))
+            return dropFailure(error, QStringLiteral("顺序提示中的实体不属于目标显示组"));
+    }
+    if (!seen.contains(intent.sourceId)) return dropFailure(error, QStringLiteral("目标顺序必须包含源实体"));
+    if (intent.placement == TaskDrop::Placement::Before || intent.placement == TaskDrop::Placement::After) {
+        if (!seen.contains(intent.anchorId) || subtree.contains(intent.anchorId))
+            return dropFailure(error, QStringLiteral("参照行不存在于目标顺序，或属于源子树"));
+        const int sourceIndex = intent.orderedIds.indexOf(intent.sourceId), anchorIndex = intent.orderedIds.indexOf(intent.anchorId);
+        if ((intent.placement == TaskDrop::Placement::Before && sourceIndex >= anchorIndex)
+            || (intent.placement == TaskDrop::Placement::After && sourceIndex <= anchorIndex))
+            return dropFailure(error, QStringLiteral("顺序提示与参照行落点不一致"));
+    } else if (intent.placement != TaskDrop::Placement::IntoGroup && intent.placement != TaskDrop::Placement::AsChild) {
+        return dropFailure(error, QStringLiteral("拖放落点类型非法"));
+    }
+    const Entity &source = planned.entities.constFind(intent.sourceId).value();
+    const bool sourceWasSibling = alreadyInTarget && source.parentId == originalSource.parentId
+        && source.listId == originalSource.listId;
+    reorderDropSiblings(&planned, intent, today, sourceWasSibling);
+    finishDropPlan(snapshot, planned, plan);
+    return true;
+}
+
 class RestoreFiles
 {
 public:
@@ -176,6 +571,20 @@ private:
 
 TaskStore::TaskStore(const QSqlDatabase &database, QObject *parent) : QObject(parent), m_repository(database) {}
 
+TaskStore::~TaskStore()
+{
+    destroyTextSessions();
+}
+
+void TaskStore::destroyTextSessions()
+{
+    // 会话以本 store 为 QObject 父，但父类析构删子对象发生在成员销毁之后；这里必须先
+    // 主动清空注册表再删除，避免 destroyed 钩子触碰已销毁的 QHash 成员。
+    QHash<QString, EntityTextSession *> sessions;
+    m_textSessions.swap(sessions);
+    qDeleteAll(sessions);
+}
+
 bool TaskStore::fail(const QString &message, QString *error)
 {
     m_lastError = message;
@@ -237,11 +646,6 @@ const TaskReminder *TaskStore::findReminder(const QString &id) const
     for (const TaskReminder &row : m_snapshot.reminders) if (row.id == id && find(row.entityId)) return &row;
     return nullptr;
 }
-const ChecklistItem *TaskStore::findChecklistItem(const QString &id) const
-{
-    for (const ChecklistItem &row : m_snapshot.checklistItems) if (row.id == id && find(row.entityId)) return &row;
-    return nullptr;
-}
 bool TaskStore::hasGroup(const QString &id) const
 {
     if (id.isEmpty()) return true;
@@ -271,6 +675,12 @@ QVector<Attachment> TaskStore::attachments(const QString &entityId) const
     for (const Attachment &row : m_snapshot.attachments) if (row.entityId == entityId) result.append(row);
     return result;
 }
+QSet<QString> TaskStore::attachmentEntityIds() const
+{
+    QSet<QString> result;
+    for (const Attachment& row : m_snapshot.attachments) result.insert(row.entityId);
+    return result;
+}
 QString TaskStore::attachmentFilePath(const Attachment &attachment) const
 {
     if (!m_attachmentStore) return QString();
@@ -296,8 +706,14 @@ QString TaskStore::localMeta(const QString &key) const
     return QString();
 }
 
-bool TaskStore::commit(EntityChanges *changes, bool reset)
+bool TaskStore::commit(EntityChanges *changes, bool reset, const std::function<void()> &beforeSignals)
 {
+    // 只过滤活动事件，不以“无事件”为由跳过排序、置顶或其他数据持久化。
+    auto &events = changes->eventSaves;
+    events.erase(std::remove_if(events.begin(), events.end(), [](const EntityEvent &event) {
+        return !isVisibleActivityEvent(event);
+    }), events.end());
+    completeActivityContexts(changes, m_snapshot);
     EntitySnapshot snapshot; QString failure; QSet<QString> changedIds, desktopChangedIds;
     for (const DesktopNote &note : changes->desktopNoteSaves) { changedIds.insert(note.entityId); desktopChangedIds.insert(note.entityId); }
     for (const QString &id : changes->desktopNoteRemovals) {
@@ -308,13 +724,9 @@ bool TaskStore::commit(EntityChanges *changes, bool reset)
     for (const StoredEntity &row : changes->removals) changedIds.insert(row.entity.id);
     for (const StoredEntity &row : changes->touches) changedIds.insert(row.entity.id);
     for (const StoredEntity &row : changes->saves) changedIds.insert(row.entity.id);
-    for (const ChecklistItem &row : changes->checklistSaves) changedIds.insert(row.entityId);
     for (const TaskReminder &row : changes->reminderSaves) changedIds.insert(row.entityId);
     for (const ReminderDelivery &row : changes->deliverySaves) {
         const TaskReminder *reminder = findReminder(row.reminderId); if (reminder) changedIds.insert(reminder->entityId);
-    }
-    for (const QString &id : changes->checklistRemovals) {
-        const ChecklistItem *item = findChecklistItem(id); if (item) changedIds.insert(item->entityId);
     }
     for (const QString &id : changes->reminderRemovals) {
         const TaskReminder *reminder = findReminder(id); if (reminder) changedIds.insert(reminder->entityId);
@@ -348,12 +760,19 @@ bool TaskStore::commit(EntityChanges *changes, bool reset)
     for (const QString &id : changes->sectionRemovals)
         for (const StoredEntity &row : m_snapshot.entities) if (row.entity.sectionId == id) changedIds.insert(row.entity.id);
     if (!m_repository.apply(changes, &snapshot, &failure)) return fail(failure);
+    // 落库成功之后、快照替换与任何对外信号发出之前的一次性钩子：
+    // commitTextDraft 用它确定编辑会话的写入归因，避免信号回调抢先改动会话或实体。
+    if (beforeSignals) beforeSignals();
     m_snapshot = snapshot; m_lastError.clear();
     const bool groupChanges = !changes->groupSaves.isEmpty() || !changes->groupRemovals.isEmpty()
         || !changes->folderSaves.isEmpty() || !changes->folderRemovals.isEmpty()
         || !changes->sectionSaves.isEmpty() || !changes->sectionRemovals.isEmpty();
     if (groupChanges) emit groupsChanged();
     for (const QString &id : changedIds) emit taskChanged(id);
+    // apply 可追加删除清单等仓储旁路产生的事件，必须按最终 eventSaves 通知。
+    QSet<QString> eventEntityIds;
+    for (const EntityEvent &event : changes->eventSaves) eventEntityIds.insert(event.entityId);
+    for (const QString &id : eventEntityIds) emit eventsChanged(id);
     for (const QString &id : desktopChangedIds) emit desktopNoteChanged(id);
     for (const Attachment &row : changes->attachmentSaves) emit attachmentsChanged(row.entityId);
     for (const Attachment &row : changes->attachmentRemovals) emit attachmentsChanged(row.entityId);
@@ -367,7 +786,24 @@ bool TaskStore::commit(EntityChanges *changes, bool reset)
     return true;
 }
 
-bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
+bool TaskStore::commitSnapshotUpdates(const EntitySnapshot &snapshot, const QVector<Entity> &updates)
+{
+    if (updates.isEmpty()) { m_snapshot = snapshot; m_lastError.clear(); return true; }
+    // prepareSave 复用所有既有业务规则，但基于本次最新仓储快照。失败必须恢复
+    // store 原内存视图；repository 的事务同时保证实体、关联、事件和 outbox 全回滚。
+    const EntitySnapshot before = m_snapshot;
+    m_snapshot = snapshot;
+    EntityChanges changes;
+    for (Entity value : updates) {
+        applyDesktopFacade(&value);
+        if (!prepareSave(value, &changes, SavePurpose::GroupMove)) { m_snapshot = before; return false; }
+    }
+    if (!commit(&changes)) { m_snapshot = before; return false; }
+    return true;
+}
+
+bool TaskStore::prepareSave(Entity value, EntityChanges *changes, SavePurpose purpose,
+                            const ScheduleValue* schedule)
 {
     const StoredEntity *previous = value.id.isEmpty() ? nullptr : find(value.id);
     if (!value.id.isEmpty() && !previous) return fail(QStringLiteral("任务不存在"));
@@ -414,44 +850,87 @@ bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
     }
     if (value.deleted && !value.deletedAt.isValid()) value.deletedAt = now;
     if (!value.deleted) value.deletedAt = QDateTime();
+    if (schedule) {
+        value.startAt = schedule->startAt.toUTC();
+        value.dueAt = schedule->dueAt.toUTC();
+        value.allDayDate = schedule->allDayDate;
+        value.allDayEndDate = schedule->allDayEndDate;
+        value.hasScheduleRange = schedule->hasScheduleRange;
+        value.timeZone = schedule->timeZone;
+        value.reminders = schedule->reminders;
+    }
 
-    QString rule;
-    if (previous) {
-        if (value.rrule != previous->entity.rrule) rule = value.rrule;
-        else if (value.recurrence != previous->entity.recurrence) rule = value.recurrence;
-        else rule = previous->entity.rrule;
-    } else rule = value.rrule.isEmpty() ? value.recurrence : value.rrule;
-    if (rule.isEmpty() || rule == QStringLiteral("none")) rule.clear();
-    const QString canonical = rule.isEmpty() ? QString() : recurrenceRRule(rule);
-    if (!rule.isEmpty() && canonical.isEmpty()) return fail(QStringLiteral("重复规则非法或包含未支持的扩展"));
-    int anchor = 0;
-    if (!canonical.isEmpty()) {
-        const QDateTime plan = plannedAt(value);
-        if (canonical.contains(QStringLiteral("FREQ=MONTHLY")))
-            anchor = value.allDayDate.isValid() ? value.allDayDate.day() : plan.date().day();
-        if (!value.allDayDate.isValid() && !plan.isValid()) return fail(QStringLiteral("重复任务必须有计划时间或全天日期"));
-        bool reuse = previous && !previous->entity.recurrenceSeriesId.isEmpty() && previous->entity.rrule == canonical;
-        if (reuse) {
-            value.recurrenceSeriesId = previous->entity.recurrenceSeriesId;
-            for (const RecurrenceSeries &series : m_snapshot.recurrenceSeries) if (series.id == value.recurrenceSeriesId && series.anchorDay > 0)
-                anchor = series.anchorDay;
-        } else value.recurrenceSeriesId = newUuid();
+    RecurrenceSpec recurrence;
+    bool repeating = false;
+    if (schedule) {
+        repeating = schedule->repeating;
+        recurrence = schedule->recurrence;
+        if (repeating && !isValidRecurrence(recurrence, &failure)) return fail(failure);
+    } else {
+        const RecurrenceSeries* existing = previous
+            ? seriesFor(m_snapshot, previous->entity.recurrenceSeriesId) : nullptr;
+        const bool unchanged = existing && value.rrule == previous->entity.rrule
+            && value.recurrence == previous->entity.recurrence;
+        if (unchanged) {
+            repeating = recurrenceFromRuleText(existing->ruleJson, &recurrence, &failure);
+            if (!repeating) return fail(failure);
+        } else if (!simpleRecurrence(value, &recurrence, &repeating)) {
+            return fail(QStringLiteral("重复规则非法；完整规则请使用调度保存接口"));
+        }
+    }
+    if (repeating && !plannedLocalDate(value).isValid())
+        return fail(QStringLiteral("重复任务必须有计划时间或全天日期"));
+    const QDate localPlan = plannedLocalDate(value);
+    const int anchor = localPlan.isValid() ? localPlan.day() : 0;
+    const RecurrenceSeries* previousSeries = previous
+        ? seriesFor(m_snapshot, previous->entity.recurrenceSeriesId) : nullptr;
+    const QString newRuleJson = repeating ? recurrenceRuleText(recurrence) : QString();
+    const bool recurrenceRuleChanged = repeating
+        && (!previousSeries || previousSeries->ruleJson != newRuleJson);
+    const bool scheduleAnchorChanged = schedule && previous
+        && (previous->entity.startAt != value.startAt || previous->entity.dueAt != value.dueAt
+            || previous->entity.allDayDate != value.allDayDate
+            || previous->entity.allDayEndDate != value.allDayEndDate
+            || previous->entity.hasScheduleRange != value.hasScheduleRange
+            || previous->entity.timeZone != value.timeZone);
+    const bool keepSeriesAnchor = previousSeries && !recurrenceRuleChanged && !scheduleAnchorChanged;
+    if (repeating) {
+        value.recurrenceSeriesId = previousSeries ? previousSeries->id : newUuid();
         if (previous && previous->entity.recurrenceSeriesId == value.recurrenceSeriesId
-            && plannedAt(previous->entity) == plannedAt(value) && previous->entity.allDayDate == value.allDayDate)
+            && plannedAt(previous->entity) == plannedAt(value)
+            && previous->entity.allDayDate == value.allDayDate
+            && previous->entity.hasScheduleRange == value.hasScheduleRange)
             value.occurrenceKey = previous->entity.occurrenceKey;
         else value.occurrenceKey = occurrenceKey(value);
-        value.rrule = canonical; value.recurrence = recurrenceName(canonical);
-        if (!reuse || (previous && (previous->entity.recurrence != value.recurrence
-                                   || plannedAt(previous->entity).date() != plannedAt(value).date()
-                                   || previous->entity.allDayDate != value.allDayDate))) {
-            RecurrenceSeries series; series.id = value.recurrenceSeriesId; series.rrule = canonical; series.anchorDay = anchor;
-            series.timeZone = value.timeZone; series.dtstartAt = plannedAt(value); series.dtstartDate = value.allDayDate;
-            series.createdAt = now; series.updatedAt = now;
-            if (reuse) for (const RecurrenceSeries &old : m_snapshot.recurrenceSeries) if (old.id == series.id) series.createdAt = old.createdAt;
-            changes->seriesSaves.append(series);
+        value.rrule = recurrenceFrequencyName(recurrence);
+        value.recurrence = recurrenceSummary(recurrence);
+        RecurrenceSeries series = previousSeries ? *previousSeries : RecurrenceSeries();
+        series.id = value.recurrenceSeriesId;
+        series.rrule = value.rrule;
+        series.ruleJson = newRuleJson;
+        if (recurrenceRuleChanged) {
+            series.occurrenceOrdinal = 1;
+            series.completionCount = 0;
         }
+        series.anchorDay = keepSeriesAnchor ? previousSeries->anchorDay : anchor;
+        series.timeZone = value.timeZone;
+        if (keepSeriesAnchor) {
+            series.dtstartAt = previousSeries->dtstartAt;
+            series.dtstartDate = previousSeries->dtstartDate;
+        } else {
+            series.dtstartAt = value.hasScheduleRange ? value.startAt : value.dueAt;
+            series.dtstartDate = value.allDayDate;
+        }
+        series.updatedAt = now;
+        if (series.ruleJson.isEmpty() || !series.createdAt.isValid()) series.createdAt = now;
+        const bool changed = !previousSeries || previousSeries->rrule != series.rrule
+            || previousSeries->ruleJson != series.ruleJson || previousSeries->anchorDay != series.anchorDay
+            || previousSeries->timeZone != series.timeZone || previousSeries->dtstartAt != series.dtstartAt
+            || previousSeries->dtstartDate != series.dtstartDate;
+        if (changed) queueSeriesSave(changes, series);
     } else {
-        value.recurrenceSeriesId.clear(); value.occurrenceKey.clear(); value.rrule.clear(); value.recurrence = QStringLiteral("none");
+        value.recurrenceSeriesId.clear(); value.occurrenceKey.clear(); value.rrule.clear();
+        value.recurrence = QStringLiteral("none");
     }
 
     // 单提醒 UI 只编辑最早触发的一条；其他提醒保持不变。
@@ -460,7 +939,7 @@ bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
         const int primary = primaryReminderIndex(previous->entity);
         if (primary >= 0) previousPrimaryId = previous->entity.reminders.at(primary).id;
     }
-    if (previous && value.reminderAt != previous->entity.reminderAt) {
+    if (previous && !schedule && value.reminderAt != previous->entity.reminderAt) {
         int editIndex = -1;
         for (int i = 0; i < value.reminders.size(); ++i) if (value.reminders.at(i).id == previousPrimaryId) editIndex = i;
         if (editIndex < 0) editIndex = primaryReminderIndex(value);
@@ -480,8 +959,16 @@ bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
         if (row.id.isEmpty()) row.id = newUuid();
         if (!isUuid(row.id) || reminderIds.contains(row.id) || (!row.entityId.isEmpty() && row.entityId != value.id)
             || (findReminder(row.id) && !oldReminders.contains(row.id))) return fail(QStringLiteral("提醒 id 非法或不属于当前任务"));
-        reminderIds.insert(row.id); row.entityId = value.id; row.sortOrder = i;
+        reminderIds.insert(row.id); row.entityId = value.id;
+        // 拖放/移清单不编辑提醒，连旧库合法的非连续排序值也必须原样保留。
+        row.sortOrder = purpose == SavePurpose::GroupMove && oldReminders.contains(row.id)
+            ? oldReminders.value(row.id).sortOrder : i;
         if (!row.triggerAt.isValid()) return fail(QStringLiteral("提醒时间不能为空"));
+        if (!row.ruleJson.isEmpty()) {
+            ReminderSpec spec;
+            if (!reminderFromRuleText(row.ruleJson, &spec, &failure)
+                || !resolveReminder(spec, value, &row.triggerAt, &failure)) return fail(failure);
+        }
         if (oldReminders.contains(row.id)) {
             row.createdAt = oldReminders.value(row.id).createdAt;
             row.deliveredAt = row.triggerAt == oldReminders.value(row.id).triggerAt
@@ -496,23 +983,6 @@ bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
     const int primary = primaryReminderIndex(value);
     value.reminderAt = primary >= 0 ? value.reminders.at(primary).triggerAt : QDateTime();
     value.notifiedAt = primary >= 0 ? value.reminders.at(primary).deliveredAt : QDateTime();
-
-    QHash<QString, ChecklistItem> oldItems;
-    if (previous) for (const ChecklistItem &row : previous->entity.checklist) oldItems.insert(row.id, row);
-    QSet<QString> itemIds;
-    for (int i = 0; i < value.checklist.size(); ++i) {
-        ChecklistItem &row = value.checklist[i];
-        if (row.id.isEmpty()) row.id = newUuid();
-        if (!isUuid(row.id) || itemIds.contains(row.id) || (!row.entityId.isEmpty() && row.entityId != value.id)
-            || (findChecklistItem(row.id) && !oldItems.contains(row.id))) return fail(QStringLiteral("清单项 id 非法或不属于当前任务"));
-        itemIds.insert(row.id); row.entityId = value.id; row.sortOrder = i;
-        if (oldItems.contains(row.id)) {
-            row.createdAt = oldItems.value(row.id).createdAt;
-            if (!sameChecklist(row, oldItems.value(row.id))) { row.updatedAt = now; changes->checklistSaves.append(row); }
-        } else { row.createdAt = now; row.updatedAt = now; changes->checklistSaves.append(row); }
-    }
-    if (previous) for (const ChecklistItem &row : previous->entity.checklist)
-        if (!itemIds.contains(row.id)) changes->checklistRemovals.append(row.id);
 
     QSet<QString> wantedTags, existingTags;
     for (const QString &name : value.tags) if (!name.trimmed().isEmpty()) wantedTags.insert(name.trimmed().toLower());
@@ -555,6 +1025,38 @@ bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
     if (wasCompleted && !value.completed) {
         const RecurrenceLink *link = linkFor(value.id);
         if (link) {
+            if (link->nextId.isEmpty()) {
+                // 永久删除中间实例会把前驱 next_id 置空，并删除中间实例的出链。
+                // 空链接因此不总是“最后一次完成”；已有更晚实例时不能回退全局进度。
+                const QDate currentPlan = plannedLocalDate(value);
+                for (const StoredEntity& candidate : m_snapshot.entities) {
+                    if (candidate.entity.id == value.id
+                        || candidate.entity.recurrenceSeriesId != value.recurrenceSeriesId) continue;
+                    const QDate candidatePlan = plannedLocalDate(candidate.entity);
+                    bool later = candidate.entity.createdAt > value.createdAt
+                        || (candidatePlan.isValid() && currentPlan.isValid() && candidatePlan > currentPlan);
+                    if (!later && candidate.entity.createdAt == value.createdAt
+                        && candidatePlan == currentPlan) {
+                        const QDateTime candidateAt = plannedAt(candidate.entity), currentAt = plannedAt(value);
+                        // 同毫秒创建时用计划时刻区分先后；无法比较时保守拒绝，不能损坏全局进度。
+                        later = candidateAt.isValid() && currentAt.isValid()
+                            ? candidateAt > currentAt : true;
+                    }
+                    if (later) return fail(QStringLiteral("后续重复实例仍存在，不能安全撤销"));
+                }
+            }
+            if (previousSeries) {
+                RecurrenceSeries series = *previousSeries;
+                for (const RecurrenceSeries& pending : changes->seriesSaves)
+                    if (pending.id == series.id) series = pending;
+                series.occurrenceOrdinal = qMax(1, series.occurrenceOrdinal - 1);
+                series.completionCount = qMax(0, series.completionCount - 1);
+                series.updatedAt = now;
+                queueSeriesSave(changes, series);
+            }
+            if (link->nextId.isEmpty()) {
+                changes->removeLinks.append(value.id);
+            } else {
             const StoredEntity *next = find(link->nextId);
             if (!next || next->revision != link->nextRevision || next->entity.status != TaskStatus::Active
                 || next->entity.deleted || linkFor(next->entity.id))
@@ -568,55 +1070,106 @@ bool TaskStore::prepareSave(Entity value, EntityChanges *changes)
             if (hasAttachments || hasChildren)
                 return fail(QStringLiteral("下一重复实例已有附件或子任务，不能安全撤销"));
             changes->removeLinks.append(value.id); changes->removals.append(*next);
+            }
         }
-    } else if (!wasCompleted && value.completed && !canonical.isEmpty()) {
+    } else if (!wasCompleted && value.completed && repeating) {
+        if (!previousSeries) return fail(QStringLiteral("请先保存重复规则，再完成任务"));
         if (inserting) return fail(QStringLiteral("请先创建重复任务，再标记完成"));
         if (!linkFor(value.id)) {
-            Entity next = value; next.id = newUuid(); next.status = TaskStatus::Active; next.completed = false;
-            next.completedAt = QDateTime(); next.abandonedAt = QDateTime(); next.deleted = false; next.deletedAt = QDateTime();
-            next.createdAt = now; next.updatedAt = now; next.notifiedAt = QDateTime(); next.parentId.clear();
-            QDateTime nextPlan;
-            if (value.allDayDate.isValid()) {
-                next.allDayDate = nextRecurrenceDate(value.allDayDate, canonical, anchor);
-                if (!next.allDayDate.isValid()) return fail(QStringLiteral("下一重复日期超出范围"));
-                next.startAt = QDateTime(); next.dueAt = QDateTime();
-            } else {
-                nextPlan = nextTimedRecurrence(value, anchor);
-                if (!nextPlan.isValid() || !entitycodec::validDate(nextPlan)) return fail(QStringLiteral("下一重复日期超出范围"));
-                const QDateTime plan = plannedAt(value);
-                if (value.dueAt.isValid()) {
-                    next.dueAt = nextPlan;
-                    if (value.startAt.isValid()) next.startAt = nextPlan.addMSecs(-value.startAt.msecsTo(value.dueAt));
-                } else next.startAt = nextPlan;
-            }
-            next.occurrenceKey = occurrenceKey(next);
-            for (TaskReminder &reminder : next.reminders) {
+            const auto progressSeries = [changes, previousSeries]() {
+                RecurrenceSeries result = *previousSeries;
+                for (const RecurrenceSeries& candidate : changes->seriesSaves)
+                    if (candidate.id == result.id) result = candidate;
+                return result;
+            };
+            const QDateTime completion = value.completedAt.toTimeZone(QTimeZone(value.timeZone.toUtf8()));
+            const QDate currentEnd = value.hasScheduleRange
+                ? (value.allDayDate.isValid() ? value.allDayEndDate
+                   : value.dueAt.toTimeZone(QTimeZone(value.timeZone.toUtf8())).date())
+                : localPlan;
+            const QDate seriesAnchor = !keepSeriesAnchor ? localPlan
+                : previousSeries->dtstartDate.isValid() ? previousSeries->dtstartDate
+                : previousSeries->dtstartAt.toTimeZone(QTimeZone(previousSeries->timeZone.toUtf8())).date();
+            const RecurrenceAdvance advance = nextRecurrence(
+                recurrence, currentEnd, completion.date(),
+                recurrenceRuleChanged ? 1 : previousSeries->occurrenceOrdinal,
+                recurrenceRuleChanged ? 0 : previousSeries->completionCount, seriesAnchor);
+            if (advance.status == RecurrenceStatus::Invalid) return fail(advance.error);
+            if (advance.status == RecurrenceStatus::Exhausted) {
+                RecurrenceSeries series = progressSeries();
+                series.occurrenceOrdinal += 1;
+                series.completionCount += 1;
+                series.updatedAt = now;
+                queueSeriesSave(changes, series);
+                RecurrenceLink link;
+                link.id = newUuid(); link.sourceId = value.id; link.nextRevision = 1;
+                changes->recurrenceLinkSaves.append(link);
+            } else if (advance.status == RecurrenceStatus::Next) {
+                Entity next = value;
+                next.id = newUuid(); next.status = TaskStatus::Active; next.completed = false;
+                next.completedAt = QDateTime(); next.abandonedAt = QDateTime(); next.deleted = false; next.deletedAt = QDateTime();
+                next.createdAt = now; next.updatedAt = now; next.notifiedAt = QDateTime(); next.parentId.clear();
+                const QTimeZone zone(value.timeZone.toUtf8());
                 if (value.allDayDate.isValid()) {
-                    const qint64 days = value.allDayDate.daysTo(next.allDayDate);
-                    reminder.triggerAt = reminder.triggerAt.toTimeZone(QTimeZone(value.timeZone.toUtf8())).addDays(days).toUTC();
+                    if (value.hasScheduleRange) {
+                        const qint64 span = value.allDayDate.daysTo(value.allDayEndDate);
+                        next.allDayEndDate = advance.date;
+                        next.allDayDate = advance.date.addDays(-span);
+                    } else {
+                        next.allDayDate = advance.date;
+                        next.allDayEndDate = QDate();
+                    }
+                    next.startAt = QDateTime(); next.dueAt = QDateTime();
+                } else if (value.hasScheduleRange) {
+                    const QDateTime oldStart = value.startAt.toTimeZone(zone);
+                    const QDateTime oldEnd = value.dueAt.toTimeZone(zone);
+                    const QDate startDate = advance.date.addDays(-oldStart.date().daysTo(oldEnd.date()));
+                    next.startAt = QDateTime(startDate, oldStart.time(), zone).toUTC();
+                    next.dueAt = QDateTime(advance.date, oldEnd.time(), zone).toUTC();
                 } else {
-                    const qint64 offset = plannedAt(value).msecsTo(reminder.triggerAt);
-                    reminder.triggerAt = nextPlan.addMSecs(offset);
+                    const QDateTime old = value.dueAt.toTimeZone(zone);
+                    next.dueAt = QDateTime(advance.date, old.time(), zone).toUTC();
+                    next.startAt = QDateTime();
                 }
-                if (!reminder.triggerAt.isValid() || !entitycodec::validDate(reminder.triggerAt)) return fail(QStringLiteral("下一提醒时间超出范围"));
-                reminder.id = newUuid(); reminder.entityId = next.id; reminder.deliveredAt = QDateTime();
-                reminder.createdAt = now; reminder.updatedAt = now; changes->reminderSaves.append(reminder);
+                if ((!next.allDayDate.isValid() && !next.dueAt.isValid())
+                    || !entitycodec::validDate(next.dueAt) || !entitycodec::validDate(next.startAt))
+                    return fail(QStringLiteral("下一重复日期超出范围或本地时刻不存在"));
+                next.occurrenceKey = occurrenceKey(next);
+                for (TaskReminder &reminder : next.reminders) {
+                    if (!reminder.ruleJson.isEmpty()) {
+                        ReminderSpec spec;
+                        if (!reminderFromRuleText(reminder.ruleJson, &spec, &failure)
+                            || !resolveReminder(spec, next, &reminder.triggerAt, &failure)) return fail(failure);
+                    } else {
+                        const qint64 offset = plannedAt(value).msecsTo(reminder.triggerAt);
+                        reminder.triggerAt = plannedAt(next).addMSecs(offset);
+                    }
+                    if (!reminder.triggerAt.isValid() || !entitycodec::validDate(reminder.triggerAt))
+                        return fail(QStringLiteral("下一提醒时间超出范围"));
+                    reminder.id = newUuid(); reminder.entityId = next.id; reminder.deliveredAt = QDateTime();
+                    reminder.createdAt = now; reminder.updatedAt = now; changes->reminderSaves.append(reminder);
+                }
+                const int nextPrimary = primaryReminderIndex(next);
+                next.reminderAt = nextPrimary >= 0 ? next.reminders.at(nextPrimary).triggerAt : QDateTime();
+                StoredEntity generated;
+                generated.entity = next; generated.revision = 0; generated.recurrenceAnchorDay = anchor;
+                changes->generatedTaskIndex = changes->saves.size();
+                changes->generationSourceId = value.id; changes->saves.append(generated);
+                RecurrenceLink link;
+                link.id = newUuid(); link.sourceId = value.id; link.nextId = next.id; link.nextRevision = 1;
+                changes->recurrenceLinkSaves.append(link);
+                RecurrenceSeries series = progressSeries();
+                series.occurrenceOrdinal = advance.occurrenceOrdinal;
+                series.completionCount = advance.completionCount;
+                series.updatedAt = now;
+                queueSeriesSave(changes, series);
+                const QVector<TaskTag> sourceTagLinks = changes->taskTagSaves;
+                for (const TaskTag &link : sourceTagLinks)
+                    if (link.entityId == value.id) changes->taskTagSaves.append(makeTaskTag(next.id, link.tagId));
+                if (wantedTags == existingTags) for (const TaskTag &link : m_snapshot.taskTags)
+                    if (link.entityId == value.id) changes->taskTagSaves.append(makeTaskTag(next.id, link.tagId));
+                // 新 occurrence 的桌面投影不自动复制；附件也保留在原实例。
             }
-            const int nextPrimary = primaryReminderIndex(next);
-            next.reminderAt = nextPrimary >= 0 ? next.reminders.at(nextPrimary).triggerAt : QDateTime();
-            for (ChecklistItem &item : next.checklist) {
-                item.id = newUuid(); item.entityId = next.id; item.done = false; item.createdAt = now; item.updatedAt = now;
-                changes->checklistSaves.append(item);
-            }
-            StoredEntity generated; generated.entity = next; generated.revision = 0; generated.recurrenceAnchorDay = anchor;
-            changes->generatedTaskIndex = changes->saves.size(); changes->generationSourceId = value.id; changes->saves.append(generated);
-            RecurrenceLink link; link.id = newUuid();             link.sourceId = value.id; link.nextId = next.id; link.nextRevision = 1; changes->recurrenceLinkSaves.append(link);
-            const QVector<TaskTag> sourceTagLinks = changes->taskTagSaves;
-            for (const TaskTag &link : sourceTagLinks)
-                if (link.entityId == value.id) changes->taskTagSaves.append(makeTaskTag(next.id, link.tagId));
-            if (wantedTags == existingTags) for (const TaskTag &link : m_snapshot.taskTags)
-                if (link.entityId == value.id) changes->taskTagSaves.append(makeTaskTag(next.id, link.tagId));
-            // 新 occurrence 的桌面投影不自动复制；附件也保留在原实例。
         }
     }
     recordSaveEvents(previous, value, changes, now);
@@ -631,6 +1184,9 @@ void TaskStore::recordSaveEvents(const StoredEntity *previous, const Entity &val
 {
     if (!previous) {
         addEvent(changes, value, QStringLiteral("created"), QString(), QVariant(), createdSnapshot(value), now);
+        // 新子任务也明确记录关联主任务；提交时把父标题写入结构化快照，重命名/删除后仍可读。
+        if (!value.parentId.isEmpty())
+            addEvent(changes, value, QStringLiteral("changed"), QStringLiteral("parent"), QVariant(), value.parentId, now);
         return;
     }
     const Entity &old = previous->entity;
@@ -647,16 +1203,21 @@ void TaskStore::recordSaveEvents(const StoredEntity *previous, const Entity &val
     scalar(QStringLiteral("start"), msValue(old.startAt), msValue(value.startAt));
     scalar(QStringLiteral("allDayDate"), old.allDayDate.isValid() ? QVariant(old.allDayDate.toString(Qt::ISODate)) : QVariant(),
            value.allDayDate.isValid() ? QVariant(value.allDayDate.toString(Qt::ISODate)) : QVariant());
+    scalar(QStringLiteral("allDayEndDate"), old.allDayEndDate.isValid() ? QVariant(old.allDayEndDate.toString(Qt::ISODate)) : QVariant(),
+           value.allDayEndDate.isValid() ? QVariant(value.allDayEndDate.toString(Qt::ISODate)) : QVariant());
+    scalar(QStringLiteral("hasScheduleRange"), old.hasScheduleRange ? QStringLiteral("1") : QStringLiteral("0"),
+           value.hasScheduleRange ? QStringLiteral("1") : QStringLiteral("0"));
     scalar(QStringLiteral("priority"), QString::number(old.priority), QString::number(value.priority));
     scalar(QStringLiteral("list"), idValue(old.listId), idValue(value.listId));
-    scalar(QStringLiteral("section"), idValue(old.sectionId), idValue(value.sectionId));
-    scalar(QStringLiteral("pinned"), msValue(old.pinnedAt), msValue(value.pinnedAt));
-    scalar(QStringLiteral("recurrence"), old.rrule.isEmpty() ? QStringLiteral("none") : old.rrule,
-           value.rrule.isEmpty() ? QStringLiteral("none") : value.rrule);
-    scalar(QStringLiteral("folder"), idValue(old.folderId), idValue(value.folderId));
+    scalar(QStringLiteral("recurrence"), old.recurrence, value.recurrence);
+    const RecurrenceSeries* oldSeries = seriesFor(m_snapshot, old.recurrenceSeriesId);
+    QString newRule = value.recurrenceSeriesId.isEmpty() ? QString()
+        : oldSeries ? oldSeries->ruleJson : QString();
+    for (const RecurrenceSeries& series : changes->seriesSaves)
+        if (series.id == value.recurrenceSeriesId) newRule = series.ruleJson;
+    scalar(QStringLiteral("recurrenceRule"), oldSeries ? oldSeries->ruleJson : QString(), newRule);
     scalar(QStringLiteral("parent"), idValue(old.parentId), idValue(value.parentId));
     scalar(QStringLiteral("timeZone"), old.timeZone, value.timeZone);
-    scalar(QStringLiteral("sortOrder"), QString::number(old.sortOrder), QString::number(value.sortOrder));
     const auto normalizedTags = [](const QStringList &tags) {
         QStringList result; for (const QString &tag : tags) if (!tag.trimmed().isEmpty()) result.append(tag.trimmed().toLower());
         result.sort(); return result;
@@ -678,15 +1239,10 @@ void TaskStore::recordSaveEvents(const StoredEntity *previous, const Entity &val
     for (const TaskReminder &row : old.reminders) if (!currentReminderIds.contains(row.id))
         addEvent(changes, value, QStringLiteral("reminder_removed"), QStringLiteral("reminder"), row.id, QVariant(), now);
 
-    QHash<QString, ChecklistItem> oldItems;
-    for (const ChecklistItem &row : old.checklist) oldItems.insert(row.id, row);
-    for (const ChecklistItem &row : value.checklist) {
-        const auto before = oldItems.constFind(row.id);
-        if (before != oldItems.constEnd() && before->done != row.done)
-            addEvent(changes, value, QStringLiteral("changed"), QStringLiteral("checklist.%1.done").arg(row.id),
-                     before->done ? QStringLiteral("1") : QStringLiteral("0"), row.done ? QStringLiteral("1") : QStringLiteral("0"), now);
-    }
-    if (!m_journal.hasActiveSessionForEntity(value.id))
+    // 只有携带有效会话归因的 commitTextDraft 保存才抑制直存 title/body 事件（其差异由该会话
+    // 结束/取消时按“只记自己真正写入的字段”补账）。其他任何写入——包括存在其他活动会话时的
+    // saveTask 直存、无会话/跨实体会话的文本提交——都必须立即记账，否则事件会凭空丢失。
+    if (!m_textCommitSave)
         changes->eventSaves.append(m_journal.eventsForDirectSave(old, value, now));
 }
 
@@ -717,7 +1273,9 @@ QString TaskStore::createSubtask(const QString &title, const QString &parentId)
     value.listId = parent.listId; value.sectionId = parent.sectionId; value.parentId = parent.id;
     // 只继承日期语义：时间视图（今天/明天/最近7天/已过期）按 effectiveDate 聚合，
     // 复制 allDayDate/startAt/dueAt/timeZone 让子任务与父项同桶立即可见。
-    value.allDayDate = parent.allDayDate; value.startAt = parent.startAt; value.dueAt = parent.dueAt;
+    value.allDayDate = parent.allDayDate; value.allDayEndDate = parent.allDayEndDate;
+    value.hasScheduleRange = parent.hasScheduleRange;
+    value.startAt = parent.startAt; value.dueAt = parent.dueAt;
     value.timeZone = parent.timeZone;
     // 不继承置顶、提醒、重复/完成状态：pinnedAt/reminders/rrule 保持新任务默认空值。
     qint64 order = 0;
@@ -744,14 +1302,43 @@ bool TaskStore::saveTask(Entity value)
     EntityChanges changes; const bool inserting = value.id.isEmpty();
     return prepareSave(value, &changes) && commit(&changes, inserting);
 }
+bool TaskStore::saveSchedule(Entity value, const ScheduleValue& schedule, QString* savedId)
+{
+    if (savedId) savedId->clear();
+    if (!ensureLoaded()) return false;
+    EntityChanges changes;
+    const bool inserting = value.id.isEmpty();
+    if (!prepareSave(value, &changes, SavePurpose::Edit, &schedule) || !commit(&changes, inserting))
+        return false;
+    if (savedId && !changes.saves.isEmpty()) *savedId = changes.saves.first().entity.id;
+    return true;
+}
+bool TaskStore::recurrenceSpec(const QString& entityId, RecurrenceSpec* spec) const
+{
+    const StoredEntity* stored = find(entityId);
+    const RecurrenceSeries* series = stored ? seriesFor(m_snapshot, stored->entity.recurrenceSeriesId) : nullptr;
+    return series && spec && recurrenceFromRuleText(series->ruleJson, spec);
+}
+ScheduleValue TaskStore::schedule(const QString& entityId) const
+{
+    const StoredEntity* stored = find(entityId);
+    if (!stored) return ScheduleValue();
+    ScheduleValue result = scheduleFromEntity(stored->entity);
+    RecurrenceSpec spec;
+    result.repeating = recurrenceSpec(entityId, &spec);
+    if (result.repeating) result.recurrence = spec;
+    return result;
+}
 bool TaskStore::convertKind(const QString &id, EntityKind kind)
 {
     if (!ensureLoaded()) return false;
     if (!find(id)) return fail(QStringLiteral("实体不存在"));
+    const bool changed = find(id)->entity.kind != kind;
     EntitySnapshot after; QString failure;
     if (!m_repository.convertKind(id, kind, &after, &failure)) return fail(failure);
     m_snapshot = after; m_lastError.clear();
     emit taskChanged(id); emit tasksReset();
+    if (changed) emit eventsChanged(id);
     return true;
 }
 QString TaskStore::cloneTask(const QString &id)
@@ -767,9 +1354,6 @@ QString TaskStore::cloneTask(const QString &id)
     value.recurrenceSeriesId.clear(); value.occurrenceKey.clear(); value.rrule.clear(); value.recurrence = QStringLiteral("none");
     value.reminders.clear(); value.reminderAt = QDateTime(); value.notifiedAt = QDateTime();
     value.color = NoteColor::Yellow; value.geometry = QRect(); value.zOrder = 0; value.layer = NoteLayer::Normal;
-    for (ChecklistItem &item : value.checklist) {
-        item.id.clear(); item.entityId.clear(); item.createdAt = QDateTime(); item.updatedAt = QDateTime();
-    }
     EntityChanges changes;
     if (!prepareSave(value, &changes) || !commit(&changes, true)) return QString();
     return changes.saves.first().entity.id;
@@ -798,8 +1382,6 @@ bool TaskStore::setPinnedAt(const QString &id, const QDateTime &pinnedAt)
     if (stored->entity.pinnedAt == normalized) { m_lastError.clear(); return true; }
     StoredEntity updated = *stored; updated.entity.pinnedAt = normalized; updated.entity.updatedAt = utcNow();
     EntityChanges changes; changes.saves.append(updated);
-    addEvent(&changes, updated.entity, QStringLiteral("changed"), QStringLiteral("pinned"),
-             msValue(stored->entity.pinnedAt), msValue(normalized), updated.entity.updatedAt);
     return commit(&changes);
 }
 bool TaskStore::trashTask(const QString &id)
@@ -891,12 +1473,10 @@ bool TaskStore::saveFolder(const Folder &folder)
         return fail(QStringLiteral("文件夹已被其他操作修改，请重新加载"));
     Folder row = *existing;
     row.name = folder.name.trimmed();
-    if (row.name == existing->name.trimmed()) row.name = existing->name; // 原名更新保留旧库原文
     row.icon = folder.icon;
     row.sortOrder = folder.sortOrder;
     if (row.name.isEmpty()) return fail(QStringLiteral("文件夹名称不能为空"));
-    // 长度上限只约束新建与真正改名；旧库历史长名称的原名更新照常放行。
-    if (row.name != existing->name && row.name.size() > kListNameMaxLength)
+    if (row.name.size() > kListNameMaxLength)
         return fail(QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
     if (!isValidListIcon(row.icon)) return fail(QStringLiteral("文件夹图标超出长度限制"));
     if (row.sortOrder < 0) return fail(QStringLiteral("文件夹排序非法"));
@@ -1151,12 +1731,10 @@ bool TaskStore::saveList(const TaskList &list)
         return fail(QStringLiteral("清单已被其他操作修改，请重新加载"));
     TaskList row = *existing;                    // kind/inbox/归档状态以当前快照为准，调用方不可改
     row.name = list.name.trimmed();
-    if (row.name == existing->name.trimmed()) row.name = existing->name; // 原名更新保留 v5 原文
     row.icon = list.icon; row.color = list.color;
     row.folderId = list.folderId; row.sortOrder = list.sortOrder;
     if (row.name.isEmpty()) return fail(QStringLiteral("清单名称不能为空"));
-    // 长度上限只约束新建与真正改名；v5 历史长名称的原名更新照常放行。
-    if (row.name != existing->name && row.name.size() > kListNameMaxLength)
+    if (row.name.size() > kListNameMaxLength)
         return fail(QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength));
     if (!isValidListIcon(row.icon)) return fail(QStringLiteral("清单图标超出长度限制"));
     if (!isValidListColor(row.color)) return fail(QStringLiteral("清单颜色必须为空或 #RRGGBB"));
@@ -1175,11 +1753,18 @@ bool TaskStore::setListArchived(const QString &id, bool archived)
     if (existing->inbox) return fail(QStringLiteral("收集箱不可归档"));
     const bool currentlyArchived = existing->archivedAtUtcMs > 0;
     if (currentlyArchived == archived) { m_lastError.clear(); return true; }
+    const QDateTime now = utcNow();
     TaskList row = *existing;
-    row.archivedAtUtcMs = archived ? utcMs(utcNow()) : 0;
-    row.updatedAt = utcNow();
-    // 只改清单行本身：groupsChanged/tasksReset 会让视图、提醒弹窗与桌面投影重验。
-    EntityChanges changes; changes.groupSaves.append(row); return commit(&changes);
+    row.archivedAtUtcMs = archived ? utcMs(now) : 0;
+    row.updatedAt = now;
+    // 实体状态和日期完全不动；清单归档与各实体活动事件必须在同一事务提交。
+    EntityChanges changes; changes.groupSaves.append(row);
+    QJsonObject context; context.insert(QStringLiteral("listName"), row.name);
+    for (const StoredEntity &stored : m_snapshot.entities) if (stored.entity.listId == id)
+        addEvent(&changes, stored.entity, QStringLiteral("changed"), QStringLiteral("listArchived"),
+                 currentlyArchived ? QStringLiteral("1") : QStringLiteral("0"),
+                 archived ? QStringLiteral("1") : QStringLiteral("0"), now, context);
+    return commit(&changes);
 }
 bool TaskStore::isListArchived(const QString &id) const
 {
@@ -1209,11 +1794,12 @@ bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
         if (!date.isValid() || date >= today) continue;
         Entity value = task;
         const qint64 days = date.daysTo(today);
-        const auto shiftDate = [days](const QDateTime &when) {
+        const auto shiftDate = [days, &value](const QDateTime &when) {
             if (!when.isValid()) return QDateTime();
-            return fromAppTime(toAppTime(when).addDays(days));
+            return when.toTimeZone(QTimeZone(value.timeZone.toUtf8())).addDays(days).toUTC();
         };
         if (value.allDayDate.isValid()) value.allDayDate = value.allDayDate.addDays(days);
+        if (value.allDayEndDate.isValid()) value.allDayEndDate = value.allDayEndDate.addDays(days);
         if (value.dueAt.isValid()) value.dueAt = shiftDate(value.dueAt);
         if (value.startAt.isValid()) value.startAt = shiftDate(value.startAt);
         if (!prepareSave(value, &changes)) return false;               // 事务内统一提交，失败无部分成功
@@ -1222,116 +1808,32 @@ bool TaskStore::postponeOverdueTasks(const QStringList &ids, const QDate &today)
     if (postponed == 0) { m_lastError.clear(); return true; }
     return commit(&changes);
 }
-bool TaskStore::moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
-                                  const QString &targetSection, const QDate &targetDate,
-                                  bool pinned, bool detachParent, bool adjustDate, bool adjustPinned,
-                                  const QString &targetParentId)
+bool TaskStore::applyDropIntent(const TaskDrop::Intent &intent)
 {
     if (!ensureLoaded()) return false;
-    // orderedIds 逐 ID 从当前快照重读：不存在、重复或缺 source 整批拒绝，不落任何写入。
-    if (sourceId.isEmpty() || orderedIds.isEmpty()) return fail(QStringLiteral("目标段顺序不能为空"));
-    if (!targetParentId.isEmpty()) {
-        if (detachParent || adjustDate || adjustPinned)
-            return fail(QStringLiteral("设父拖动不能同时修改日期或置顶"));
-        const StoredEntity *source = find(sourceId);
-        const StoredEntity *parent = find(targetParentId);
-        if (!source || !parent) return fail(QStringLiteral("源任务或父任务不存在"));
-        const Entity &sourceEntity = source->entity;
-        const Entity &parentEntity = parent->entity;
-        const bool validSource = sourceEntity.kind == EntityKind::Task
-            && sourceEntity.status == TaskStatus::Active && !sourceEntity.deleted;
-        const bool validParent = parentEntity.kind == EntityKind::Task
-            && parentEntity.status == TaskStatus::Active && !parentEntity.deleted;
-        if (!validSource || !validParent)
-            return fail(QStringLiteral("源任务和父任务都必须是未删除的进行中任务"));
-        if (sourceEntity.listId != parentEntity.listId)
-            return fail(QStringLiteral("子任务与父任务必须属于同一清单"));
-        const TaskList *list = findList(parentEntity.listId);
-        if (!list || list->archivedAtUtcMs > 0) return fail(QStringLiteral("父任务所属清单不可用"));
-        // 可见行可能折叠或被筛选，必须沿完整快照祖先链防环。
-        QSet<QString> ancestors;
-        QString ancestorId = targetParentId;
-        while (!ancestorId.isEmpty()) {
-            if (ancestorId == sourceId)
-                return fail(QStringLiteral("不能把任务移动到自身或其后代下"));
-            if (ancestors.contains(ancestorId)) return fail(QStringLiteral("父任务层级存在循环"));
-            ancestors.insert(ancestorId);
-            const StoredEntity *ancestor = find(ancestorId);
-            if (!ancestor) return fail(QStringLiteral("父任务层级不完整"));
-            ancestorId = ancestor->entity.parentId;
-        }
-    }
-    const TaskList *targetList = nullptr;
-    if (targetSection.startsWith(QStringLiteral("list:"))) {
-        targetList = findList(targetSection.mid(5));
-        if (!targetList) return fail(QStringLiteral("目标清单不存在"));
-        if (targetList->archivedAtUtcMs > 0) return fail(QStringLiteral("目标清单已归档"));
-    }
-    QSet<QString> seen;
-    bool hasSource = false;
-    for (const QString &id : orderedIds) {
-        const StoredEntity *stored = id.isEmpty() ? nullptr : find(id);
-        if (!stored) return fail(QStringLiteral("目标段任务不存在"));
-        if (seen.contains(id)) return fail(QStringLiteral("目标段任务重复"));
-        if (targetList && stored->entity.listId != targetList->id)
-            return fail(QStringLiteral("目标段任务必须属于目标清单"));
-        seen.insert(id);
-        if (id == sourceId) hasSource = true;
-    }
-    if (!hasSource) return fail(QStringLiteral("目标段必须包含拖动任务"));
-    if (!targetParentId.isEmpty() && !seen.contains(targetParentId))
-        return fail(QStringLiteral("目标段必须包含父任务"));
-    // 只有真正跨时间分区才改期；同段排序的 targetDate 为空，保留段内其他合法日期。
-    const QDate today = toAppTime(appNow()).date();
-    const bool timeSection = TaskDrop::isTimeSection(targetSection);
-    if (timeSection && adjustDate) {
-        if (!today.isValid() || !targetDate.isValid()
-            || TaskDrop::dateForSection(targetSection, today) != targetDate)
-            return fail(QStringLiteral("目标日期与时间分区不一致"));
-    } else if (targetDate.isValid()) {
-        return fail(QStringLiteral("非改期拖动不能指定目标日期"));
-    }
-    if (adjustPinned && targetSection == QStringLiteral("pinned") && !pinned)
-        return fail(QStringLiteral("置顶分区的目标必须保持置顶"));
-
-    const QDateTime now = utcNow();
-    EntityChanges changes;
-    bool changed = false;
-    for (int i = 0; i < orderedIds.size(); ++i) {
-        const QString &id = orderedIds.at(i);
-        const StoredEntity *stored = find(id);                  // 上面已校验存在
-        Entity value = stored->entity;                          // 快照 StoredEntity，非陈旧草稿
-        bool rowChanged = value.sortOrder != i;
-        if (id == sourceId) {
-            if (adjustPinned) {
-                if (pinned && !value.pinnedAt.isValid()) value.pinnedAt = now;   // 新置顶取当前时刻
-                else if (!pinned && value.pinnedAt.isValid()) value.pinnedAt = QDateTime();   // 离开置顶分区
-            }
-            if (detachParent && !value.parentId.isEmpty()) value.parentId.clear();
-            if (!targetParentId.isEmpty()) value.parentId = targetParentId;
-            if (timeSection && adjustDate) {
-                const QDate from = effectiveDate(value);
-                if (!from.isValid()) return fail(QStringLiteral("无有效日期的任务不能拖入时间分区"));
-                const qint64 days = from.daysTo(targetDate);     // 同段重排时 days==0，日期不动
-                const auto shiftDate = [days](const QDateTime &when) {
-                    if (!when.isValid()) return QDateTime();
-                    return fromAppTime(toAppTime(when).addDays(days));
-                };
-                if (value.allDayDate.isValid()) value.allDayDate = value.allDayDate.addDays(days);
-                if (value.dueAt.isValid()) value.dueAt = shiftDate(value.dueAt);
-                if (value.startAt.isValid()) value.startAt = shiftDate(value.startAt);
-            }
-            rowChanged = rowChanged || value.pinnedAt != stored->entity.pinnedAt
-                || value.parentId != stored->entity.parentId || value.allDayDate != stored->entity.allDayDate
-                || value.startAt != stored->entity.startAt || value.dueAt != stored->entity.dueAt;
-        }
-        if (!rowChanged) continue;                               // 位置与内容都未变就不写
-        value.sortOrder = i;
-        if (!prepareSave(value, &changes)) return false;         // 单事务，失败无部分成功
-        changed = true;
-    }
-    if (!changed) { m_lastError.clear(); return true; }          // 幂等：无实际变化零写入
-    return commit(&changes);
+    if (intent.mode == GroupMode::Created) return fail(QStringLiteral("创建时间分组不允许拖放"));
+    EntitySnapshot latest; QString failure;
+    if (!m_repository.load(&latest, &failure)) return fail(failure);
+    DropPlan plan;
+    if (!buildDropPlan(intent, latest, toAppTime(appNow()).date(), &plan, &failure)) return fail(failure);
+    return commitSnapshotUpdates(latest, plan.updates);
+}
+bool TaskStore::moveEntityToList(const QString &entityId, const QString &listId)
+{
+    if (!ensureLoaded()) return false;
+    EntitySnapshot latest; QString failure;
+    if (!m_repository.load(&latest, &failure)) return fail(failure);
+    DropSnapshot planned(latest);
+    const auto source = planned.entities.constFind(entityId);
+    if (source == planned.entities.constEnd() || source->deleted || !availableList(planned, source->listId))
+        return fail(QStringLiteral("源实体不存在、已删除或所属清单不可用"));
+    // 显式 MoveTo 可移动终态任务，但绝不改变状态、重复实例、日期或置顶。
+    if (!validateAncestors(planned, entityId, QString(), &failure)) return fail(failure);
+    QSet<QString> subtree;
+    if (!collectSubtree(planned, entityId, &subtree, &failure)
+        || !moveSubtreeToList(&planned, entityId, listId, subtree, &failure)) return fail(failure);
+    DropPlan plan; finishDropPlan(latest, planned, &plan);
+    return commitSnapshotUpdates(latest, plan.updates);
 }
 QString TaskStore::createSection(const QString &listId, const QString &name)
 {
@@ -1354,27 +1856,6 @@ bool TaskStore::deleteSection(const QString &id)
 {
     if (!ensureLoaded()) return false; if (id.isEmpty() || !hasSection(id)) return fail(QStringLiteral("section 不存在"));
     EntityChanges changes; changes.sectionRemovals.append(id); return commit(&changes, true);
-}
-
-QString TaskStore::addChecklistItem(const QString &entityId, const QString &text)
-{
-    Entity value = entity(entityId); if (value.id.isEmpty()) { fail(QStringLiteral("任务不存在")); return QString(); }
-    ChecklistItem row; row.text = text; value.checklist.append(row);
-    if (!saveTask(value)) return QString();
-    return entity(entityId).checklist.isEmpty() ? QString() : entity(entityId).checklist.last().id;
-}
-bool TaskStore::setChecklistDone(const QString &itemId, bool done)
-{
-    const ChecklistItem *item = findChecklistItem(itemId); if (!item) return fail(QStringLiteral("清单项不存在"));
-    Entity value = entity(item->entityId); for (ChecklistItem &row : value.checklist) if (row.id == itemId) row.done = done;
-    return saveTask(value);
-}
-bool TaskStore::removeChecklistItem(const QString &itemId)
-{
-    const ChecklistItem *item = findChecklistItem(itemId); if (!item) return fail(QStringLiteral("清单项不存在"));
-    Entity value = entity(item->entityId);
-    for (int i = 0; i < value.checklist.size(); ++i) if (value.checklist.at(i).id == itemId) { value.checklist.remove(i); break; }
-    return saveTask(value);
 }
 
 TaskReminder TaskStore::addReminder(const QString &entityId, const QDateTime &triggerAt)
@@ -1406,7 +1887,7 @@ bool TaskStore::markReminderDelivered(const QString &reminderId, const QDateTime
         || isReminderDelivered(reminderId)) return false;
     const Entity current = entity(reminder->entityId);
     // 归档清单的任务不提醒：即使 UI 门面漏检，Repository SQL 也是权威闸门。
-    if (current.kind != EntityKind::Task || current.status != TaskStatus::Active || current.deleted
+    if ((current.kind == EntityKind::Task && current.status != TaskStatus::Active) || current.deleted
         || isListArchived(current.listId)) return false;
     ReminderDelivery delivery; delivery.reminderId = reminderId; delivery.installationId = installationId();
     delivery.scheduledAt = expectedTrigger; delivery.deliveredAt = now;
@@ -1416,7 +1897,7 @@ bool TaskStore::markReminderNotified(const QString &entityId, const QDateTime &e
 {
     if (!ensureLoaded()) return false;
     const Entity current = entity(entityId);
-    if (current.kind != EntityKind::Task || current.status != TaskStatus::Active || current.deleted
+    if ((current.kind == EntityKind::Task && current.status != TaskStatus::Active) || current.deleted
         || isListArchived(current.listId)) return false;
     const int primary = primaryReminderIndex(current);
     if (primary < 0) return false;
@@ -1591,15 +2072,128 @@ bool TaskStore::endEditSession(const QString &sessionId)
     if (changes.eventSaves.isEmpty()) {
         m_journal.finishEditSession(sessionId); m_lastError.clear(); return true;
     }
-    // 提交失败时保留基线，调用方可以用同一 session UUID 重试。
-    if (!commit(&changes)) return false;
-    m_journal.finishEditSession(sessionId); m_lastError.clear(); return true;
+    // 提交失败时保留基线；成功后先终结会话，再通知观察者，避免重入重复记账。
+    if (!commit(&changes, false, [this, sessionId]() { m_journal.finishEditSession(sessionId); })) return false;
+    m_lastError.clear(); return true;
 }
 bool TaskStore::endAllSessions()
 {
     if (!ensureLoaded()) return false;
     QStringList sessions = m_journal.activeEditSessions(); sessions.sort();
     for (const QString &sessionId : sessions) if (!endEditSession(sessionId)) return false;
+    m_lastError.clear(); return true;
+}
+
+bool TaskStore::isEditSessionActive(const QString &sessionId) const
+{
+    return !sessionId.isEmpty() && !m_journal.entityId(sessionId).isEmpty();
+}
+
+EntityTextSession *TaskStore::textSession(const QString &entityId)
+{
+    if (!ensureLoaded()) return nullptr;
+    const StoredEntity *stored = find(entityId);
+    if (!stored || stored->entity.deleted) {
+        fail(QStringLiteral("实体不存在或已删除，不能创建文本编辑会话"));
+        return nullptr;
+    }
+    const auto found = m_textSessions.constFind(entityId);
+    if (found != m_textSessions.constEnd()) return found.value();
+    EntityTextSession *session = new EntityTextSession(this, entityId, this);
+    m_textSessions.insert(entityId, session);
+    // 会话被显式销毁时同步注销，注册表永不悬挂。
+    connect(session, &QObject::destroyed, this, [this, entityId]() { m_textSessions.remove(entityId); });
+    m_lastError.clear();
+    return session;
+}
+
+TextCommitResult TaskStore::commitTextDraft(const TextDraft &draft)
+{
+    TextCommitResult result;
+    if (draft.entityId.isEmpty()) {
+        m_lastError = QStringLiteral("草稿缺少实体 id");
+        result.error = m_lastError;
+        return result;
+    }
+    if (!ensureLoaded()) { result.error = m_lastError; return result; }
+    const StoredEntity *stored = find(draft.entityId);
+    if (!stored || stored->entity.deleted) {
+        // 不存在或已删除（含回收站）的目标不可复活，也绝不写入。
+        m_lastError.clear();
+        result.status = TextCommitStatus::Unavailable;
+        result.error = stored ? QStringLiteral("实体已在回收站或被删除，不能提交文本修改")
+                              : QStringLiteral("实体不存在或已永久删除，不能提交文本修改");
+        if (stored) result.entity = entity(draft.entityId);
+        return result;
+    }
+    const Entity &current = stored->entity;
+    QString title = current.title, body = current.body;
+    bool writeTitle = false, writeBody = false;
+    const bool titleConflict = !mergeTextField(draft.baselineTitle, draft.proposedTitle, current.title, &title, &writeTitle);
+    const bool bodyConflict = !mergeTextField(draft.baselineBody, draft.proposedBody, current.body, &body, &writeBody);
+    if (titleConflict || bodyConflict) {
+        // 同字段双改且不同：整体拒绝，零写入，不推进 revision/updated_at，也不产生事件。
+        m_lastError.clear();
+        result.status = TextCommitStatus::Conflict;
+        result.entity = entity(draft.entityId);
+        QStringList fields;
+        if (titleConflict) fields.append(QStringLiteral("标题"));
+        if (bodyConflict) fields.append(QStringLiteral("正文"));
+        result.error = fields.join(QStringLiteral("和")) + QStringLiteral("已在其他窗口修改，本次未保存任何更改。请重载最新内容后重试。");
+        return result;
+    }
+    if (!writeTitle && !writeBody) {
+        // 本地未改（含恢复基线）或远端已等于本地：视为成功，零写入。
+        m_lastError.clear();
+        result.status = TextCommitStatus::Unchanged;
+        result.entity = entity(draft.entityId);
+        return result;
+    }
+    // 有效改变：从当前快照重建整实体（桌面门面先还原，避免外观字段误判为变更），
+    // 只覆盖 title/body，其余字段保持远端当前值，走既有 prepareSave/CAS/Journal 链。
+    Entity merged = current;
+    applyDesktopFacade(&merged);
+    merged.title = title; merged.body = body;
+    EntityChanges changes;
+    // 归因标记：sessionId 有效且确属本实体时，本保存的 title/body 直存事件按会话口径推迟到
+    // 会话结束/取消统一记账；否则（无会话、未知/跨实体会话）立即直存记账，绝不丢失。
+    const bool previousTextCommitSave = m_textCommitSave;
+    m_textCommitSave = isEditSessionActive(draft.sessionId)
+                       && m_journal.entityId(draft.sessionId) == draft.entityId;
+    const bool prepared = prepareSave(merged, &changes);
+    m_textCommitSave = previousTextCommitSave;              // 保存/恢复，防信号回调重入串扰
+    if (!prepared) { result.error = m_lastError; return result; }
+    // 会话归因必须在本次事务落库之后、任何对外信号（taskChanged 等）发出之前确定：
+    // 信号回调可能取消会话或继续改动实体，绝不能把那时的最新全实体算成本会话的写入。
+    // 只登记本次真实写入的字段与终值（即本次写入后的 title/body）。
+    Entity written;
+    written.id = draft.entityId; written.kind = current.kind;
+    written.title = title; written.body = body;
+    const QString sessionId = draft.sessionId;
+    const bool wroteTitle = writeTitle, wroteBody = writeBody;
+    const auto recordCommit = [this, sessionId, wroteTitle, wroteBody, written]() {
+        if (!sessionId.isEmpty()) m_journal.recordSessionCommit(sessionId, wroteTitle, wroteBody, written);
+    };
+    if (!commit(&changes, false, recordCommit)) { result.error = m_lastError; return result; }
+    result.status = TextCommitStatus::Saved;
+    result.entity = entity(draft.entityId);
+    return result;
+}
+
+bool TaskStore::cancelEditSession(const QString &sessionId)
+{
+    // 只终结该会话；未知/已结束的 id 幂等成功，绝不影响其他编辑器的会话。
+    const QString entityId = m_journal.entityId(sessionId);
+    if (entityId.isEmpty()) { m_lastError.clear(); return true; }
+    EntityChanges changes;
+    changes.eventSaves = m_journal.eventsForCancel(sessionId);
+    if (changes.eventSaves.isEmpty()) {
+        // 纯丢弃（含目标已消失）：没有本会话自有已保存内容，直接终结。
+        m_journal.finishEditSession(sessionId); m_lastError.clear(); return true;
+    }
+    // 有本会话已保存内容需要补记日志：提交失败必须返回 false 并保留会话供重试
+    //（与 endEditSession 口径一致），不用假成功解锁窗口。
+    if (!commit(&changes, false, [this, sessionId]() { m_journal.finishEditSession(sessionId); })) return false;
     m_lastError.clear(); return true;
 }
 
@@ -1700,6 +2294,11 @@ bool TaskStore::importBackup(const QString &path)
         return fail(failure);
     }
     m_snapshot = replaced;
+    // 恢复成功点（已落库、快照已替换、尚未发布任何对外信号）：共享文本会话全部作废——
+    // 即使恢复后 title/body 与旧草稿完全相同，旧撤销/重做历史指向恢复前的编辑上下文，
+    // 绝不允许在新数据上重放；旧会话 QPointer 失效，UI 在随后的 tasksReset 后按需重建。
+    // 仅此成功点清除；导入失败与普通 tasksReset/分组刷新绝不清除。
+    destroyTextSessions();
     if (!restore.cleanup(&failure)) emit errorOccurred(failure);
     m_lastError.clear(); emit groupsChanged(); emit tasksReset(); return true;
 }

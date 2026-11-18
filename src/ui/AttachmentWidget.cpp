@@ -22,6 +22,9 @@
 
 #include "../app/TaskStore.h"
 #include "AppIcons.h"
+#include "AttachmentAppearance.h"
+#include "ModalDialog.h"
+#include "PopupMenu.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
 
@@ -113,7 +116,7 @@ protected:
         QStyleOption option;
         option.initFrom(this);
         style()->drawPrimitive(QStyle::PE_Widget, &option, &painter, this);
-        if (hasFocus()) {
+        if (hasFocus() && !property("inlineAttachment").toBool()) {
             QStyleOptionFocusRect focus;
             focus.initFrom(this);
             focus.rect = contentsRect();
@@ -126,22 +129,35 @@ private:
     QPointer<QAction> m_remove;
 };
 
-QString readableSize(qint64 bytes) {
-    if (bytes < 1024)
-        return QStringLiteral("%1 B").arg(bytes);
-    return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', 0);
+void showAttachmentError(QWidget* parent, const QString& title, const QString& message) {
+    ModalDialog dialog(parent);
+    dialog.setObjectName(QStringLiteral("AttachmentErrorDialog"));
+    dialog.setDialogTitle(title);
+    dialog.setMinimumSize(448, 212);
+    auto* text = new QLabel(message, &dialog);
+    text->setObjectName(QStringLiteral("AttachmentErrorText"));
+    text->setTextFormat(Qt::PlainText);
+    text->setWordWrap(true);
+    dialog.contentLayout()->addWidget(text);
+    auto* close = new QPushButton(QStringLiteral("知道了"), &dialog);
+    close->setObjectName(QStringLiteral("AttachmentErrorAccept"));
+    close->setProperty("primary", true);
+    close->setDefault(true);
+    QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+    dialog.buttonLayout()->addWidget(close);
+    dialog.exec();
+}
+
+bool sameFile(const Attachment& a, const Attachment& b) {
+    return a.id == b.id && a.entityId == b.entityId && a.originalName == b.originalName
+        && a.relativePath == b.relativePath && a.size == b.size && a.mime == b.mime
+        && a.isImage == b.isImage && a.sha256 == b.sha256;
 }
 
 bool sameRows(const QVector<Attachment>& left, const QVector<Attachment>& right) {
     if (left.size() != right.size()) return false;
-    for (int i = 0; i < left.size(); ++i) {
-        const Attachment& a = left.at(i);
-        const Attachment& b = right.at(i);
-        if (a.id != b.id || a.entityId != b.entityId || a.originalName != b.originalName ||
-            a.relativePath != b.relativePath || a.size != b.size || a.isImage != b.isImage ||
-            a.localState != b.localState || a.sha256 != b.sha256)
-            return false;
-    }
+    for (int i = 0; i < left.size(); ++i)
+        if (!sameFile(left.at(i), right.at(i)) || left.at(i).localState != right.at(i).localState) return false;
     return true;
 }
 }  // namespace
@@ -274,7 +290,7 @@ void AttachmentWidget::refresh() {
     m_items = items;
     const bool rowsOnly = m_inlineMode || m_compact;
     layout()->setSpacing(rowsOnly ? 0 : style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing, nullptr, this));
-    m_rows->setSpacing(m_inlineMode ? 0 : style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing, nullptr, this));
+    m_rows->setSpacing(m_inlineMode ? 6 : style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing, nullptr, this));
     m_header->setVisible(!rowsOnly);
     m_empty->setVisible(items.isEmpty() && !m_entityId.isEmpty() && !rowsOnly);
     m_rowsHost->setVisible(!items.isEmpty());
@@ -293,25 +309,44 @@ void AttachmentWidget::refresh() {
     if (itemsChanged) emit contentChanged();
 }
 
+bool AttachmentWidget::currentAttachment(const QPointer<TaskStore>& store, const QString& entityId,
+                                         const QString& attachmentId, Attachment* result) const {
+    if (!store || store.data() != m_store.data() || entityId != m_entityId
+        || store->entity(entityId).id.isEmpty()) return false;
+    for (const Attachment& attachment : store->attachments(entityId)) {
+        if (attachment.id != attachmentId) continue;
+        if (result) *result = attachment;
+        return true;
+    }
+    return false;
+}
+
 void AttachmentWidget::addRow(const Attachment& attachment) {
     const bool compact = m_compact && !m_inlineMode;
-    const bool removable = !m_readOnly && (!m_compact || m_inlineMode);
+    const bool removable = !m_readOnly && (!m_compact || m_inlineMode)
+        && m_store && !m_store->entity(m_entityId).deleted;
     const QPointer<TaskStore> store = m_store;
     const QString entityId = m_entityId;
     auto* row = new AttachmentRow(m_rowsHost);
     row->setProperty("inlineAttachment", m_inlineMode);
+    row->setProperty("attachmentId", attachment.id);
+    const auto type = AttachmentAppearance::fileType(attachment);
+    row->setProperty("attachmentType", AttachmentAppearance::typeName(type));
     row->setText(attachment.originalName);
     row->setToolTip(attachment.originalName);
     row->setAccessibleName(QStringLiteral("打开附件“%1”").arg(attachment.originalName));
     row->setAccessibleDescription(removable
-        ? QStringLiteral("按 Enter 或空格打开，按 Delete 移除；Tab 可进入附件操作菜单。")
-        : QStringLiteral("按 Enter 或空格打开，Tab 可进入附件操作菜单。"));
+        ? QStringLiteral("按 Enter 或空格打开，按 Delete 删除应用副本；Tab 可进入附件操作菜单。")
+        : QStringLiteral("按 Enter 或空格打开，Tab 可进入附件操作菜单另存副本。"));
     auto* rowLayout = new QHBoxLayout(row);
-    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setContentsMargins(m_inlineMode ? 12 : 0, 0, m_inlineMode ? 10 : 0, 0);
+    rowLayout->setSpacing(m_inlineMode ? 6 : style()->pixelMetric(QStyle::PM_LayoutHorizontalSpacing, nullptr, row));
+    if (m_inlineMode) row->setFixedHeight(56);
     auto* preview = new QLabel(row);
     preview->setObjectName(compact ? QStringLiteral("AttachmentThumbnail") : QStringLiteral("AttachmentIcon"));
     preview->setAlignment(Qt::AlignCenter);
     preview->setToolTip(attachment.originalName);
+    preview->setAttribute(Qt::WA_TransparentForMouseEvents);
     if (compact) {
         // 桌面便签仍保留原有的小缩略图与两行文字。
         preview->setFixedSize(52, 40);
@@ -325,23 +360,35 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
             preview->setText(QFileInfo(attachment.originalName).suffix().toUpper().left(4));
         }
         preview->setProperty("fileAttachment", QVariant(!attachment.isImage));
+    } else if (m_inlineMode) {
+        preview->setFixedSize(26, 26);
+        preview->setPixmap(AppIcons::icon(AttachmentAppearance::iconName(type), ds::ColorToken::Info, 26).pixmap(26, 26));
     } else {
         const QSize iconSize = m_add->iconSize();
         preview->setFixedSize(iconSize);
         preview->setPixmap(AppIcons::icon(IconId::Attachment).pixmap(iconSize));
     }
-    rowLayout->addWidget(preview);
+    rowLayout->addWidget(preview, 0, Qt::AlignVCenter);
 
     auto* name = new AttachmentNameLabel(attachment.originalName, row);
     name->setObjectName(QStringLiteral("AttachmentName"));
-    auto* detail = new QLabel(readableSize(attachment.size), row);
+    name->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto* detail = new QLabel(AttachmentAppearance::sizeLabel(attachment.size), row);
     detail->setObjectName(QStringLiteral("AttachmentSize"));
     detail->setFont(ds::qfont(ds::FontScene::Caption));
     detail->setProperty("muted", QVariant(true));
     detail->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-    if (compact) {
+    detail->setAttribute(Qt::WA_TransparentForMouseEvents);
+    if (compact || m_inlineMode) {
         auto* text = new QVBoxLayout;
-        text->setSpacing(0);
+        text->setContentsMargins(0, 0, 0, 0);
+        text->setSpacing(m_inlineMode ? 1 : 0);
+        if (m_inlineMode) {
+            // 两行作为自然高度的文字块居中，不能把文件名拉高后将大小挤到卡片底边。
+            name->setFixedHeight(name->fontMetrics().height());
+            detail->setFixedHeight(detail->fontMetrics().height());
+            text->setAlignment(Qt::AlignVCenter);
+        }
         text->addWidget(name);
         text->addWidget(detail);
         rowLayout->addLayout(text, 1);
@@ -353,52 +400,85 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     auto* actions = new QToolButton(row);
     actions->setObjectName(QStringLiteral("AttachmentActions"));
     actions->setText(QStringLiteral("附件操作"));
-    actions->setIcon(AppIcons::icon(IconId::More));
-    actions->setIconSize(m_add->iconSize());
+    actions->setIcon(AppIcons::icon(IconId::MoreTitlebar, 18));
+    actions->setIconSize(QSize(18, 18));
+    actions->setFixedSize(m_inlineMode ? QSize(30, 30) : QSize(24, 24));
     actions->setToolButtonStyle(Qt::ToolButtonIconOnly);
     actions->setAutoRaise(true);
     actions->setToolTip(QStringLiteral("“%1”的附件操作").arg(attachment.originalName));
     actions->setAccessibleName(actions->toolTip());
+    actions->setCursor(Qt::PointingHandCursor);
     actions->setFocusPolicy(Qt::StrongFocus);
     actions->setPopupMode(QToolButton::InstantPopup);
-    auto* menu = new QMenu(actions);
+    auto* menu = new PopupMenu(actions);
     menu->setObjectName(QStringLiteral("AttachmentMenu"));
-    auto* open = menu->addAction(QStringLiteral("打开"));
+    menu->setProperty("entityMenu", true);
+    menu->setFont(ds::qfont(ds::FontScene::Menu));
+    menu->setMinimumWidth(164 + 2 * PopupMenu::shadowMargin());
+    auto* open = new QAction(QStringLiteral("打开"), row);
     open->setObjectName(QStringLiteral("OpenAttachment"));
-    auto* remove = menu->addAction(AppIcons::icon(IconId::Delete), QStringLiteral("移除"));
+    auto* saveAs = menu->addAction(QStringLiteral("另存为…"));
+    saveAs->setObjectName(QStringLiteral("SaveAttachmentAs"));
+    auto* remove = menu->addAction(QStringLiteral("删除"));
     remove->setObjectName(QStringLiteral("RemoveAttachment"));
+    for (QAction* action : {open, saveAs, remove}) action->setData(attachment.id);
     remove->setVisible(removable);
     remove->setEnabled(removable);
     actions->setMenu(menu);
-    rowLayout->addWidget(actions);
+    rowLayout->addWidget(actions, 0, Qt::AlignVCenter);
     row->setRemoveAction(remove);
-    row->setContextMenuPolicy(Qt::ActionsContextMenu);
-    row->addAction(open);
-    row->addAction(remove);
+    row->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(row, &QWidget::customContextMenuRequested, menu, [row, menu](const QPoint& point) {
+        menu->exec(row->mapToGlobal(point));
+    });
     connect(row, &QAbstractButton::clicked, open, &QAction::trigger);
     m_rows->addWidget(row);
     row->show();
 
     connect(open, &QAction::triggered, this, [this, attachment, store, entityId]() {
-        if (!store || store.data() != m_store.data() || entityId != m_entityId) return;
-        if (attachment.isImage) {
-            ImagePreviewDialog dialog(attachment, filePath(attachment), this);
+        Attachment current;
+        if (!currentAttachment(store, entityId, attachment.id, &current)) return;
+        if (current.isImage) {
+            if (!store->refreshAttachmentState(current.id)) {
+                showAttachmentError(this, QStringLiteral("无法打开附件"), store->lastError());
+                return;
+            }
+            if (!currentAttachment(store, entityId, attachment.id, &current)) return;
+            if (current.localState != AttachmentFileState::Available) {
+                showAttachmentError(this, QStringLiteral("无法打开附件"), QStringLiteral("附件文件已丢失或损坏，无法预览。"));
+                return;
+            }
+            ImagePreviewDialog dialog(current, filePath(current), this);
             dialog.exec();
-        } else {
-            store->openAttachment(attachment.id);
+        } else if (!store->openAttachment(current.id)) {
+            showAttachmentError(this, QStringLiteral("无法打开附件"), store->lastError());
         }
     });
+    connect(saveAs, &QAction::triggered, this, [this, attachment, store, entityId]() {
+        Attachment selected;
+        if (!currentAttachment(store, entityId, attachment.id, &selected)) return;
+        const QString destination = QFileDialog::getSaveFileName(
+            this, QStringLiteral("另存附件"), QFileInfo(selected.originalName).fileName());
+        Attachment current;
+        if (destination.isEmpty() || !currentAttachment(store, entityId, attachment.id, &current)
+            || !sameFile(selected, current)) return;
+        if (!store->copyAttachmentTo(current.id, destination))
+            showAttachmentError(this, QStringLiteral("无法另存附件"), store->lastError());
+    });
     connect(remove, &QAction::triggered, this, [this, attachment, store, entityId]() {
-        if (!store || store.data() != m_store.data() || entityId != m_entityId ||
-            m_readOnly || (m_compact && !m_inlineMode)) return;
-        const auto answer = QMessageBox::question(
-            this, QStringLiteral("移除附件"),
-            QStringLiteral("从任务移除“%1”？\n仅删除应用中的副本，不影响你选择的原文件。")
-                .arg(attachment.originalName));
-        // 模态窗口期间仍可能切换任务、存储或只读状态。
-        if (answer != QMessageBox::Yes || !store || store.data() != m_store.data() ||
-            entityId != m_entityId || m_readOnly || (m_compact && !m_inlineMode)) return;
-        store->removeAttachment(entityId, attachment.id);
+        Attachment selected;
+        if (!currentAttachment(store, entityId, attachment.id, &selected)
+            || m_readOnly || (m_compact && !m_inlineMode) || store->entity(entityId).deleted) return;
+        const bool accepted = ConfirmDialog::prompt(QStringLiteral("删除附件"),
+            QStringLiteral("删除“%1”？\n仅删除应用中的副本，不影响你选择的原文件。").arg(selected.originalName),
+            QStringLiteral("删除"), true, this);
+        Attachment current;
+        // 模态窗口期间实体、存储、权限和附件内容均可能改变，确认后重新核对。
+        if (!accepted || !currentAttachment(store, entityId, attachment.id, &current)
+            || !sameFile(selected, current) || m_readOnly || (m_compact && !m_inlineMode)
+            || store->entity(entityId).deleted) return;
+        if (!store->removeAttachment(entityId, current.id))
+            showAttachmentError(this, QStringLiteral("无法删除附件"), store->lastError());
     });
 }
 
@@ -412,13 +492,25 @@ void AttachmentWidget::importFiles() {
         QString(),
         QStringLiteral("图片与常用文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.txt *.md *.pdf *.doc *.docx "
                        "*.xls *.xlsx);;所有文件 (*)"));
+    if (!store || store.data() != m_store.data() || entityId != m_entityId || m_readOnly) return;
+    importPaths(paths);
+}
+
+int AttachmentWidget::importPaths(const QStringList& paths) {
+    if (!m_store || m_entityId.isEmpty() || m_readOnly) return 0;
+    const QPointer<TaskStore> store = m_store;
+    const QString entityId = m_entityId;
+    int imported = 0;
     for (const QString& path : paths) {
-        if (!store || store.data() != m_store.data() || entityId != m_entityId || m_readOnly) return;
+        if (!store || store.data() != m_store.data() || entityId != m_entityId || m_readOnly
+            || store->entity(entityId).id.isEmpty() || store->entity(entityId).deleted) break;
         if (store->importAttachment(entityId, path).id.isEmpty()) {
             if (store) QMessageBox::warning(this, QStringLiteral("无法添加附件"), store->lastError());
             break;
         }
+        ++imported;
     }
+    return imported;
 }
 
 }  // namespace kl

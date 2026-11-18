@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QRect>
 #include "../domain/Entity.h"
+#include "../domain/ScheduleValue.h"
 
 class QWidget;
 namespace kl {
@@ -17,17 +18,19 @@ public:
     TaskDateController(TaskStore* store, QWidget* owner);
     void open(const QString& entityId, const QRect& globalAnchor);
     void openDraft(const Entity& draft, const QRect& globalAnchor);
+    void openDraft(const Entity& draft, const ScheduleValue& schedule, const QRect& globalAnchor);
     bool isOpen() const;
     void close();
 
 signals:
     void saved(QString entityId);
-    void draftSaved(Entity draft);
+    void draftSaved(Entity draft, ScheduleValue schedule);
     void saveFailed(QString message);
     void closed();
 
 private:
-    void openEntity(const Entity& entity, const QString& entityId, const QRect& globalAnchor);
+    void openEntity(const Entity& entity, const QString& entityId, const QRect& globalAnchor,
+                    const ScheduleValue& initial);
 
     TaskStore* m_store;
     QWidget* m_owner;

@@ -17,21 +17,22 @@ enum class IconId {
     None,
     // 导航
     All, Inbox, Today, Tomorrow, Upcoming, Overdue, Done, Abandoned, Trash,
-    Folder, Note, TaskList, Pin, Unpin, AddSubtask, LinkParent, MoveTo, Copy,
-    PinSection, Archive, Unarchive, ArchivedLists, SmartSettings,
+    Folder, Note, RowNote, TaskList, Pin, Unpin, AddSubtask, LinkParent, MoveTo, Copy,
+    PinSection, Archive, Unarchive, ArchivedLists, SmartSettings, WorkspaceTasks,
     // 操作
-    Search, More, Add, Close, Check,
-    Calendar, Clock, Reminder, Repeat,
+    Search, More, Add, Close, Check, Grouping,
+    Calendar, DetailCalendar, Clock, Reminder, Repeat,
     FlagHigh, FlagMedium, FlagLow, FlagNone,
     Attachment, Tag, ActivityLog, Convert, Restore, Delete,
-    DesktopNote, Settings, Backup, Theme,
+    DesktopNote, Settings, Backup, Theme, DesktopWidget, Lock, Exit,
     // 编辑器
     Bold, Italic, Strike, Heading, List, OrderedList, Quote, Code, Checklist, Link,
-    Underline, Highlight, Expand, Info, ChevronDown, FormatClear, Format, Comment,
+    Underline, Highlight, Expand, Info, ChevronDown, FormatClear, Format,
     // 主窗口
     WindowMinimize, WindowMaximize, WindowClose, Sort, MoreTitlebar,
     SidebarCollapse, SidebarExpand, HideCompleted, HideDetails, DisplaySettings,
     Help, Sync,
+    Paragraph, Heading1, Heading2, Heading3, HorizontalRule, BlockInsert, RelatedEntity, EditLink, CopyLink,
     Count
 };
 

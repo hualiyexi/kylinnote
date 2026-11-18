@@ -70,6 +70,7 @@ protected:
 class WindowDragArea : public QWidget {
 public:
     explicit WindowDragArea(QWidget* parent = nullptr);
+    void setDoubleClickMaximizes(bool enabled) { m_doubleClickMaximizes = enabled; }
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
@@ -81,6 +82,7 @@ private:
     QPoint m_pressGlobal;
     QPoint m_windowPosition;
     bool m_dragging = false;
+    bool m_doubleClickMaximizes = true;
 };
 
 // 右上角三个窗口按钮。关闭主窗口仍走 TaskPanel::closeEvent 的托盘语义。

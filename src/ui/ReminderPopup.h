@@ -7,6 +7,7 @@ class QPushButton;
 class QToolButton;
 
 namespace kl {
+class PopupMenu;
 class ReminderPopup : public QDialog {
     Q_OBJECT
 public:
@@ -25,6 +26,7 @@ private:
     void applyTheme();
     void positionOnScreen();
     void updateTitleElision();
+    void positionSnoozeMenu(PopupMenu* menu);
 
     QString m_entityId;
     QString m_reminderId;

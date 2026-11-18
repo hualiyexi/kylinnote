@@ -10,7 +10,7 @@
 namespace kl {
 namespace ds {
 
-// 字号阶梯（pt）。考据主体 14px≈10.5pt、菜单 13px≈9.75pt、菜单标题 12px≈9pt、详情标题 20pt。
+// 字号阶梯（pt）。正文 14px≈10.5pt、菜单 13px≈9.75pt、辅助文字 12px≈9pt。
 enum class TypeScale : int {
     Caption = 0,  // 辅助/计数
     Body,         // 正文/列表（滴答计算值 14px，96 DPI 下 10.5pt）
@@ -41,7 +41,7 @@ enum class FontScene : int {
 
 // 集中导出：业务唯一取字体入口。
 QFont qfont(FontScene scene);
-// 字体族回退链（Segoe UI → 中文无衬线 → 系统默认）。
+// 字体族回退链（中文可缩放无衬线 → 系统默认）。
 QStringList fontFamilies();
 // 随包单色字形覆盖常用 Emoji；运行时不依赖系统彩色 Emoji 字体。
 QFont emojiFont();

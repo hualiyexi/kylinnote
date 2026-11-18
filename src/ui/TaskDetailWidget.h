@@ -1,91 +1,127 @@
 #ifndef KYLINLIST_TASKDETAILWIDGET_H
 #define KYLINLIST_TASKDETAILWIDGET_H
 
+#include <QPointer>
 #include <QSet>
 #include <QTimer>
 #include <QWidget>
-#include "../domain/Entity.h"
-class QLineEdit;
+#include <QVector>
+#include "../domain/SourceChange.h"
+
 class QCheckBox;
-class QComboBox;
-class QDateTimeEdit;
-class QListWidget;
-class QPushButton;
-class QLabel;
-class QToolButton;
 class QFrame;
+class QLabel;
+class QLineEdit;
+class QPushButton;
+class QScrollArea;
+class QToolButton;
+
 namespace kl {
-class TaskStore;
-class MarkdownEditor;
+class ActivityTimelineWidget;
 class AttachmentWidget;
-class SelectionBubble;
-class FormatPanel;
+class EntityCommands;
+class EntityTextSession;
 class EntityInfoPopup;
+class FormatPanel;
 class ListSelectPopup;
+class MarkdownEditor;
+class SelectionBubble;
 class TaskDateController;
+class TaskStore;
+
 class TaskDetailWidget : public QWidget {
     Q_OBJECT
 public:
     explicit TaskDetailWidget(TaskStore* store, QWidget* parent = nullptr);
+    ~TaskDetailWidget() override;
     bool setTask(QString id);
     QString entityId() const { return m_id; }
     bool flush();
     bool finishEditing();
+    bool canDismissWithEscape() const;
     void focusTitle();
     void openDatePicker();
     void setOverlayMode(bool overlay);
-    // 检查项“添加新项”输入框中有未回车提交的文字时返回 true；这类草稿不会被 flush() 保存。
-    bool hasDraftInput(QString* what = nullptr) const;
+    void setDesktopMode(bool desktop);
+    void setDesktopHovered(bool hovered);
+    bool hasPendingText() const;
+    bool isSavingText() const;
+    bool textRejected() const;
+    QString titleDraft() const;
+    QString bodyDraft() const;
+    bool showActivity();
+    void importAttachments();
 signals:
     void taskRemoved(QString id);
     void internalLinkRequested(QString entityId);
+    void relatedDetailRequested(QString entityId);
+    void targetUnavailable(QString entityId);
     void focusModeRequested(bool enabled);
     void closeRequested();
+    void desktopMoreRequested();
+    void draftStateChanged();
 private:
     void buildUi();
-    void loadFields(bool resetEditor = false);
+    bool loadFields(bool resetEditor = false);
+    void refreshFromStore();
     void refreshGroups();
     void dirty(const QString& field);
+    void bindTextSession();
+    void refreshLiveText(QObject* origin = nullptr);
+    bool publishBody(bool continuation = false, bool committed = false);
+    void refreshTextState();
     void updateEnabled();
+    void updateDetailLayout();
+    void scheduleDetailLayout();
+    void attachSelectedTag(const QString& tag);
     bool eventFilter(QObject* watched, QEvent* event) override;
+    bool handleFileDrop(QObject* watched, QEvent* event);
+    void setDropHintVisible(bool visible);
     void beginTextSession();
+    void scheduleTextSessionEnd();
     bool endTextSession();
+    bool cancelTextSession();
+    void reloadDraft();
+    void copyDraft();
     void showMoreMenu();
     void showFormatPanel();
     void showGroupMenu();
     void showInfoPopup();
-    void addChecklistRow();
-    void updateChecklistHeight();
+    void showPriorityMenu();
     void updateDateChip();
     void updateParentLink();
     void refreshIcons();
-    void setStatus(const QString& text, bool error = false);
-    void setSettingsExpanded(bool expanded);
-    TaskStore* m_store;
+    void setStatus(const QString& text, bool error = false, bool recoverable = false);
+
+    QPointer<TaskStore> m_store;
+    QPointer<EntityTextSession> m_textSession;
     QString m_id;
+
     bool m_loading = false, m_saving = false;
     QSet<QString> m_dirty;
-    QString m_editSession;
-    QTimer m_saveTimer;
-    QWidget* m_detailHost = nullptr;   // 有实体时显示的整体（顶栏+主区+底栏）
-    QWidget* m_form = nullptr;         // 主区内容（正文/检查清单/折叠设置）
-    QWidget* m_settingsHost = nullptr; // 低频字段折叠区，默认隐藏
-    QWidget *m_scheduleHost = nullptr, *m_priorityHost = nullptr, *m_appearanceHost = nullptr;
-    QLabel *m_empty = nullptr, *m_status = nullptr;
-    QLineEdit *m_title = nullptr, *m_tags = nullptr, *m_checkInput = nullptr;
-    QCheckBox *m_completed = nullptr, *m_pinned = nullptr, *m_pinnedAt = nullptr;
-    QComboBox *m_group = nullptr, *m_priority = nullptr, *m_recurrence = nullptr, *m_color = nullptr,
-              *m_layer = nullptr;
-    QCheckBox *m_hasStart = nullptr, *m_hasDue = nullptr, *m_hasReminder = nullptr;
-    QDateTimeEdit *m_start = nullptr, *m_due = nullptr, *m_reminder = nullptr;
-    QPushButton* m_dateChip = nullptr;      // 顶栏「设置日期」chip，打开 DatePickerPopup
-    QPushButton* m_settingsToggle = nullptr;
-    QToolButton* m_groupChip = nullptr;     // 底栏左侧所属清单 chip
-    QToolButton* m_formatButton = nullptr;  // 底栏「A」格式按钮 → 悬浮格式面板
-    QToolButton* m_commentButton = nullptr;
-    QToolButton* m_moreButton = nullptr;
-    QToolButton *m_infoButton = nullptr, *m_reminderButton = nullptr, *m_closeButton = nullptr;
-    QFrame* m_headerSeparator = nullptr;
+    QString m_liveBody, m_lastSessionBody;
+    QVector<SourceChange> m_pendingBodyChanges;
+    bool m_bodyPublishPending = false, m_bodyConflict = false;
+    bool m_sessionEndPending = false;
+    bool m_remoteRefreshPending = false;
+    QWidget* m_detailHost = nullptr;
+    QWidget* m_form = nullptr;
+    QScrollArea* m_scroll = nullptr;
+    QWidget *m_statusHost = nullptr, *m_activityHost = nullptr, *m_attachmentPane = nullptr;
+    QScrollArea* m_attachmentScroll = nullptr;
+    QFrame* m_attachmentDivider = nullptr;
+    QLabel *m_attachmentTitle = nullptr, *m_attachmentCount = nullptr;
+    QToolButton* m_attachmentAdd = nullptr;
+    bool m_layoutPending = false;
+    QLabel *m_empty = nullptr, *m_status = nullptr, *m_dropHint = nullptr;
+    QWidget* m_recoveryActions = nullptr;
+    QToolButton *m_reloadDraft = nullptr, *m_copyDraft = nullptr;
+    QLineEdit* m_title = nullptr;
+    QCheckBox* m_completed = nullptr;
+    QPushButton* m_dateChip = nullptr;
+    QToolButton *m_groupChip = nullptr, *m_formatButton = nullptr, *m_moreButton = nullptr;
+    QToolButton *m_infoButton = nullptr, *m_closeButton = nullptr;
+    QFrame *m_headerSeparator = nullptr, *m_dateSeparator = nullptr;
     QWidget* m_parentHost = nullptr;
     QPushButton* m_parentLink = nullptr;
     QToolButton* m_parentArrow = nullptr;
@@ -93,14 +129,15 @@ private:
     EntityInfoPopup* m_infoPopup = nullptr;
     ListSelectPopup* m_groupPopup = nullptr;
     TaskDateController* m_dateController = nullptr;
+    EntityCommands* m_commands = nullptr;
     bool m_focusMode = false;
     bool m_overlayMode = false;
-    SelectionBubble* m_bubble = nullptr;    // 选中文字气泡工具条
-    FormatPanel* m_formatPanel = nullptr;   // 悬浮格式面板（卡片岛）
+    bool m_desktopMode = false, m_desktopHovered = false;
+    SelectionBubble* m_bubble = nullptr;
+    FormatPanel* m_formatPanel = nullptr;
     MarkdownEditor* m_description = nullptr;
     AttachmentWidget* m_attachments = nullptr;
-    QListWidget* m_checklist = nullptr;
-    QPushButton *m_remove = nullptr, *m_restore = nullptr;
+    ActivityTimelineWidget* m_activity = nullptr;
 };
 }  // namespace kl
 

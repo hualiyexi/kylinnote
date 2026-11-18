@@ -3,6 +3,7 @@
 #include "../Common.h"
 #include "../domain/AttachmentCodec.h"
 #include "../domain/EntityCodec.h"
+#include "../domain/RecurrenceRule.h"
 
 #include <QHash>
 #include <QJsonDocument>
@@ -73,6 +74,25 @@ bool validNamedEntity(const QString &id, const QString &name, const QDateTime &c
     return true;
 }
 
+bool validSeries(const RecurrenceSeries& series, RecurrenceSpec* spec, QString* error)
+{
+    if (!isUuid(series.id) || !recurrenceFromRuleText(series.ruleJson, spec, error)
+        || recurrenceFrequencyName(*spec) != series.rrule
+        || series.occurrenceOrdinal < 1 || series.completionCount < 0
+        || series.anchorDay < 0 || series.anchorDay > 31
+        || series.dtstartAt.isValid() == series.dtstartDate.isValid()
+        || !entitycodec::validTimeZone(series.timeZone)
+        || !series.createdAt.isValid() || !series.updatedAt.isValid()
+        || series.revision <= 0 || series.serverRevision < 0)
+        return entitycodec::fail(error, QStringLiteral("重复 series 损坏或规则不一致"));
+    return true;
+}
+bool validSeries(const RecurrenceSeries& series, QString* error)
+{
+    RecurrenceSpec spec;
+    return validSeries(series, &spec, error);
+}
+
 bool validEventType(const QString &type)
 {
     const char *const types[] = {"created","changed","kind_changed","trashed","restored","deleted",
@@ -99,6 +119,22 @@ bool readEventValue(const QVariant &value, QVariant *out, QString *error)
     if (value.isNull()) { *out = QVariant(); return true; }
     if (value.type() != QVariant::String) return entitycodec::fail(error, QStringLiteral("数据库事件值不是 TEXT"));
     *out = value; return true;
+}
+QVariant eventContextForDb(const QJsonObject &context)
+{
+    // context 始终序列化为紧凑 JSON 文本；空对象即 '{}'，满足 NOT NULL DEFAULT '{}'。
+    return QVariant(QString::fromUtf8(QJsonDocument(context).toJson(QJsonDocument::Compact)));
+}
+bool readEventContext(const QVariant &value, QJsonObject *out, QString *error)
+{
+    if (value.isNull()) { *out = QJsonObject(); return true; }
+    if (value.type() != QVariant::String) return entitycodec::fail(error, QStringLiteral("数据库事件 context 不是 TEXT"));
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(value.toString().toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+        return entitycodec::fail(error, QStringLiteral("数据库事件 context 不是 JSON 对象"));
+    *out = document.object();
+    return true;
 }
 }
 
@@ -200,26 +236,27 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
     }
 
     QSqlQuery seriesQuery(m_database);
-    if (!seriesQuery.exec(QStringLiteral("SELECT id,rrule,anchor_day,timezone,dtstart_utc_ms,dtstart_date,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM recurrence_series ORDER BY id")))
+    if (!seriesQuery.exec(QStringLiteral("SELECT id,rrule,rule_json,occurrence_ordinal,completion_count,anchor_day,timezone,dtstart_utc_ms,dtstart_date,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM recurrence_series ORDER BY id")))
         return sqlFailure(seriesQuery, error);
     QHash<QString, RecurrenceSeries> seriesById;
     while (seriesQuery.next()) {
         RecurrenceSeries row;
         row.id = seriesQuery.value(0).toString(); row.rrule = seriesQuery.value(1).toString();
-        row.anchorDay = seriesQuery.value(2).toInt(); row.timeZone = seriesQuery.value(3).toString(); row.revision = seriesQuery.value(8).toLongLong();
-        row.serverRevision = seriesQuery.value(9).toLongLong();
-        if (!dbDate(seriesQuery.value(4), &row.dtstartAt, error) || !dbAllDay(seriesQuery.value(5), &row.dtstartDate, error)
-            || !dbDate(seriesQuery.value(6), &row.createdAt, error) || !dbDate(seriesQuery.value(7), &row.updatedAt, error)) return false;
-        if (!isUuid(row.id) || recurrenceRRule(row.rrule) != row.rrule || row.anchorDay < 0 || row.anchorDay > 31
-            || row.revision <= 0 || row.serverRevision < 0 || !entitycodec::validTimeZone(row.timeZone) || !row.createdAt.isValid() || !row.updatedAt.isValid())
-            return entitycodec::fail(error, QStringLiteral("重复 series 损坏"));
+        row.ruleJson = seriesQuery.value(2).toString(); row.occurrenceOrdinal = seriesQuery.value(3).toInt();
+        row.completionCount = seriesQuery.value(4).toInt();
+        row.anchorDay = seriesQuery.value(5).toInt(); row.timeZone = seriesQuery.value(6).toString(); row.revision = seriesQuery.value(11).toLongLong();
+        row.serverRevision = seriesQuery.value(12).toLongLong();
+        if (!dbDate(seriesQuery.value(7), &row.dtstartAt, error) || !dbAllDay(seriesQuery.value(8), &row.dtstartDate, error)
+            || !dbDate(seriesQuery.value(9), &row.createdAt, error) || !dbDate(seriesQuery.value(10), &row.updatedAt, error)) return false;
+        RecurrenceSpec spec;
+        if (!validSeries(row, &spec, error)) return false;
         seriesById.insert(row.id, row); snapshot.recurrenceSeries.append(row);
     }
 
     QSqlQuery entities(m_database);
     if (!entities.exec(QStringLiteral(
             "SELECT id,kind,title,body_markdown,folder_id,list_id,section_id,parent_id,sort_order,status,"
-            "deleted_at_utc_ms,start_at_utc_ms,due_at_utc_ms,all_day_date,timezone,recurrence_series_id,occurrence_key,"
+            "deleted_at_utc_ms,start_at_utc_ms,due_at_utc_ms,all_day_date,all_day_end_date,has_schedule_range,timezone,recurrence_series_id,occurrence_key,"
             "priority,pinned_at_utc_ms,created_at_utc_ms,updated_at_utc_ms,completed_at_utc_ms,abandoned_at_utc_ms,revision,server_revision "
             "FROM entities ORDER BY created_at_utc_ms,id"))) return sqlFailure(entities, error);
     QHash<QString, int> indexes;
@@ -231,24 +268,29 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
         task.folderId = entities.value(4).toString(); task.listId = entities.value(5).toString();
         task.sectionId = entities.value(6).toString(); task.parentId = entities.value(7).toString();
         task.sortOrder = entities.value(8).toLongLong(); task.status = taskStatusFromName(entities.value(9).toString());
-        task.priority = entities.value(17).toInt();
+        task.priority = entities.value(19).toInt();
         if (entityKindName(task.kind) != entities.value(1).toString()) return entitycodec::fail(error, QStringLiteral("实体 kind 损坏"));
         if (taskStatusName(task.status) != entities.value(9).toString()) return entitycodec::fail(error, QStringLiteral("任务状态损坏"));
         task.completed = task.status == TaskStatus::Completed;
         QDateTime *const dates[] = {&task.deletedAt, &task.startAt, &task.dueAt, &task.pinnedAt,
                                    &task.createdAt, &task.updatedAt, &task.completedAt, &task.abandonedAt};
-        const int columns[] = {10, 11, 12, 18, 19, 20, 21, 22};
+        const int columns[] = {10, 11, 12, 20, 21, 22, 23, 24};
         for (int i = 0; i < 8; ++i) if (!dbDate(entities.value(columns[i]), dates[i], error)) return false;
         task.deleted = task.deletedAt.isValid();
-        if (!dbAllDay(entities.value(13), &task.allDayDate, error)) return false;
-        task.timeZone = entities.value(14).toString(); task.recurrenceSeriesId = entities.value(15).toString();
-        task.occurrenceKey = entities.value(16).toString(); stored.revision = entities.value(23).toLongLong();
-        stored.serverRevision = entities.value(24).toLongLong();
+        if (!dbAllDay(entities.value(13), &task.allDayDate, error)
+            || !dbAllDay(entities.value(14), &task.allDayEndDate, error)) return false;
+        task.hasScheduleRange = entities.value(15).toInt() != 0;
+        task.timeZone = entities.value(16).toString(); task.recurrenceSeriesId = entities.value(17).toString();
+        task.occurrenceKey = entities.value(18).toString(); stored.revision = entities.value(25).toLongLong();
+        stored.serverRevision = entities.value(26).toLongLong();
         if (!task.recurrenceSeriesId.isEmpty()) {
             if (!seriesById.contains(task.recurrenceSeriesId))
                 return entitycodec::fail(error, QStringLiteral("任务 series 引用损坏"));
             const RecurrenceSeries series = seriesById.value(task.recurrenceSeriesId);
-            task.rrule = series.rrule; task.recurrence = recurrenceName(series.rrule); stored.recurrenceAnchorDay = series.anchorDay;
+            RecurrenceSpec spec;
+            if (!recurrenceFromRuleText(series.ruleJson, &spec, error)) return false;
+            task.rrule = series.rrule; task.recurrence = recurrenceSummary(spec);
+            stored.recurrenceAnchorDay = series.anchorDay;
         } else {
             task.recurrence = QStringLiteral("none");
         }
@@ -271,22 +313,6 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
             const int index = indexes.value(id, -1);
             id = index >= 0 ? snapshot.entities.at(index).entity.parentId : QString();
         }
-    }
-
-    QSqlQuery checklist(m_database);
-    if (!checklist.exec(QStringLiteral("SELECT id,entity_id,text,done,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM checklist_items ORDER BY entity_id,sort_order,id")))
-        return sqlFailure(checklist, error);
-    QSet<QString> checklistIds;
-    while (checklist.next()) {
-        ChecklistItem row;
-        row.id = checklist.value(0).toString(); row.entityId = checklist.value(1).toString(); row.text = checklist.value(2).toString();
-        row.done = checklist.value(3).toInt() != 0; row.sortOrder = checklist.value(4).toInt(); row.revision = checklist.value(7).toLongLong();
-        row.serverRevision = checklist.value(8).toLongLong();
-        if (!dbDate(checklist.value(5), &row.createdAt, error) || !dbDate(checklist.value(6), &row.updatedAt, error)) return false;
-        const int index = indexes.value(row.entityId, -1);
-        if (index < 0 || checklistIds.contains(row.id) || !isUuid(row.id) || row.sortOrder < 0 || row.revision <= 0
-            || !row.createdAt.isValid() || !row.updatedAt.isValid()) return entitycodec::fail(error, QStringLiteral("独立清单项损坏"));
-        checklistIds.insert(row.id); snapshot.checklistItems.append(row); snapshot.entities[index].entity.checklist.append(row);
     }
 
     QSqlQuery tags(m_database);
@@ -314,15 +340,16 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
     }
 
     QSqlQuery reminders(m_database);
-    if (!reminders.exec(QStringLiteral("SELECT id,entity_id,trigger_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM reminders ORDER BY entity_id,sort_order,trigger_at_utc_ms,id")))
+    if (!reminders.exec(QStringLiteral("SELECT id,entity_id,trigger_at_utc_ms,rule_json,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision FROM reminders ORDER BY entity_id,sort_order,trigger_at_utc_ms,id")))
         return sqlFailure(reminders, error);
     QHash<QString, int> reminderTasks;
     while (reminders.next()) {
         TaskReminder row;
-        row.id = reminders.value(0).toString(); row.entityId = reminders.value(1).toString(); row.sortOrder = reminders.value(3).toInt();
-        row.revision = reminders.value(6).toLongLong(); row.serverRevision = reminders.value(7).toLongLong();
-        if (!dbDate(reminders.value(2), &row.triggerAt, error) || !dbDate(reminders.value(4), &row.createdAt, error)
-            || !dbDate(reminders.value(5), &row.updatedAt, error)) return false;
+        row.id = reminders.value(0).toString(); row.entityId = reminders.value(1).toString(); row.sortOrder = reminders.value(4).toInt();
+        row.ruleJson = reminders.value(3).toString();
+        row.revision = reminders.value(7).toLongLong(); row.serverRevision = reminders.value(8).toLongLong();
+        if (!dbDate(reminders.value(2), &row.triggerAt, error) || !dbDate(reminders.value(5), &row.createdAt, error)
+            || !dbDate(reminders.value(6), &row.updatedAt, error)) return false;
         const int index = indexes.value(row.entityId, -1);
         if (index < 0 || reminderTasks.contains(row.id) || !isUuid(row.id) || !row.triggerAt.isValid()
             || row.sortOrder < 0 || row.revision <= 0 || row.serverRevision < 0 || !row.createdAt.isValid() || !row.updatedAt.isValid())
@@ -353,6 +380,7 @@ bool TaskRepository::readSnapshot(EntitySnapshot *out, QString *error) const
         }
     }
     for (StoredEntity &stored : snapshot.entities) {
+        if (!entitycodec::validate(stored.entity, error)) return false;
         const int primary = primaryReminderIndex(stored.entity);
         stored.entity.reminderAt = primary >= 0 ? stored.entity.reminders.at(primary).triggerAt : QDateTime();
         stored.entity.notifiedAt = primary >= 0 ? stored.entity.reminders.at(primary).deliveredAt : QDateTime();
@@ -474,23 +502,17 @@ bool TaskRepository::saveFolder(Folder *folder, QString *error)
         || !folder->createdAt.isValid() || !folder->updatedAt.isValid() || !isValidListIcon(folder->icon))
         return entitycodec::fail(error, QStringLiteral("文件夹字段非法"));
     folder->name = folder->name.trimmed();
-    QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT name,revision FROM folders WHERE id=?")); exists.addBindValue(folder->id);
+    if (folder->name.size() > kListNameMaxLength)
+        return entitycodec::fail(error, QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+    QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT revision FROM folders WHERE id=?")); exists.addBindValue(folder->id);
     if (!exists.exec()) return sqlFailure(exists, error);
     const bool update = exists.next();
     qint64 storedRevision = 0;
-    QString storedName;
     if (update) {
-        storedName = exists.value(0).toString();
-        storedRevision = exists.value(1).toLongLong();
-        if (folder->name == storedName.trimmed()) folder->name = storedName;
-        // 名称长度只约束新建与真正改名；旧库历史长名称的原名更新保留原名（与清单口径一致）。
-        if (folder->name != storedName && folder->name.size() > kListNameMaxLength)
-            return entitycodec::fail(error, QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
+        storedRevision = exists.value(0).toLongLong();
         // CAS：陈旧快照不得覆盖其他 store 已提交的改名/图标等变更。
         if (folder->revision != storedRevision)
             return entitycodec::fail(error, QStringLiteral("文件夹已被其他操作修改，请重新加载"));
-    } else if (folder->name.size() > kListNameMaxLength) {
-        return entitycodec::fail(error, QStringLiteral("文件夹名称必须为 1..%1 个字符").arg(kListNameMaxLength));
     }
     QSqlQuery query(m_database);
     if (!query.prepare(update ? QStringLiteral("UPDATE folders SET name=?,icon=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=? AND revision=?")
@@ -519,26 +541,20 @@ bool TaskRepository::saveGroup(TaskList *group, QString *error)
         || (group->inbox && group->archivedAtUtcMs != 0))
         return entitycodec::fail(error, QStringLiteral("清单字段非法"));
     group->name = group->name.trimmed();
+    if (group->name.size() > kListNameMaxLength)
+        return entitycodec::fail(error, QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength));
     QSqlQuery exists(m_database);
-    exists.prepare(QStringLiteral("SELECT is_inbox,name,revision FROM lists WHERE id=?")); exists.addBindValue(group->id);
+    exists.prepare(QStringLiteral("SELECT is_inbox,revision FROM lists WHERE id=?")); exists.addBindValue(group->id);
     if (!exists.exec()) return sqlFailure(exists, error);
     const bool update = exists.next();
     qint64 storedRevision = 0;
-    QString storedName;
     if (update) {
         if ((exists.value(0).toInt() != 0) != group->inbox)
             return entitycodec::fail(error, QStringLiteral("清单不可改变 inbox 属性"));
-        storedName = exists.value(1).toString();
-        storedRevision = exists.value(2).toLongLong();
-        if (group->name == storedName.trimmed()) group->name = storedName;
-        // 名称长度只约束新建与真正改名；v5 历史长名称的归档/移动/颜色更新保留原名。
-        if (group->name != storedName && group->name.size() > kListNameMaxLength)
-            return entitycodec::fail(error, QStringLiteral("清单名称超出长度限制"));
+        storedRevision = exists.value(1).toLongLong();
         // CAS：陈旧快照不得覆盖其他 store 已提交的归档/外观等变更。
         if (group->revision != storedRevision)
             return entitycodec::fail(error, QStringLiteral("清单已被其他操作修改，请重新加载"));
-    } else if (group->name.size() > kListNameMaxLength) {
-        return entitycodec::fail(error, QStringLiteral("清单名称必须为 1..%1 个字符").arg(kListNameMaxLength));
     }
     QSqlQuery query(m_database);
     if (!query.prepare(update ? QStringLiteral("UPDATE lists SET folder_id=?,kind=?,name=?,icon=?,color=?,archived_at_utc_ms=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=? AND revision=?")
@@ -586,27 +602,34 @@ bool TaskRepository::saveSection(Section *section, QString *error)
 
 bool TaskRepository::saveSeries(RecurrenceSeries *series, QString *error)
 {
-    if (!isUuid(series->id) || recurrenceRRule(series->rrule) != series->rrule || series->anchorDay < 0
-        || series->anchorDay > 31 || !entitycodec::validTimeZone(series->timeZone)
-        || !series->createdAt.isValid() || !series->updatedAt.isValid())
-        return entitycodec::fail(error, QStringLiteral("重复 series 字段非法"));
+    if (!validSeries(*series, error))
+        return false;
     QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT 1 FROM recurrence_series WHERE id=?")); exists.addBindValue(series->id);
     if (!exists.exec()) return sqlFailure(exists, error);
     const bool update = exists.next();
     QSqlQuery query(m_database);
-    if (!query.prepare(update ? QStringLiteral("UPDATE recurrence_series SET rrule=?,anchor_day=?,timezone=?,dtstart_utc_ms=?,dtstart_date=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
-                              : QStringLiteral("INSERT INTO recurrence_series(id,rrule,anchor_day,timezone,dtstart_utc_ms,dtstart_date,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?,?)")))
+    if (!query.prepare(update ? QStringLiteral("UPDATE recurrence_series SET rrule=?,rule_json=?,occurrence_ordinal=?,completion_count=?,anchor_day=?,timezone=?,dtstart_utc_ms=?,dtstart_date=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=? AND revision=?")
+                              : QStringLiteral("INSERT INTO recurrence_series(id,rrule,rule_json,occurrence_ordinal,completion_count,anchor_day,timezone,dtstart_utc_ms,dtstart_date,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?)")))
         return sqlFailure(query, error);
     if (update) {
-        query.addBindValue(series->rrule); query.addBindValue(series->anchorDay); query.addBindValue(series->timeZone);
+        query.addBindValue(series->rrule); query.addBindValue(series->ruleJson);
+        query.addBindValue(series->occurrenceOrdinal); query.addBindValue(series->completionCount);
+        query.addBindValue(series->anchorDay); query.addBindValue(series->timeZone);
         query.addBindValue(msValue(series->dtstartAt)); query.addBindValue(nullableText(series->dtstartDate.isValid() ? series->dtstartDate.toString(Qt::ISODate) : QString()));
         query.addBindValue(utcMs(series->updatedAt)); query.addBindValue(series->id);
+        query.addBindValue(series->revision);
     } else {
-        query.addBindValue(series->id); query.addBindValue(series->rrule); query.addBindValue(series->anchorDay); query.addBindValue(series->timeZone);
+        query.addBindValue(series->id); query.addBindValue(series->rrule); query.addBindValue(series->ruleJson);
+        query.addBindValue(series->occurrenceOrdinal); query.addBindValue(series->completionCount);
+        query.addBindValue(series->anchorDay); query.addBindValue(series->timeZone);
         query.addBindValue(msValue(series->dtstartAt)); query.addBindValue(nullableText(series->dtstartDate.isValid() ? series->dtstartDate.toString(Qt::ISODate) : QString()));
         query.addBindValue(utcMs(series->createdAt)); query.addBindValue(utcMs(series->updatedAt));
     }
-    return query.exec() ? true : sqlFailure(query, error);
+    if (!query.exec()) return sqlFailure(query, error);
+    if (update && query.numRowsAffected() != 1)
+        return entitycodec::fail(error, QStringLiteral("重复规则已被其他操作修改，请重新加载"));
+    series->revision = update ? series->revision + 1 : 1;
+    return true;
 }
 
 bool TaskRepository::saveTask(StoredEntity *stored, QString *error)
@@ -628,11 +651,11 @@ bool TaskRepository::saveTask(StoredEntity *stored, QString *error)
     QSqlQuery query(m_database);
     if (!query.prepare(inserting
             ? QStringLiteral("INSERT INTO entities(id,kind,title,body_markdown,folder_id,list_id,section_id,parent_id,sort_order,status,"
-                "deleted_at_utc_ms,start_at_utc_ms,due_at_utc_ms,all_day_date,timezone,recurrence_series_id,occurrence_key,priority,"
+                "deleted_at_utc_ms,start_at_utc_ms,due_at_utc_ms,all_day_date,all_day_end_date,has_schedule_range,timezone,recurrence_series_id,occurrence_key,priority,"
                 "pinned_at_utc_ms,created_at_utc_ms,updated_at_utc_ms,completed_at_utc_ms,abandoned_at_utc_ms) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             : QStringLiteral("UPDATE entities SET kind=?,title=?,body_markdown=?,folder_id=?,list_id=?,section_id=?,parent_id=?,sort_order=?,status=?,"
-                "deleted_at_utc_ms=?,start_at_utc_ms=?,due_at_utc_ms=?,all_day_date=?,timezone=?,recurrence_series_id=?,occurrence_key=?,priority=?,"
+                "deleted_at_utc_ms=?,start_at_utc_ms=?,due_at_utc_ms=?,all_day_date=?,all_day_end_date=?,has_schedule_range=?,timezone=?,recurrence_series_id=?,occurrence_key=?,priority=?,"
                 "pinned_at_utc_ms=?,created_at_utc_ms=?,updated_at_utc_ms=?,completed_at_utc_ms=?,abandoned_at_utc_ms=?,revision=revision+1 "
                 "WHERE id=? AND revision=?"))) return sqlFailure(query, error);
     if (inserting) query.addBindValue(task.id);
@@ -641,6 +664,8 @@ bool TaskRepository::saveTask(StoredEntity *stored, QString *error)
     query.addBindValue(nullableText(task.parentId)); query.addBindValue(task.sortOrder); query.addBindValue(taskStatusName(task.status));
     query.addBindValue(msValue(task.deletedAt)); query.addBindValue(msValue(task.startAt)); query.addBindValue(msValue(task.dueAt));
     query.addBindValue(nullableText(task.allDayDate.isValid() ? task.allDayDate.toString(Qt::ISODate) : QString()));
+    query.addBindValue(nullableText(task.allDayEndDate.isValid() ? task.allDayEndDate.toString(Qt::ISODate) : QString()));
+    query.addBindValue(task.hasScheduleRange ? 1 : 0);
     query.addBindValue(task.timeZone); query.addBindValue(nullableText(task.recurrenceSeriesId)); query.addBindValue(nullableText(task.occurrenceKey));
     query.addBindValue(task.priority); query.addBindValue(msValue(task.pinnedAt));
     query.addBindValue(utcMs(task.createdAt)); query.addBindValue(utcMs(task.updatedAt));
@@ -673,29 +698,6 @@ bool TaskRepository::removeTask(const StoredEntity &stored, QString *error)
     return tombstone(QStringLiteral("task"), stored.entity.id, error);
 }
 
-bool TaskRepository::saveChecklist(ChecklistItem *item, QString *error)
-{
-    if (!isUuid(item->id) || !isUuid(item->entityId) || item->sortOrder < 0 || !item->createdAt.isValid() || !item->updatedAt.isValid())
-        return entitycodec::fail(error, QStringLiteral("清单项字段非法"));
-    QSqlQuery exists(m_database); exists.prepare(QStringLiteral("SELECT entity_id FROM checklist_items WHERE id=?")); exists.addBindValue(item->id);
-    if (!exists.exec()) return sqlFailure(exists, error);
-    const bool update = exists.next();
-    if (update && exists.value(0).toString() != item->entityId)
-        return entitycodec::fail(error, QStringLiteral("不能移动清单项到其他实体"));
-    QSqlQuery query(m_database);
-    if (!query.prepare(update ? QStringLiteral("UPDATE checklist_items SET text=?,done=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
-                              : QStringLiteral("INSERT INTO checklist_items(id,entity_id,text,done,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?)")))
-        return sqlFailure(query, error);
-    if (update) {
-        query.addBindValue(safeText(item->text)); query.addBindValue(item->done ? 1 : 0); query.addBindValue(item->sortOrder);
-        query.addBindValue(utcMs(item->updatedAt)); query.addBindValue(item->id);
-    } else {
-        query.addBindValue(item->id); query.addBindValue(item->entityId); query.addBindValue(safeText(item->text));
-        query.addBindValue(item->done ? 1 : 0); query.addBindValue(item->sortOrder); query.addBindValue(utcMs(item->createdAt)); query.addBindValue(utcMs(item->updatedAt));
-    }
-    return query.exec() ? true : sqlFailure(query, error);
-}
-
 bool TaskRepository::saveTag(Tag *tag, QString *error)
 {
     if (!isUuid(tag->id) || tag->name.trimmed().isEmpty()) return entitycodec::fail(error, QStringLiteral("标签字段非法"));
@@ -722,14 +724,16 @@ bool TaskRepository::saveReminder(TaskReminder *reminder, QString *error)
         }
     }
     QSqlQuery query(m_database);
-    if (!query.prepare(update ? QStringLiteral("UPDATE reminders SET trigger_at_utc_ms=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
-                              : QStringLiteral("INSERT INTO reminders(id,entity_id,trigger_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?)")))
+    if (!query.prepare(update ? QStringLiteral("UPDATE reminders SET trigger_at_utc_ms=?,rule_json=?,sort_order=?,updated_at_utc_ms=?,revision=revision+1 WHERE id=?")
+                              : QStringLiteral("INSERT INTO reminders(id,entity_id,trigger_at_utc_ms,rule_json,sort_order,created_at_utc_ms,updated_at_utc_ms) VALUES(?,?,?,?,?,?,?)")))
         return sqlFailure(query, error);
     if (update) {
-        query.addBindValue(utcMs(reminder->triggerAt)); query.addBindValue(reminder->sortOrder); query.addBindValue(utcMs(reminder->updatedAt));
+        query.addBindValue(utcMs(reminder->triggerAt)); query.addBindValue(safeText(reminder->ruleJson));
+        query.addBindValue(reminder->sortOrder); query.addBindValue(utcMs(reminder->updatedAt));
         query.addBindValue(reminder->id);
     } else {
         query.addBindValue(reminder->id); query.addBindValue(reminder->entityId); query.addBindValue(utcMs(reminder->triggerAt));
+        query.addBindValue(safeText(reminder->ruleJson));
         query.addBindValue(reminder->sortOrder); query.addBindValue(utcMs(reminder->createdAt)); query.addBindValue(utcMs(reminder->updatedAt));
     }
     return query.exec() ? true : sqlFailure(query, error);
@@ -743,7 +747,7 @@ bool TaskRepository::saveDelivery(const ReminderDelivery &delivery, QString *err
     query.prepare(QStringLiteral("INSERT INTO reminder_deliveries(reminder_id,installation_id,scheduled_at_utc_ms,delivered_at_utc_ms) "
         "SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM reminders r JOIN entities t ON t.id=r.entity_id "
         "JOIN lists l ON l.id=t.list_id "
-        "WHERE r.id=? AND r.trigger_at_utc_ms=? AND t.kind='task' AND t.status='active' AND t.deleted_at_utc_ms IS NULL "
+        "WHERE r.id=? AND r.trigger_at_utc_ms=? AND (t.kind='note' OR t.status='active') AND t.deleted_at_utc_ms IS NULL "
         "AND l.archived_at_utc_ms=0) "
         "AND NOT EXISTS(SELECT 1 FROM reminder_deliveries WHERE reminder_id=? AND installation_id=?)"));
     query.addBindValue(delivery.reminderId); query.addBindValue(delivery.installationId); query.addBindValue(utcMs(delivery.scheduledAt)); query.addBindValue(utcMs(delivery.deliveredAt));
@@ -847,8 +851,6 @@ bool TaskRepository::queueOutbox(const EntityChanges &changes, QString *error)
     for (const StoredEntity &row : changes.saves) add(QStringLiteral("task"), row.entity.id, QStringLiteral("upsert"));
     for (const StoredEntity &row : changes.touches) add(QStringLiteral("task"), row.entity.id, QStringLiteral("upsert"));
     for (const StoredEntity &row : changes.removals) add(QStringLiteral("task"), row.entity.id, QStringLiteral("delete"));
-    for (const ChecklistItem &row : changes.checklistSaves) add(QStringLiteral("checklist_item"), row.id, QStringLiteral("upsert"));
-    for (const QString &id : changes.checklistRemovals) add(QStringLiteral("checklist_item"), id, QStringLiteral("delete"));
     for (const TaskReminder &row : changes.reminderSaves) add(QStringLiteral("reminder"), row.id, QStringLiteral("upsert"));
     for (const QString &id : changes.reminderRemovals) add(QStringLiteral("reminder"), id, QStringLiteral("delete"));
     for (const Attachment &row : changes.attachmentSaves) add(QStringLiteral("attachment"), row.id, QStringLiteral("upsert"));
@@ -876,7 +878,7 @@ bool TaskRepository::appendEventsInTransaction(QVector<EntityEvent> *events, QSt
     }
     if (batchId.isEmpty()) batchId = newUuid();
     QSqlQuery query(m_database);
-    if (!query.prepare(QStringLiteral("INSERT INTO entity_events(id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?)")))
+    if (!query.prepare(QStringLiteral("INSERT INTO entity_events(id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms,context_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)")))
         return sqlFailure(query, error);
     for (EntityEvent &event : *events) {
         if (event.id.isEmpty()) event.id = newUuid();
@@ -886,6 +888,7 @@ bool TaskRepository::appendEventsInTransaction(QVector<EntityEvent> *events, QSt
         query.bindValue(3, event.entityTitle); query.bindValue(4, event.batchId); query.bindValue(5, event.type);
         query.bindValue(6, safeText(event.field)); query.bindValue(7, eventValueForDb(event.oldValue));
         query.bindValue(8, eventValueForDb(event.newValue)); query.bindValue(9, utcMs(event.occurredAt));
+        query.bindValue(10, eventContextForDb(event.context));
         if (!query.exec()) return sqlFailure(query, error);
     }
     return true;
@@ -912,7 +915,7 @@ QVector<EntityEvent> TaskRepository::eventsFor(const QString &entityId, QString 
     if (!isUuid(entityId)) { entitycodec::fail(error, QStringLiteral("实体 id 必须为 UUID")); return events; }
     if (!ready(error)) return events;
     QSqlQuery query(m_database);
-    query.prepare(QStringLiteral("SELECT id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms "
+    query.prepare(QStringLiteral("SELECT id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms,context_json "
         "FROM entity_events WHERE entity_id=? ORDER BY occurred_at_utc_ms ASC,id ASC"));
     query.addBindValue(entityId);
     if (!query.exec()) { sqlFailure(query, error); return QVector<EntityEvent>(); }
@@ -924,6 +927,7 @@ QVector<EntityEvent> TaskRepository::eventsFor(const QString &entityId, QString 
         if (entityKindName(event.entityKind) != query.value(2).toString()
             || !readEventValue(query.value(7), &event.oldValue, error)
             || !readEventValue(query.value(8), &event.newValue, error)
+            || !readEventContext(query.value(10), &event.context, error)
             || !dbDate(query.value(9), &event.occurredAt, error) || !validEvent(event, error))
             return QVector<EntityEvent>();
         events.append(event);
@@ -937,7 +941,7 @@ QVector<EntityEvent> TaskRepository::allEvents(QString *error) const
     QVector<EntityEvent> events;
     if (!ready(error)) return events;
     QSqlQuery query(m_database);
-    if (!query.exec(QStringLiteral("SELECT id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms "
+    if (!query.exec(QStringLiteral("SELECT id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms,context_json "
         "FROM entity_events ORDER BY occurred_at_utc_ms ASC,id ASC"))) { sqlFailure(query, error); return events; }
     while (query.next()) {
         EntityEvent event;
@@ -947,6 +951,7 @@ QVector<EntityEvent> TaskRepository::allEvents(QString *error) const
         if (entityKindName(event.entityKind) != query.value(2).toString()
             || !readEventValue(query.value(7), &event.oldValue, error)
             || !readEventValue(query.value(8), &event.newValue, error)
+            || !readEventContext(query.value(10), &event.context, error)
             || !dbDate(query.value(9), &event.occurredAt, error) || !validEvent(event, error))
             return QVector<EntityEvent>();
         events.append(event);
@@ -962,6 +967,10 @@ bool TaskRepository::apply(EntityChanges *changes, EntitySnapshot *after, QStrin
     if (!m_database.transaction()) return entitycodec::fail(error, m_database.lastError().text());
     const auto abort = [this]() { m_database.rollback(); return false; };
     if (!appendEventsInTransaction(&pending.eventSaves, error)) return abort();
+    // 旁路生成的事件（删除清单入回收站）与本次 apply 已有事件共用 batch，
+    // 并回 pending.eventSaves，保证上层通过 changes->eventSaves 收到完整通知。
+    QString applyBatchId;
+    for (const EntityEvent &event : pending.eventSaves) if (!event.batchId.isEmpty()) { applyBatchId = event.batchId; break; }
     for (const QString &sourceId : pending.removeLinks) {
         QSqlQuery query(m_database);
         query.prepare(QStringLiteral("DELETE FROM recurrence_links WHERE source_id=?"));
@@ -971,7 +980,8 @@ bool TaskRepository::apply(EntityChanges *changes, EntitySnapshot *after, QStrin
     }
     for (const StoredEntity &stored : pending.touches) if (!touchTask(stored, error)) return abort();
     for (const StoredEntity &stored : pending.removals) if (!removeTask(stored, error)) return abort();
-    const auto removeRows = [this](const QStringList &ids, const QString &table, const QString &type, QString *error) -> bool {
+    const auto removeRows = [this, &applyBatchId, &pending](const QStringList &ids, const QString &table,
+                                                            const QString &type, QString *error) -> bool {
         for (const QString &id : ids) {
             QSqlQuery ownerQuery(m_database);
             ownerQuery.prepare(QStringLiteral("SELECT 1 FROM %1 WHERE id=?").arg(table)); ownerQuery.addBindValue(id);
@@ -988,14 +998,50 @@ bool TaskRepository::apply(EntityChanges *changes, EntitySnapshot *after, QStrin
                 if (inboxQuery.value(0).toString() == id)
                     return entitycodec::fail(error, QStringLiteral("系统 inbox 不可删除"));
                 inboxQuery.finish();
+                QSqlQuery listRow(m_database);
+                listRow.prepare(QStringLiteral("SELECT name FROM lists WHERE id=?")); listRow.addBindValue(id);
+                if (!listRow.exec()) return sqlFailure(listRow, error);
+                if (!listRow.next()) return entitycodec::fail(error, QStringLiteral("要删除的清单不存在"));
+                const QString listName = listRow.value(0).toString();
+                // 旁路也要有日志：原本未进回收站的实体在移入收集箱的同时生成 trashed 事件，
+                // context 保存被删清单的 id 与名称（与 Store 侧事件上下文契约一致）。
+                QVector<EntityEvent> bypassEvents;
+                const QDateTime trashTime = utcNow();
+                QSqlQuery victims(m_database);
+                victims.prepare(QStringLiteral("SELECT id,kind,title FROM entities WHERE list_id=? AND deleted_at_utc_ms IS NULL"));
+                victims.addBindValue(id);
+                if (!victims.exec()) return sqlFailure(victims, error);
+                while (victims.next()) {
+                    EntityEvent event;
+                    event.entityId = victims.value(0).toString();
+                    event.entityKind = entityKindFromName(victims.value(1).toString());
+                    event.entityTitle = victims.value(2).toString();
+                    event.batchId = applyBatchId;
+                    event.type = QStringLiteral("trashed");
+                    event.field = QStringLiteral("deleted");
+                    event.oldValue = QVariant(QStringLiteral("0"));
+                    event.newValue = QVariant(QStringLiteral("1"));
+                    event.occurredAt = trashTime;
+                    QJsonObject context;
+                    context.insert(QStringLiteral("listId"), id);
+                    context.insert(QStringLiteral("listName"), listName);
+                    event.context = context;
+                    if (entityKindName(event.entityKind) != victims.value(1).toString())
+                        return entitycodec::fail(error, QStringLiteral("实体 kind 损坏"));
+                    bypassEvents.append(event);
+                }
                 QSqlQuery move(m_database);
                 move.prepare(QStringLiteral("UPDATE entities SET list_id=(SELECT id FROM lists WHERE is_inbox=1),"
                     "section_id=NULL,folder_id=NULL,"
                     "deleted_at_utc_ms=CASE WHEN deleted_at_utc_ms IS NULL THEN ? ELSE deleted_at_utc_ms END,"
                     "updated_at_utc_ms=?,revision=revision+1 WHERE list_id=?"));
-                const qint64 now = utcMs(utcNow());
+                const qint64 now = utcMs(trashTime);
                 move.addBindValue(now); move.addBindValue(now); move.addBindValue(id);
                 if (!move.exec()) return sqlFailure(move, error);
+                if (!bypassEvents.isEmpty()) {
+                    if (!appendEventsInTransaction(&bypassEvents, error)) return false;
+                    pending.eventSaves += bypassEvents;
+                }
             } else if (type == QStringLiteral("section")) {
                 QSqlQuery move(m_database);
                 move.prepare(QStringLiteral("UPDATE entities SET section_id=NULL,updated_at_utc_ms=?,revision=revision+1 WHERE section_id=?"));
@@ -1022,13 +1068,6 @@ bool TaskRepository::apply(EntityChanges *changes, EntitySnapshot *after, QStrin
     if (!removeRows(pending.folderRemovals, QStringLiteral("folders"), QStringLiteral("folder"), error)
         || !removeRows(pending.groupRemovals, QStringLiteral("lists"), QStringLiteral("list"), error)
         || !removeRows(pending.sectionRemovals, QStringLiteral("sections"), QStringLiteral("section"), error)) return abort();
-    for (const QString &id : pending.checklistRemovals) {
-        QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("DELETE FROM checklist_items WHERE id=?"));
-        query.addBindValue(id);
-        if (!query.exec()) { sqlFailure(query, error); return abort(); }
-        if (query.numRowsAffected() != 1 || !tombstone(QStringLiteral("checklist_item"), id, error)) return abort();
-    }
     for (const QString &id : pending.reminderRemovals) {
         QSqlQuery query(m_database);
         query.prepare(QStringLiteral("DELETE FROM reminders WHERE id=?"));
@@ -1041,7 +1080,6 @@ bool TaskRepository::apply(EntityChanges *changes, EntitySnapshot *after, QStrin
     for (Section &row : pending.sectionSaves) if (!saveSection(&row, error)) return abort();
     for (RecurrenceSeries &row : pending.seriesSaves) if (!saveSeries(&row, error)) return abort();
     for (StoredEntity &row : pending.saves) if (!saveTask(&row, error)) return abort();
-    for (ChecklistItem &row : pending.checklistSaves) if (!saveChecklist(&row, error)) return abort();
     for (Tag &row : pending.tagSaves) if (!saveTag(&row, error)) return abort();
     for (const TaskTag &row : pending.taskTagRemovals) {
         QSqlQuery query(m_database); query.prepare(QStringLiteral("DELETE FROM entity_tags WHERE id=?"));
@@ -1148,7 +1186,7 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
         || !exec(QStringLiteral("DROP TRIGGER prevent_inbox_unset"))
         || !exec(QStringLiteral("DROP TRIGGER prevent_inbox_archive"))) return abort();
     const char *const clearOrder[] = {
-        "entity_events", "reminder_deliveries", "desktop_notes", "attachments", "checklist_items",
+        "entity_events", "reminder_deliveries", "desktop_notes", "attachments",
         "reminders", "entity_tags", "tags", "recurrence_links", "entities", "recurrence_series",
         "sections", "lists", "folders", "view_defs", "sync_bindings", "tombstones", "outbox"
     };
@@ -1181,8 +1219,10 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
     }
     for (const RecurrenceSeries &row : incoming.recurrenceSeries) {
         QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("INSERT INTO recurrence_series(id,rrule,anchor_day,timezone,dtstart_utc_ms,dtstart_date,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?,?,?)"));
-        query.addBindValue(row.id); query.addBindValue(row.rrule); query.addBindValue(row.anchorDay); query.addBindValue(row.timeZone);
+        query.prepare(QStringLiteral("INSERT INTO recurrence_series(id,rrule,rule_json,occurrence_ordinal,completion_count,anchor_day,timezone,dtstart_utc_ms,dtstart_date,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        query.addBindValue(row.id); query.addBindValue(row.rrule); query.addBindValue(row.ruleJson);
+        query.addBindValue(row.occurrenceOrdinal); query.addBindValue(row.completionCount);
+        query.addBindValue(row.anchorDay); query.addBindValue(row.timeZone);
         query.addBindValue(msValue(row.dtstartAt)); query.addBindValue(nullableText(row.dtstartDate.isValid() ? row.dtstartDate.toString(Qt::ISODate) : QString()));
         query.addBindValue(utcMs(row.createdAt)); query.addBindValue(utcMs(row.updatedAt)); query.addBindValue(row.revision); query.addBindValue(row.serverRevision);
         if (!query.exec()) { sqlFailure(query, error); return abort(); }
@@ -1204,27 +1244,21 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
         const Entity &row = stored.entity;
         QSqlQuery query(m_database);
         query.prepare(QStringLiteral("INSERT INTO entities(id,kind,title,body_markdown,folder_id,list_id,section_id,parent_id,sort_order,status,"
-            "deleted_at_utc_ms,start_at_utc_ms,due_at_utc_ms,all_day_date,timezone,recurrence_series_id,occurrence_key,priority,"
+            "deleted_at_utc_ms,start_at_utc_ms,due_at_utc_ms,all_day_date,all_day_end_date,has_schedule_range,timezone,recurrence_series_id,occurrence_key,priority,"
             "pinned_at_utc_ms,revision,server_revision,created_at_utc_ms,updated_at_utc_ms,completed_at_utc_ms,abandoned_at_utc_ms) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
         query.addBindValue(row.id); query.addBindValue(entityKindName(row.kind)); query.addBindValue(safeText(row.title)); query.addBindValue(safeText(row.body));
         query.addBindValue(nullableText(row.folderId)); query.addBindValue(row.listId); query.addBindValue(nullableText(row.sectionId));
         query.addBindValue(nullableText(row.parentId)); query.addBindValue(row.sortOrder); query.addBindValue(taskStatusName(row.status));
         query.addBindValue(msValue(row.deletedAt)); query.addBindValue(msValue(row.startAt)); query.addBindValue(msValue(row.dueAt));
         query.addBindValue(nullableText(row.allDayDate.isValid() ? row.allDayDate.toString(Qt::ISODate) : QString()));
+        query.addBindValue(nullableText(row.allDayEndDate.isValid() ? row.allDayEndDate.toString(Qt::ISODate) : QString()));
+        query.addBindValue(row.hasScheduleRange ? 1 : 0);
         query.addBindValue(row.timeZone); query.addBindValue(nullableText(row.recurrenceSeriesId)); query.addBindValue(nullableText(row.occurrenceKey));
         query.addBindValue(row.priority); query.addBindValue(msValue(row.pinnedAt)); query.addBindValue(stored.revision);
         query.addBindValue(stored.serverRevision);
         query.addBindValue(utcMs(row.createdAt)); query.addBindValue(utcMs(row.updatedAt));
         query.addBindValue(msValue(row.completedAt)); query.addBindValue(msValue(row.abandonedAt));
-        if (!query.exec()) { sqlFailure(query, error); return abort(); }
-    }
-    for (const ChecklistItem &row : incoming.checklistItems) {
-        QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("INSERT INTO checklist_items(id,entity_id,text,done,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?,?)"));
-        query.addBindValue(row.id); query.addBindValue(row.entityId); query.addBindValue(safeText(row.text)); query.addBindValue(row.done ? 1 : 0);
-        query.addBindValue(row.sortOrder); query.addBindValue(utcMs(row.createdAt)); query.addBindValue(utcMs(row.updatedAt)); query.addBindValue(row.revision);
-        query.addBindValue(row.serverRevision);
         if (!query.exec()) { sqlFailure(query, error); return abort(); }
     }
     for (const Tag &row : incoming.tags) {
@@ -1242,12 +1276,13 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
     }
     for (const TaskReminder &row : incoming.reminders) {
         QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("INSERT INTO reminders(id,entity_id,trigger_at_utc_ms,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?)"));
-        query.addBindValue(row.id); query.addBindValue(row.entityId); query.addBindValue(utcMs(row.triggerAt)); query.addBindValue(row.sortOrder);
+        query.prepare(QStringLiteral("INSERT INTO reminders(id,entity_id,trigger_at_utc_ms,rule_json,sort_order,created_at_utc_ms,updated_at_utc_ms,revision,server_revision) VALUES(?,?,?,?,?,?,?,?,?)"));
+        query.addBindValue(row.id); query.addBindValue(row.entityId); query.addBindValue(utcMs(row.triggerAt)); query.addBindValue(safeText(row.ruleJson));
+        query.addBindValue(row.sortOrder);
         query.addBindValue(utcMs(row.createdAt)); query.addBindValue(utcMs(row.updatedAt)); query.addBindValue(row.revision); query.addBindValue(row.serverRevision);
         if (!query.exec()) { sqlFailure(query, error); return abort(); }
     }
-    // 导入时刻之前的全部提醒都只写本机抑制凭证；是否调度仍由正常 task/active 门槛决定。
+    // 导入时刻之前的全部提醒都只写本机抑制凭证；投递仍由 active 任务或未删除笔记门槛决定。
     {
         QSqlQuery deliveries(m_database);
         deliveries.prepare(QStringLiteral("INSERT INTO reminder_deliveries(reminder_id,installation_id,scheduled_at_utc_ms,delivered_at_utc_ms) "
@@ -1281,11 +1316,12 @@ bool TaskRepository::replaceAll(const EntitySnapshot &incoming, const QVector<En
     for (const EntityEvent &event : events) {
         if (!validEvent(event, error)) return abort();
         QSqlQuery query(m_database);
-        query.prepare(QStringLiteral("INSERT INTO entity_events(id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?)"));
+        query.prepare(QStringLiteral("INSERT INTO entity_events(id,entity_id,entity_kind,entity_title,batch_id,type,field,old_value,new_value,occurred_at_utc_ms,context_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)"));
         query.addBindValue(event.id); query.addBindValue(event.entityId); query.addBindValue(entityKindName(event.entityKind));
         query.addBindValue(safeText(event.entityTitle)); query.addBindValue(event.batchId); query.addBindValue(event.type);
         query.addBindValue(safeText(event.field)); query.addBindValue(eventValueForDb(event.oldValue));
         query.addBindValue(eventValueForDb(event.newValue)); query.addBindValue(utcMs(event.occurredAt));
+        query.addBindValue(eventContextForDb(event.context));
         if (!query.exec()) { sqlFailure(query, error); return abort(); }
     }
     QSqlQuery meta(m_database);

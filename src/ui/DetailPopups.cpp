@@ -3,14 +3,17 @@
 
 #include <QGraphicsDropShadowEffect>
 #include <QGuiApplication>
-#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QScreen>
 #include <QTextBoundaryFinder>
-#include <QTreeWidget>
-#include <QTreeWidgetItemIterator>
+#include <QTimer>
 #include <QVBoxLayout>
+#include <QWidgetAction>
+#include <algorithm>
 #include "AppIcons.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
@@ -134,124 +137,217 @@ EntityInfoPopup::EntityInfoPopup(QWidget* parent) : DetailPopup(parent) {
 }
 
 void EntityInfoPopup::setDocument(const Entity& entity, const QString& title,
-                                  const QString& plainBody, const QStringList& checklist) {
-    const QString text = title + QLatin1Char('\n') + plainBody + QLatin1Char('\n') + checklist.join(QLatin1Char('\n'));
+                                  const QString& plainBody) {
+    const QString text = title + QLatin1Char('\n') + plainBody;
     QString characters = text;
     characters.remove(QLatin1Char('\r'));
     characters.remove(QLatin1Char('\n'));
     m_words->setNum(wordCount(text));
-    m_words->setToolTip(QStringLiteral("标题、正文与检查项中的中文字符及英文单词，不计格式标记与标点"));
+    m_words->setToolTip(QStringLiteral("标题与正文中的中文字符及英文单词，不计格式标记与标点"));
     m_characters->setNum(characters.toUcs4().size());
-    m_characters->setToolTip(QStringLiteral("标题、正文与检查项中的字符，含空格和标点，不含换行与格式标记"));
+    m_characters->setToolTip(QStringLiteral("标题与正文中的字符，含空格和标点，不含换行与格式标记"));
     m_created->setText(displayDate(entity.createdAt));
     m_updated->setText(displayDate(entity.updatedAt));
     m_created->setToolTip(toAppTime(entity.createdAt).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
     m_updated->setToolTip(toAppTime(entity.updatedAt).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
 }
 
-ListSelectPopup::ListSelectPopup(QWidget* parent) : DetailPopup(parent) {
-    setObjectName(QStringLiteral("GroupSelectMenu"));
-    setWindowTitle(QStringLiteral("所属清单"));
-    card()->setFixedWidth(240);
-    auto* contents = new QVBoxLayout(card());
-    contents->setContentsMargins(8, 6, 8, 8);
-    contents->setSpacing(4);
-    m_search = new QLineEdit(card());
-    m_search->setObjectName(QStringLiteral("ListSearch"));
-    m_search->setPlaceholderText(QStringLiteral("搜索清单"));
-    m_search->setAccessibleName(QStringLiteral("搜索清单"));
-    m_search->addAction(AppIcons::icon(IconId::Search), QLineEdit::LeadingPosition);
-    contents->addWidget(m_search);
-    m_tree = new QTreeWidget(card());
-    m_tree->setObjectName(QStringLiteral("ListSelectTree"));
-    m_tree->setHeaderHidden(true);
-    m_tree->setColumnCount(2);
-    m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_tree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
-    m_tree->setColumnWidth(1, 24);
-    m_tree->setIndentation(14);
-    m_tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    contents->addWidget(m_tree);
-    m_empty = new QLabel(QStringLiteral("没有匹配的清单"), card());
-    m_empty->setProperty("muted", true);
-    m_empty->setContentsMargins(8, 10, 8, 10);
-    m_empty->hide();
-    contents->addWidget(m_empty);
-    connect(m_search, &QLineEdit::textChanged, this, &ListSelectPopup::filterLists);
-    const auto select = [this](QTreeWidgetItem* item) {
-        const QString id = item->data(0, Qt::UserRole).toString();
-        if (id.isEmpty()) {
-            item->setExpanded(!item->isExpanded());
-            return;
-        }
-        hide();
-        emit listSelected(id);
+ListDestinationMenu::ListDestinationMenu(QWidget* parent) : PopupMenu(parent) {
+    setObjectName(QStringLiteral("ListDestinationMenu"));
+    setProperty("entityMenu", true);
+    setMinimumWidth(264);
+    auto* host = new QWidget(this);
+    host->setObjectName(QStringLiteral("ListSearchRow"));
+    host->setFixedHeight(34);
+    auto* row = new QHBoxLayout(host);
+    row->setContentsMargins(12, 0, 12, 0);
+    row->setSpacing(8);
+    m_searchIcon = new QLabel(host);
+    m_searchIcon->setObjectName(QStringLiteral("ListSearchIcon"));
+    m_searchIcon->setFixedSize(18, 18);
+    m_searchIcon->setAlignment(Qt::AlignCenter);
+    const auto updateSearchIcon = [this]() {
+        m_searchIcon->setPixmap(AppIcons::icon(QStringLiteral("search-thin"),
+            ds::ColorToken::TextSecondary, 18).pixmap(18, 18));
     };
-    connect(m_tree, &QTreeWidget::itemClicked, this, [select](QTreeWidgetItem* item, int) { select(item); });
-    connect(m_tree, &QTreeWidget::itemActivated, this, [select](QTreeWidgetItem* item, int) { select(item); });
-    connect(m_search, &QLineEdit::returnPressed, this, [this, select]() {
-        for (QTreeWidgetItemIterator it(m_tree); *it; ++it) {
-            if (!(*it)->isHidden() && !(*it)->data(0, Qt::UserRole).toString().isEmpty()) {
-                select(*it);
-                break;
-            }
-        }
+    updateSearchIcon();
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this,
+            [updateSearchIcon](ds::Theme) { updateSearchIcon(); });
+    m_search = new QLineEdit(host);
+    m_search->setObjectName(QStringLiteral("ListSearch"));
+    m_search->setFixedHeight(18);
+    m_search->setPlaceholderText(QStringLiteral("搜索清单"));
+    m_search->setClearButtonEnabled(true);
+    m_search->setAccessibleName(QStringLiteral("搜索清单"));
+    m_search->installEventFilter(this);
+    row->addWidget(m_searchIcon, 0, Qt::AlignVCenter);
+    row->addWidget(m_search, 1, Qt::AlignVCenter);
+    auto* searchAction = new QWidgetAction(this);
+    searchAction->setObjectName(QStringLiteral("listSearchAction"));
+    searchAction->setDefaultWidget(host);
+    addAction(searchAction);
+    addSeparator();
+    m_empty = new QAction(QStringLiteral("没有匹配清单"), this);
+    m_empty->setObjectName(QStringLiteral("listDestinationEmpty"));
+    m_empty->setEnabled(false);
+    m_empty->setVisible(false);
+    addAction(m_empty);
+    setStyleSheet(styleSheet() + QStringLiteral(
+        "QWidget#ListSearchRow{background:transparent;border:0;}"
+        "QLabel#ListSearchIcon{background:transparent;border:0;}"
+        "QLineEdit#ListSearch{background:transparent;border:0;border-radius:0;padding:0;}"
+        "QLineEdit#ListSearch:hover,QLineEdit#ListSearch:focus{background:transparent;border:0;}"));
+    connect(m_search, &QLineEdit::textChanged, this, [this](const QString&) { filterLists(); });
+    connect(this, &QMenu::aboutToShow, this, [this]() {
+        QTimer::singleShot(0, m_search, [this]() { m_search->setFocus(Qt::TabFocusReason); });
     });
 }
 
-void ListSelectPopup::setLists(const QVector<TaskList>& lists, const QVector<Folder>& folders,
-                              const QString& selectedId) {
-    m_tree->clear();
-    m_search->clear();
-    QHash<QString, QTreeWidgetItem*> parents;
+QAction* ListDestinationMenu::addDestination(QMenu* menu, const TaskList& list,
+                                             const QString& path, bool searchResult) {
+    auto* action = new QAction(ListAppearance::icon(list, 18,
+        ThemeManager::instance().color(ds::ColorToken::TextSecondary)),
+        searchResult && !path.isEmpty() ? QStringLiteral("%1 — %2").arg(list.name, path) : list.name, menu);
+    action->setObjectName(QStringLiteral("listDestination.%1%2")
+        .arg(searchResult ? QStringLiteral("search.") : QString(), list.id));
+    action->setProperty("targetListId", list.id);
+    action->setProperty("targetListName", list.name);
+    action->setProperty("targetFolderName", path);
+    action->setCheckable(true);
+    action->setChecked(list.id == m_selectedId);
+    action->setToolTip(path.isEmpty() ? list.name : QStringLiteral("%1 / %2").arg(path, list.name));
+    menu->addAction(action);
+    connect(action, &QAction::triggered, this, [this, id = list.id]() {
+        hide();
+        emit listSelected(id);
+    });
+    return action;
+}
+
+void ListDestinationMenu::setLists(const QVector<TaskList>& inputLists,
+                                   const QVector<Folder>& inputFolders,
+                                   const QString& selectedId) {
+    for (QAction* action : m_rootActions) {
+        if (!action) continue;
+        removeAction(action);
+        // 文件夹的 menuAction 由子菜单拥有并随子菜单销毁；普通清单动作才由本菜单销毁。
+        if (action->parent() == this) delete action;
+    }
+    for (QAction* action : m_searchActions) { removeAction(action); delete action; }
+    m_rootActions.clear();
+    m_searchActions.clear();
+    for (const QPointer<PopupMenu>& menu : m_folderMenus) if (menu) {
+        menu->hide();
+        // 延迟销毁前先脱离对象树，避免重建期间 findChild 命中上一轮同名菜单及其动作。
+        menu->setParent(nullptr);
+        menu->deleteLater();
+    }
+    m_folderMenus.clear();
+    m_selectedId = selectedId;
+    QVector<TaskList> lists;
+    for (const TaskList& list : inputLists) if (list.archivedAtUtcMs == 0) lists.append(list);
+    QVector<Folder> folders = inputFolders;
+    const auto ordered = [](const TaskList& a, const TaskList& b) {
+        return a.sortOrder != b.sortOrder ? a.sortOrder < b.sortOrder
+            : QString::localeAwareCompare(a.name, b.name) < 0;
+    };
+    std::sort(lists.begin(), lists.end(), ordered);
+    std::sort(folders.begin(), folders.end(), [](const Folder& a, const Folder& b) {
+        return a.sortOrder != b.sortOrder ? a.sortOrder < b.sortOrder
+            : QString::localeAwareCompare(a.name, b.name) < 0;
+    });
     for (const Folder& folder : folders) {
-        auto* item = new QTreeWidgetItem(m_tree, {folder.name});
-        item->setIcon(0, AppIcons::icon(IconId::Folder));
-        item->setExpanded(true);
-        parents.insert(folder.id, item);
+        auto* child = new PopupMenu(folder.name, this);
+        child->setObjectName(QStringLiteral("listFolderMenu.%1").arg(folder.id));
+        child->setProperty("entityMenu", true);
+        child->setMinimumWidth(224);
+        bool empty = true;
+        for (const TaskList& list : lists) if (list.folderId == folder.id) {
+            addDestination(child, list, folder.name, false);
+            empty = false;
+        }
+        if (empty) {
+            QAction* action = child->addAction(QStringLiteral("空文件夹"));
+            action->setEnabled(false);
+        }
+        QAction* folderAction = QMenu::addMenu(child);
+        folderAction->setIcon(AppIcons::icon(IconId::Folder, 18));
+        folderAction->setProperty("folderId", folder.id);
+        m_rootActions.append(folderAction);
+        m_folderMenus.append(child);
     }
+    for (const TaskList& list : lists) if (list.folderId.isEmpty())
+        m_rootActions.append(addDestination(this, list, QString(), false));
     for (const TaskList& list : lists) {
-        auto* item = parents.contains(list.folderId)
-            ? new QTreeWidgetItem(parents.value(list.folderId), {list.name})
-            : new QTreeWidgetItem(m_tree, {list.name});
-        item->setIcon(0, ListAppearance::icon(
-            list, 16, ThemeManager::instance().color(ds::ColorToken::TextSecondary)));
-        item->setData(0, Qt::UserRole, list.id);
-        item->setToolTip(0, list.name);
-        if (list.id == selectedId) {
-            item->setIcon(1, AppIcons::icon(IconId::Check, ds::ColorToken::Primary));
-            m_tree->setCurrentItem(item);
-        }
+        QString path;
+        for (const Folder& folder : folders) if (folder.id == list.folderId) path = folder.name;
+        m_searchActions.append(addDestination(this, list, path, true));
     }
-    m_tree->setFixedHeight(qBound(64, (lists.size() + folders.size()) * 32 + 4, 256));
-    filterLists(QString());
+    insertAction(m_empty, nullptr);
+    m_search->clear();
+    filterLists();
 }
 
-void ListSelectPopup::filterLists(const QString& query) {
-    bool any = false;
-    for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
-        auto* item = m_tree->topLevelItem(i);
-        const bool folderMatch = item->text(0).contains(query, Qt::CaseInsensitive);
-        bool visible = folderMatch;
-        if (item->childCount()) {
-            visible = false;
-            for (int j = 0; j < item->childCount(); ++j) {
-                auto* child = item->child(j);
-                const bool match = folderMatch || child->text(0).contains(query, Qt::CaseInsensitive);
-                child->setHidden(!match);
-                visible = visible || match;
+void ListDestinationMenu::filterLists() {
+    const QString query = m_search->text().trimmed();
+    for (const QPointer<PopupMenu>& menu : m_folderMenus) if (menu && !query.isEmpty()) menu->hide();
+    for (QAction* action : m_rootActions) action->setVisible(query.isEmpty());
+    int matches = 0;
+    for (QAction* action : m_searchActions) {
+        const bool visible = !query.isEmpty()
+            && (action->property("targetListName").toString().contains(query, Qt::CaseInsensitive)
+                || action->property("targetFolderName").toString().contains(query, Qt::CaseInsensitive));
+        action->setVisible(visible);
+        if (visible) ++matches;
+    }
+    m_empty->setVisible(!query.isEmpty() && matches == 0);
+}
+
+bool ListDestinationMenu::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_search && event->type() == QEvent::KeyPress) {
+        const QKeyEvent* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Down || key->key() == Qt::Key_Up
+            || key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
+            const QVector<QAction*> candidates = m_search->text().trimmed().isEmpty()
+                ? m_rootActions : m_searchActions;
+            for (QAction* action : candidates) if (action->isVisible() && action->isEnabled()) {
+                if (key->key() != Qt::Key_Down && key->key() != Qt::Key_Up
+                    && !action->property("targetListId").toString().isEmpty()) {
+                    action->trigger();
+                } else {
+                    setActiveAction(action);
+                    setFocus(Qt::TabFocusReason);
+                }
+                return true;
             }
-            if (!query.isEmpty()) item->setExpanded(true);
+            return key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
         }
-        item->setHidden(!visible);
-        any = any || visible;
     }
-    m_tree->setVisible(any);
-    m_empty->setVisible(!any);
+    return PopupMenu::eventFilter(watched, event);
 }
 
-void ListSelectPopup::popupAbove(QWidget* anchor) {
-    popupAt(anchor, true);
-    m_search->setFocus();
+void ListDestinationMenu::popupAbove(QWidget* anchor) {
+    if (!anchor) return;
+    ensurePolished();
+    const QSize size = sizeHint();
+    const int margin = PopupMenu::shadowMargin();
+    const QSize cardSize(size.width() - 2 * margin, size.height() - 2 * margin);
+    const QPoint top = anchor->mapToGlobal(QPoint(0, 0));
+    QPoint position(top.x(), top.y() - cardSize.height() - 8);
+    if (QScreen* screen = QGuiApplication::screenAt(top)) {
+        const QRect area = screen->availableGeometry();
+        position.setX(qBound(area.left(), position.x(),
+                             qMax(area.left(), area.right() - cardSize.width() + 1)));
+        if (position.y() < area.top())
+            position.setY(anchor->mapToGlobal(QPoint(0, anchor->height())).y() + 8);
+    }
+    popup(position);
+    // QMenu::popup 还会按自身 action/panel 几何二次偏移；返回后统一以可见卡片落位。
+    move(position - QPoint(margin, margin));
+}
+
+ListSelectPopup::ListSelectPopup(QWidget* parent) : ListDestinationMenu(parent) {
+    setObjectName(QStringLiteral("GroupSelectMenu"));
+    setWindowTitle(QStringLiteral("所属清单"));
 }
 } // namespace kl

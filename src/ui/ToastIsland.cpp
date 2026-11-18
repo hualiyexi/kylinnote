@@ -1,6 +1,7 @@
 #include "ToastIsland.h"
 
 #include <QHBoxLayout>
+#include <QEvent>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
@@ -66,6 +67,20 @@ void ToastIsland::showMessage(const QString& text, int timeoutMs) {
     present(text, timeoutMs);
 }
 
+void ToastIsland::showTransient(QWidget* host, const QString& text) {
+    if (!host) return;
+    ToastIsland* toast = host->findChild<ToastIsland*>(QStringLiteral("EntityCommandToast"), Qt::FindDirectChildrenOnly);
+    if (!toast) {
+        toast = new ToastIsland(host);
+        toast->setObjectName(QStringLiteral("EntityCommandToast"));
+        toast->m_followHost = true;
+        host->installEventFilter(toast);
+    }
+    toast->showMessage(text);
+    toast->move((host->width() - toast->width()) / 2, host->height() - toast->height() - 24);
+    toast->raise();
+}
+
 void ToastIsland::showAction(const QString& text, const QString& accessibleAction,
                              std::function<bool()> action, int timeoutMs) {
     m_callback = std::move(action);
@@ -121,6 +136,14 @@ void ToastIsland::expire() {
     }
     m_callback = nullptr;
     hide();
+}
+
+bool ToastIsland::eventFilter(QObject* watched, QEvent* event) {
+    if (m_followHost && watched == parent() && event->type() == QEvent::Resize) {
+        QWidget* host = parentWidget();
+        if (host) move((host->width() - width()) / 2, host->height() - height() - 24);
+    }
+    return QFrame::eventFilter(watched, event);
 }
 
 void ToastIsland::paintEvent(QPaintEvent*) {

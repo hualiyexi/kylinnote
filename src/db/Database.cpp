@@ -2,6 +2,7 @@
 
 #include "../Common.h"
 
+#include <QFile>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
@@ -30,7 +31,10 @@ const char *const kSchema[] = {
     "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
     "FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE CASCADE)",
     "CREATE TABLE recurrence_series("
-    "id TEXT PRIMARY KEY,rrule TEXT NOT NULL CHECK(rrule LIKE 'FREQ=%'),anchor_day INTEGER NOT NULL DEFAULT 0 CHECK(anchor_day BETWEEN 0 AND 31),"
+    "id TEXT PRIMARY KEY,rrule TEXT NOT NULL CHECK(rrule LIKE 'FREQ=%'),rule_json TEXT NOT NULL DEFAULT '' CHECK(rule_json<>''),"
+    "occurrence_ordinal INTEGER NOT NULL DEFAULT 1 CHECK(occurrence_ordinal>=1),"
+    "completion_count INTEGER NOT NULL DEFAULT 0 CHECK(completion_count>=0),"
+    "anchor_day INTEGER NOT NULL DEFAULT 0 CHECK(anchor_day BETWEEN 0 AND 31),"
     "timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',dtstart_utc_ms INTEGER,dtstart_date TEXT,"
     "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
     "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
@@ -40,12 +44,18 @@ const char *const kSchema[] = {
     "folder_id TEXT,list_id TEXT NOT NULL,section_id TEXT,parent_id TEXT,"
     "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
     "status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','abandoned')),"
-    "deleted_at_utc_ms INTEGER,start_at_utc_ms INTEGER,due_at_utc_ms INTEGER,all_day_date TEXT,"
-    "timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',recurrence_series_id TEXT,occurrence_key TEXT,"
+    "deleted_at_utc_ms INTEGER,start_at_utc_ms INTEGER,due_at_utc_ms INTEGER,all_day_date TEXT,all_day_end_date TEXT,"
+    "has_schedule_range INTEGER NOT NULL DEFAULT 0 CHECK(has_schedule_range IN (0,1)),timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',recurrence_series_id TEXT,occurrence_key TEXT,"
     "priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN 0 AND 3),pinned_at_utc_ms INTEGER,"
     "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
     "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,completed_at_utc_ms INTEGER,abandoned_at_utc_ms INTEGER,"
     "UNIQUE(id,kind),CHECK(kind='task' OR parent_id IS NULL),CHECK(parent_id IS NULL OR parent_id<>id),"
+    "CHECK(all_day_date IS NULL OR (start_at_utc_ms IS NULL AND due_at_utc_ms IS NULL)),"
+    "CHECK(has_schedule_range=0 OR ((all_day_date IS NOT NULL AND all_day_end_date IS NOT NULL) "
+    "OR (start_at_utc_ms IS NOT NULL AND due_at_utc_ms IS NOT NULL))),"
+    "CHECK(has_schedule_range=1 OR (all_day_end_date IS NULL AND start_at_utc_ms IS NULL)),"
+    "CHECK(start_at_utc_ms IS NULL OR due_at_utc_ms IS NULL OR start_at_utc_ms<=due_at_utc_ms),"
+    "CHECK(all_day_end_date IS NULL OR all_day_date IS NULL OR all_day_date<=all_day_end_date),"
     "CHECK((status='completed')=(completed_at_utc_ms IS NOT NULL)),"
     "CHECK((status='abandoned')=(abandoned_at_utc_ms IS NOT NULL)),"
     "CHECK((recurrence_series_id IS NULL)=(occurrence_key IS NULL)),UNIQUE(recurrence_series_id,occurrence_key),"
@@ -58,11 +68,6 @@ const char *const kSchema[] = {
     "id TEXT PRIMARY KEY,source_id TEXT NOT NULL UNIQUE REFERENCES entities(id) ON DELETE CASCADE,"
     "next_id TEXT UNIQUE REFERENCES entities(id) ON DELETE SET NULL,next_revision INTEGER NOT NULL CHECK(next_revision>0),"
     "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0))",
-    "CREATE TABLE checklist_items("
-    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),"
-    "sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,"
-    "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
-    "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
     "CREATE TABLE tags("
     "id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name))>0),normalized_name TEXT NOT NULL,color TEXT NOT NULL DEFAULT '',"
     "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
@@ -73,7 +78,7 @@ const char *const kSchema[] = {
     "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE,"
     "FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE)",
     "CREATE TABLE reminders("
-    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,trigger_at_utc_ms INTEGER NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
+    "id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,trigger_at_utc_ms INTEGER NOT NULL,rule_json TEXT NOT NULL DEFAULT '',sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order>=0),"
     "created_at_utc_ms INTEGER NOT NULL,updated_at_utc_ms INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),"
     "server_revision INTEGER NOT NULL DEFAULT 0 CHECK(server_revision>=0),"
     "FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE)",
@@ -113,7 +118,8 @@ const char *const kSchema[] = {
     "entity_title TEXT NOT NULL,batch_id TEXT NOT NULL,"
     "type TEXT NOT NULL CHECK(type IN ('created','changed','kind_changed','trashed','restored','deleted',"
     "'attachment_added','attachment_removed','reminder_added','reminder_removed')),"
-    "field TEXT NOT NULL DEFAULT '',old_value TEXT,new_value TEXT,occurred_at_utc_ms INTEGER NOT NULL)",
+    "field TEXT NOT NULL DEFAULT '',old_value TEXT,new_value TEXT,occurred_at_utc_ms INTEGER NOT NULL,"
+    "context_json TEXT NOT NULL DEFAULT '{}')",
     "CREATE UNIQUE INDEX idx_one_inbox ON lists(is_inbox) WHERE is_inbox=1",
     "CREATE TRIGGER prevent_inbox_delete BEFORE DELETE ON lists WHEN OLD.is_inbox=1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
     "CREATE TRIGGER prevent_inbox_unset BEFORE UPDATE OF is_inbox ON lists WHEN OLD.is_inbox=1 AND NEW.is_inbox<>1 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
@@ -126,7 +132,6 @@ const char *const kSchema[] = {
     "CREATE INDEX idx_entities_trash ON entities(deleted_at_utc_ms)",
     "CREATE INDEX idx_entities_pinned ON entities(pinned_at_utc_ms) WHERE pinned_at_utc_ms IS NOT NULL",
     "CREATE UNIQUE INDEX idx_entity_occurrence ON entities(recurrence_series_id,occurrence_key) WHERE recurrence_series_id IS NOT NULL",
-    "CREATE INDEX idx_checklist_entity ON checklist_items(entity_id,sort_order)",
     "CREATE INDEX idx_reminders_due ON reminders(trigger_at_utc_ms,entity_id)",
     "CREATE INDEX idx_deliveries_install ON reminder_deliveries(installation_id,scheduled_at_utc_ms)",
     "CREATE INDEX idx_attachments_entity ON attachments(entity_id,sort_order)",
@@ -159,28 +164,36 @@ bool Database::openAt(const QString &path, QString *error)
     {
         QSqlDatabase database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QLatin1String(kConnectionName));
         database.setDatabaseName(path);
-        if (!database.open()) failure = QStringLiteral("打开数据库失败: ") + database.lastError().text();
+        // 已有文件先只读检查标识，避免 WAL 切换或日志恢复改写被拒绝的数据库。
+        const bool existingFile = QFile::exists(path);
+        if (existingFile) database.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
+        if (!database.open()) failure = QStringLiteral("打开数据库失败（%1）: %2").arg(path, database.lastError().text());
         else {
-            QSqlQuery versionQuery(database), applicationQuery(database), objectsQuery(database);
-            if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next()
-                || !applicationQuery.exec(QStringLiteral("PRAGMA application_id")) || !applicationQuery.next()
-                || !objectsQuery.exec(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")) || !objectsQuery.next()) {
-                failure = QStringLiteral("读取数据库标识失败");
-            } else {
-                const int version = versionQuery.value(0).toInt(), application = applicationQuery.value(0).toInt(), objects = objectsQuery.value(0).toInt();
-                versionQuery.finish(); applicationQuery.finish(); objectsQuery.finish();
-                if (version == 0 && application == 0 && objects == 0) {
-                    if (!applyPragmas(&failure) || !initializeSchema(&failure)) {}
-                } else if (application != applicationId()) {
-                    failure = QStringLiteral("不是受支持的 KylinList 数据库；application_id 不匹配，拒绝迁移或改写旧数据");
-                } else if (version == 5) {
-                    if (!applyPragmas(&failure) || !migrateFromV5(&failure)) {}
-                } else if (version == 6) {
-                    if (!applyPragmas(&failure) || !migrateFromV6(&failure)) {}
-                } else if (version != schemaVersion()) {
-                    failure = QStringLiteral("不是受支持的 KylinList 数据库；仅接受 v7（v5/v6 可自动升级），拒绝改写旧数据");
-                } else if (!applyPragmas(&failure)) {}
+            int version = 0, application = 0, objects = 0;
+            {
+                QSqlQuery versionQuery(database), applicationQuery(database), objectsQuery(database);
+                if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next()
+                    || !applicationQuery.exec(QStringLiteral("PRAGMA application_id")) || !applicationQuery.next()
+                    || !objectsQuery.exec(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")) || !objectsQuery.next()) {
+                    failure = QStringLiteral("读取数据库标识失败: ") + path;
+                } else {
+                    version = versionQuery.value(0).toInt();
+                    application = applicationQuery.value(0).toInt();
+                    objects = objectsQuery.value(0).toInt();
+                }
             }
+            const bool empty = version == 0 && application == 0 && objects == 0;
+            if (failure.isEmpty() && !empty && (application != applicationId() || version != schemaVersion())) {
+                failure = QStringLiteral("拒绝打开数据库 \"%1\"：检测到版本 v%2，要求 v%3；application_id=%4，要求 %5。"
+                                         "开发阶段不支持数据库迁移，不会改写或重置现有数据库；请使用 --data-dir 指定新的空数据目录。")
+                              .arg(path).arg(version).arg(schemaVersion()).arg(application).arg(applicationId());
+            }
+            if (failure.isEmpty() && existingFile) {
+                database.close();
+                database.setConnectOptions(QString());
+                if (!database.open()) failure = QStringLiteral("打开数据库失败（%1）: %2").arg(path, database.lastError().text());
+            }
+            if (failure.isEmpty() && applyPragmas(&failure) && empty) initializeSchema(&failure);
         }
     }
     if (!failure.isEmpty()) { close(); return fail(failure, error); }
@@ -215,7 +228,7 @@ bool Database::initializeSchema(QString *error)
     if (!database.transaction()) return fail(QStringLiteral("开始初始化 schema 失败: ") + database.lastError().text(), error);
     QString failure;
     for (const char *sql : kSchema) {
-        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v7 schema 失败: ") + query.lastError().text(); break; }
+        QSqlQuery query(database); if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("创建 v%1 schema 失败: %2").arg(schemaVersion()).arg(query.lastError().text()); break; }
     }
     const QString inboxId = newUuid(), now = QString::number(utcMs(utcNow()));
     if (failure.isEmpty()) {
@@ -236,72 +249,13 @@ bool Database::initializeSchema(QString *error)
         }
     }
     QSqlQuery versions(database);
-    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=7"))
+    if (failure.isEmpty() && (!versions.exec(QStringLiteral("PRAGMA user_version=%1").arg(schemaVersion()))
                               || !versions.exec(QStringLiteral("PRAGMA application_id=%1").arg(applicationId()))))
         failure = QStringLiteral("写入数据库标识失败: ") + versions.lastError().text();
     QSqlQuery foreign(database);
     if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next())) failure = QStringLiteral("新 schema 外键检查失败");
     if (!failure.isEmpty() || !database.commit()) {
         if (failure.isEmpty()) failure = database.lastError().text(); database.rollback(); return fail(failure, error);
-    }
-    return true;
-}
-
-// v5 -> v7：单事务内给 lists 补 icon/color/archived_at_utc_ms 三列与收集箱归档保护触发器，
-// 再给 folders 补 icon 列（等价于先升 v6 再升 v7，但只落一次版本号）。
-// 旧数据默认无图标、无颜色、未归档；其余表、行与凭证原样保留，失败整体回滚并拒绝打开。
-bool Database::migrateFromV5(QString *error)
-{
-    QSqlDatabase database = connection();
-    if (!database.transaction()) return fail(QStringLiteral("开始 v5→v7 升级事务失败: ") + database.lastError().text(), error);
-    const char *const steps[] = {
-        "ALTER TABLE lists ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)",
-        "ALTER TABLE lists ADD COLUMN color TEXT NOT NULL DEFAULT '' CHECK(color='' OR color GLOB "
-            "'#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]')",
-        "ALTER TABLE lists ADD COLUMN archived_at_utc_ms INTEGER NOT NULL DEFAULT 0 CHECK(archived_at_utc_ms>=0)",
-        "CREATE TRIGGER prevent_inbox_archive BEFORE UPDATE OF archived_at_utc_ms ON lists "
-            "WHEN OLD.is_inbox=1 AND NEW.archived_at_utc_ms<>0 BEGIN SELECT RAISE(ABORT,'inbox is permanent'); END",
-        "ALTER TABLE folders ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)"
-    };
-    QString failure;
-    for (const char *sql : steps) {
-        QSqlQuery query(database);
-        if (!query.exec(QLatin1String(sql))) { failure = QStringLiteral("v5→v7 升级失败: ") + query.lastError().text(); break; }
-    }
-    QSqlQuery foreign(database);
-    if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next()))
-        failure = QStringLiteral("v5→v7 升级外键检查失败");
-    QSqlQuery versions(database);
-    if (failure.isEmpty() && !versions.exec(QStringLiteral("PRAGMA user_version=7")))
-        failure = QStringLiteral("v5→v7 升级写入版本失败");
-    if (!failure.isEmpty() || !database.commit()) {
-        if (failure.isEmpty()) failure = database.lastError().text();
-        database.rollback(); return fail(failure, error);
-    }
-    return true;
-}
-
-// v6 -> v7：单事务内给 folders 补 icon 列；旧文件夹默认无图标，
-// 其余表、行与凭证原样保留，失败整体回滚并拒绝打开。
-bool Database::migrateFromV6(QString *error)
-{
-    QSqlDatabase database = connection();
-    if (!database.transaction()) return fail(QStringLiteral("开始 v6→v7 升级事务失败: ") + database.lastError().text(), error);
-    QString failure;
-    {
-        QSqlQuery query(database);
-        if (!query.exec(QStringLiteral("ALTER TABLE folders ADD COLUMN icon TEXT NOT NULL DEFAULT '' CHECK(length(icon)<=16)")))
-            failure = QStringLiteral("v6→v7 升级失败: ") + query.lastError().text();
-    }
-    QSqlQuery foreign(database);
-    if (failure.isEmpty() && (!foreign.exec(QStringLiteral("PRAGMA foreign_key_check")) || foreign.next()))
-        failure = QStringLiteral("v6→v7 升级外键检查失败");
-    QSqlQuery versions(database);
-    if (failure.isEmpty() && !versions.exec(QStringLiteral("PRAGMA user_version=7")))
-        failure = QStringLiteral("v6→v7 升级写入版本失败");
-    if (!failure.isEmpty() || !database.commit()) {
-        if (failure.isEmpty()) failure = database.lastError().text();
-        database.rollback(); return fail(failure, error);
     }
     return true;
 }

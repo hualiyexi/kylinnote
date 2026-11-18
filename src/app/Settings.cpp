@@ -1,4 +1,5 @@
 #include "Settings.h"
+#include "../domain/ReminderRule.h"
 namespace kl {
 namespace {
 
@@ -97,6 +98,35 @@ QDate Settings::lastUpdateNoticeDate() const {
 }
 void Settings::setLastUpdateNoticeDate(const QDate& date) {
     m_store.setValue(QStringLiteral("updates/lastNoticeDate"), date);
+}
+QStringList Settings::recentReminderRules(bool allDay) const {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
+    const QString key = allDay ? QStringLiteral("datePicker/recentAllDayReminders")
+                               : QStringLiteral("datePicker/recentTimedReminders");
+    QStringList result;
+    const QStringList stored = settings.value(key).toStringList();
+    for (const QString& rule : stored) {
+        ReminderSpec spec;
+        if (!reminderFromRuleText(rule, &spec) || spec.allDay != allDay) continue;
+        const QString normalized = reminderRuleText(spec);
+        if (!result.contains(normalized)) result.append(normalized);
+    }
+    return result;
+}
+void Settings::addRecentReminderRule(const QString& ruleJson) {
+    ReminderSpec spec;
+    if (!reminderFromRuleText(ruleJson, &spec)) return;
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("kylinlist"), QStringLiteral("kylinlist"));
+    const QString normalized = reminderRuleText(spec);
+    const QString key = spec.allDay ? QStringLiteral("datePicker/recentAllDayReminders")
+                                    : QStringLiteral("datePicker/recentTimedReminders");
+    QStringList rules = recentReminderRules(spec.allDay);
+    rules.removeAll(normalized);
+    rules.prepend(normalized);
+    while (rules.size() > 3) rules.removeLast();
+    settings.setValue(key, rules);
 }
 Settings::PendingInstall Settings::pendingInstall() const {
     PendingInstall pending;

@@ -2,7 +2,9 @@
 #define KYLINLIST_DETAILPOPUPS_H
 
 #include <QFrame>
+#include <QPointer>
 #include "../domain/Entity.h"
+#include "PopupMenu.h"
 
 class QLabel;
 class QLineEdit;
@@ -26,27 +28,39 @@ class EntityInfoPopup : public DetailPopup {
     Q_OBJECT
 public:
     explicit EntityInfoPopup(QWidget* parent = nullptr);
-    void setDocument(const Entity& entity, const QString& title, const QString& plainBody,
-                     const QStringList& checklist);
+    void setDocument(const Entity& entity, const QString& title, const QString& plainBody);
 private:
     QLabel *m_words = nullptr, *m_characters = nullptr;
     QLabel *m_created = nullptr, *m_updated = nullptr;
 };
 
-class ListSelectPopup : public DetailPopup {
+class ListDestinationMenu : public PopupMenu {
     Q_OBJECT
 public:
-    explicit ListSelectPopup(QWidget* parent = nullptr);
+    explicit ListDestinationMenu(QWidget* parent = nullptr);
     void setLists(const QVector<TaskList>& lists, const QVector<Folder>& folders,
                   const QString& selectedId);
     void popupAbove(QWidget* anchor);
 signals:
     void listSelected(QString listId);
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
-    void filterLists(const QString& query);
+    QAction* addDestination(QMenu* menu, const TaskList& list, const QString& path, bool searchResult);
+    void filterLists();
+    QLabel* m_searchIcon = nullptr;
     QLineEdit* m_search = nullptr;
-    QTreeWidget* m_tree = nullptr;
-    QLabel* m_empty = nullptr;
+    QAction* m_empty = nullptr;
+    QVector<QAction*> m_rootActions;
+    QVector<QAction*> m_searchActions;
+    QVector<QPointer<PopupMenu>> m_folderMenus;
+    QString m_selectedId;
+};
+
+class ListSelectPopup : public ListDestinationMenu {
+    Q_OBJECT
+public:
+    explicit ListSelectPopup(QWidget* parent = nullptr);
 };
 
 } // namespace kl

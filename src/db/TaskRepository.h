@@ -33,7 +33,6 @@ struct EntitySnapshot {
     QVector<RecurrenceSeries> recurrenceSeries;
     QVector<StoredEntity> entities;
     QVector<RecurrenceLink> recurrenceLinks;
-    QVector<ChecklistItem> checklistItems;
     QVector<Tag> tags;
     QVector<TaskTag> taskTags;
     QVector<TaskReminder> reminders;
@@ -59,9 +58,8 @@ struct EntityChanges {
     QVector<StoredEntity> removals;
     // 不覆盖任务正文字段的关联写入，用 CAS 推进 revision/updated_at。
     QVector<StoredEntity> touches;
-    QVector<EntityEvent> eventSaves; // 仅随 apply 追加，不进入全量快照
-    QVector<ChecklistItem> checklistSaves;
-    QStringList checklistRemovals;
+    QVector<EntityEvent> eventSaves; // 仅随 apply 追加，不进入全量快照；删除清单旁路生成的
+                                     // trashed 事件也会在提交前并回此列表供上层通知
     QVector<Tag> tagSaves;
     QVector<TaskTag> taskTagSaves;
     QVector<TaskTag> taskTagRemovals;
@@ -106,7 +104,6 @@ private:
     bool saveGroup(TaskList *group, QString *error);
     bool saveSection(Section *section, QString *error);
     bool saveSeries(RecurrenceSeries *series, QString *error);
-    bool saveChecklist(ChecklistItem *item, QString *error);
     bool saveTag(Tag *tag, QString *error);
     bool saveReminder(TaskReminder *reminder, QString *error);
     bool saveDelivery(const ReminderDelivery &delivery, QString *error);

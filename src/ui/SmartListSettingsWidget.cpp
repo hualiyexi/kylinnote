@@ -15,7 +15,7 @@ namespace kl {
 SmartListSettingsWidget::SmartListSettingsWidget(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("SmartListSettingsPage"));
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(24, 22, 24, 22);
+    root->setContentsMargins(12, 0, 12, 0);
     root->setSpacing(14);
     auto* title = new QLabel(QStringLiteral("智能清单"), this);
     title->setObjectName(QStringLiteral("SmartListSettingsTitle"));
@@ -91,10 +91,16 @@ QFrame* SmartListSettingsWidget::buildSection(const QVector<Entry>& entries) {
 }
 
 void SmartListSettingsWidget::applyTheme() {
+    auto& theme = ThemeManager::instance();
     setStyleSheet(QStringLiteral(
-        "QFrame#SmartListSettingsSection{background:%1;border:0;border-radius:8px;}"
-        "QFrame#SmartListSettingsSection QWidget{background:transparent;}")
-        .arg(ThemeManager::instance().color(ds::ColorToken::Field).name()));
+        "QFrame#SmartListSettingsSection{background:%1;border:0;border-radius:10px;}"
+        "QFrame#SmartListSettingsSection QWidget{background:transparent;}"
+        "QFrame#SmartListSettingsSection QComboBox{background:transparent;border:1px solid transparent;"
+        "border-radius:6px;padding:0 8px;}"
+        "QFrame#SmartListSettingsSection QComboBox:hover,"
+        "QFrame#SmartListSettingsSection QComboBox:focus{background:%2;border-color:transparent;}")
+        .arg(theme.color(ds::ColorToken::SettingsSectionBg).name(QColor::HexArgb))
+        .arg(theme.color(ds::ColorToken::Hover).name()));
     for (const Entry& entry : m_entries)
         entry.iconLabel->setPixmap(
             AppIcons::icon(entry.icon, ds::ColorToken::TextSecondary, 20).pixmap(20, 20));

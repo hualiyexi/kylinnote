@@ -4,13 +4,50 @@
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QSplitter>
 #include <QToolButton>
 #include <utility>
 #include "AppIcons.h"
+#include "WorkspaceGeometry.h"
 #include "design/ThemeManager.h"
 
 namespace kl {
+namespace {
+
+// 命中区域仍覆盖完整的 46×28，但激活底色内缩 1px，把顶部和右侧轮廓留给边框层。
+class WindowControlButton final : public QToolButton {
+public:
+    explicit WindowControlButton(QWidget* parent = nullptr) : QToolButton(parent) {}
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        if (underMouse() || isDown()) {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const QRectF bounds = QRectF(rect()).adjusted(1, 1, -1, -1);
+            QPainterPath path;
+            const bool roundedClose = objectName() == QLatin1String("WindowClose")
+                && window() && !window()->isMaximized() && !window()->isFullScreen();
+            if (roundedClose) {
+                const qreal radius = 8.0;
+                path.moveTo(bounds.left(), bounds.top());
+                path.lineTo(bounds.right() - radius, bounds.top());
+                path.quadTo(bounds.right(), bounds.top(), bounds.right(), bounds.top() + radius);
+                path.lineTo(bounds.right(), bounds.bottom());
+                path.lineTo(bounds.left(), bounds.bottom());
+                path.closeSubpath();
+            } else {
+                path.addRect(bounds);
+            }
+            painter.fillPath(path, ThemeManager::instance().color(
+                isDown() ? ds::ColorToken::Selection : ds::ColorToken::Hover));
+        }
+        QToolButton::paintEvent(event);
+    }
+};
+
+}  // namespace
 
 WindowResizeArea::WindowResizeArea(QWidget* window, Qt::Edges edges, const QString& name)
     : QWidget(window), m_edges(edges) {
@@ -187,7 +224,7 @@ void WindowDragArea::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void WindowDragArea::mouseDoubleClickEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
+    if (event->button() == Qt::LeftButton && m_doubleClickMaximizes) {
         window()->setWindowState(window()->isMaximized() ? Qt::WindowNoState : Qt::WindowMaximized);
         event->accept();
     }
@@ -196,15 +233,15 @@ void WindowDragArea::mouseDoubleClickEvent(QMouseEvent* event) {
 WindowControls::WindowControls(QWidget* parent) : QWidget(parent), m_window(parent) {
     setObjectName(QStringLiteral("WindowControls"));
     setAttribute(Qt::WA_StyledBackground, false);
-    setFixedSize(138, 36);
+    setFixedSize(138, WorkspaceGeometry::WindowControlHeight);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     const auto button = [this, layout](QToolButton*& target, const QString& name,
                                       const QString& tooltip, const QString& accessible) {
-        target = new QToolButton(this);
+        target = new WindowControlButton(this);
         target->setObjectName(name);
-        target->setFixedSize(46, 36);
+        target->setFixedSize(46, WorkspaceGeometry::WindowControlHeight);
         target->setAutoRaise(true);
         target->setToolTip(tooltip);
         target->setAccessibleName(accessible);

@@ -50,6 +50,7 @@ ModalDialog::ModalDialog(QWidget* parent)
     cardLayout->setSpacing(0);
 
     auto* header = new QWidget(m_card);
+    m_header = header;
     header->setObjectName(QStringLiteral("ModalHeader"));
     auto* headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(20, 12, 10, 10);
@@ -179,6 +180,7 @@ ConfirmDialog::ConfirmDialog(const QString& title, const QString& text,
 
     m_textLabel = new QLabel(this);
     m_textLabel->setObjectName(QStringLiteral("ConfirmText"));
+    m_textLabel->setTextFormat(Qt::PlainText);
     m_textLabel->setText(text);
     m_textLabel->setWordWrap(true);
     m_textLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);

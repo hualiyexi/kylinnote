@@ -5,6 +5,7 @@
 
 #include <QDate>
 #include <QDateTime>
+#include <QJsonObject>
 #include <QRect>
 #include <QString>
 #include <QStringList>
@@ -115,18 +116,6 @@ struct Section {
     qint64 serverRevision = 0;
 };
 
-struct ChecklistItem {
-    QString id;
-    QString entityId;
-    QString text;
-    bool done = false;
-    int sortOrder = 0;
-    QDateTime createdAt;
-    QDateTime updatedAt;
-    qint64 revision = 1;
-    qint64 serverRevision = 0;
-};
-
 struct Tag {
     QString id;
     QString name;
@@ -148,6 +137,7 @@ struct TaskReminder {
     QString entityId;
     QDateTime triggerAt;
     QDateTime deliveredAt;          // 当前 installation 的瞬态门面；真实值在 reminder_deliveries
+    QString ruleJson;               // 版本化正常一次性提醒规则；空 = 仅绝对时刻。
     int sortOrder = 0;
     QDateTime createdAt;
     QDateTime updatedAt;
@@ -165,6 +155,9 @@ struct ReminderDelivery {
 struct RecurrenceSeries {
     QString id;
     QString rrule;
+    QString ruleJson;               // 完整规则；不再把新规则压缩成简单日/周/月别名。
+    int occurrenceOrdinal = 1;
+    int completionCount = 0;
     int anchorDay = 0;
     QString timeZone = defaultTimeZone();
     QDateTime dtstartAt;
@@ -193,7 +186,9 @@ struct Entity {
     QDateTime deletedAt;
     QDateTime startAt;               // 绝对时刻，数据库为 UTC ms
     QDateTime dueAt;
-    QDate allDayDate;                // 全天仅保存日期，不把午夜伪造成截止时刻
+    QDate allDayDate;                // 单日或包含起始日；绝不以午夜伪造截止时间。
+    QDate allDayEndDate;             // 时间段模式的包含结束日，单日时为空。
+    bool hasScheduleRange = false;   // 明确区分单日与时间段，即使两端同日。
     QString timeZone = defaultTimeZone();
     QString recurrenceSeriesId;
     QString occurrenceKey;
@@ -205,7 +200,6 @@ struct Entity {
     QDateTime abandonedAt;
 
     QStringList tags;
-    QVector<ChecklistItem> checklist;
     QVector<TaskReminder> reminders;
 
     // 旧单提醒 UI 门面。实际数据保存在 reminders/reminder_deliveries。
@@ -230,6 +224,7 @@ struct EntityEvent {
     QVariant oldValue;              // null 与空字符串必须区分
     QVariant newValue;
     QDateTime occurredAt;
+    QJsonObject context;            // 结构化上下文（如删除清单入回收站时的 listId/listName）；缺省为空对象
 };
 
 inline int primaryReminderIndex(const Entity &task)

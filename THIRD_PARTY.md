@@ -25,6 +25,30 @@
 - Purpose: offline monochrome emoji glyphs without depending on an installed system emoji font. The stored icon strings and existing picker are unchanged; arbitrary sequences outside the bundled repertoire should not be treated as guaranteed supported.
 - Conversion was a local development step; target machines need neither Python nor fontTools. Native Kylin ARM64 rendering remains subject to user acceptance.
 
+## Offline interface fonts
+
+### Noto Sans CJK SC
+
+- Upstream: https://github.com/notofonts/noto-cjk, `main` branch, `Sans/OTF/SimplifiedChinese/`.
+- Vendored official static files: `NotoSansCJKsc-Regular.otf` and `NotoSansCJKsc-Bold.otf`; upstream copyright and naming notices are embedded in the fonts.
+- SHA-256: Regular `2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b`; Bold `b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a`.
+- License: SIL Open Font License 1.1; full text in `src/resources/fonts/NotoSansCJK-OFL.txt`.
+- Purpose: selectable offline Simplified Chinese UI font on Qt 5.12; no system installation or network access at runtime.
+
+### 霞鹜文楷
+
+- Upstream: https://github.com/lxgw/LxgwWenKai, official v1.530 release assets.
+- Vendored official static files: `LXGWWenKai-Regular.ttf` and `LXGWWenKai-Medium.ttf`; unmodified upstream font data.
+- SHA-256: Regular `2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b`; Medium `f4b8a34d1f838fe411540cb7c97b1c384ac9738a876c4104500bc42508b2312a`.
+- License: SIL Open Font License 1.1 with the upstream reserved-name notice; full text in `src/resources/fonts/LXGWWenKai-OFL.txt`.
+- Purpose: selectable offline serif-style Chinese UI font; the project redistributes the fonts without modifying their source or names.
+
+## Lunar calendar reference data
+
+- Upstream: https://github.com/linlifengx/chinese_lunar_calendar, npm `chinese-lunar-calendar` 1.0.1.
+- Vendored generated year table in `src/domain/LunarCalendar.cpp`; supports solar dates 1900-01-31 through 2100-12-31 only. No holidays, almanac content, online requests, or statutory-holiday adjustment.
+- License: ISC as declared by the upstream package; notice in `third_party/lunar-calendar/LICENSE`.
+
 ## Qt
 
 Qt is used under its applicable open-source licensing terms. Offline distributions include the dynamically linked Qt libraries and plugins plus applicable notices. See https://www.qt.io/licensing/open-source-lgpl-obligations and https://code.qt.io/ for source code. Build versions and platform dependencies are documented in `docs/building.md`.

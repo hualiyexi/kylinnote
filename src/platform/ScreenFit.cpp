@@ -100,6 +100,34 @@ QRect ScreenFit::fit(const QRect &geometry)
                      primary->availableGeometry());
 }
 
+QRect ScreenFit::fitPaper(const QRect &windowGeometry, int shadowMargin, const QSize &minimumPaper)
+{
+    const int margin = qMax(0, shadowMargin);
+    const QRect paper = windowGeometry.adjusted(margin, margin, -margin, -margin);
+    if (!paper.isValid()) return fit(defaultGeometry());
+    QScreen *best = QGuiApplication::screenAt(paper.center());
+    qint64 bestOverlap = 0;
+    if (!best) {
+        for (QScreen *screen : QGuiApplication::screens()) {
+            const QRect intersection = screen->availableGeometry().intersected(paper);
+            const qint64 overlap = qint64(intersection.width()) * intersection.height();
+            if (!intersection.isEmpty() && overlap > bestOverlap) {
+                best = screen;
+                bestOverlap = overlap;
+            }
+        }
+    }
+    if (!best) best = QGuiApplication::primaryScreen();
+    if (!best) return windowGeometry;
+    const QRect available = best->availableGeometry();
+    const QSize minimum = minimumPaper.isValid() ? minimumPaper : QSize(MinWidth, MinHeight);
+    const int width = qMin(available.width(), qMax(minimum.width(), paper.width()));
+    const int height = qMin(available.height(), qMax(minimum.height(), paper.height()));
+    const int x = qBound(available.left(), paper.x(), available.right() + 1 - width);
+    const int y = qBound(available.top(), paper.y(), available.bottom() + 1 - height);
+    return QRect(x, y, width, height).adjusted(-margin, -margin, margin, margin);
+}
+
 QRect ScreenFit::defaultGeometry(int cascadeIndex)
 {
     QScreen *primary = QGuiApplication::primaryScreen();

@@ -1,6 +1,6 @@
 KylinList (麒麟清单) for Windows x64
 
-KylinList is a local task and checklist manager with schedules, reminders
+KylinList is a local task manager with schedules, reminders
 and optional desktop notes. Extract the complete directory before running
 kylinlist.exe. Qt libraries, platform plugins, SVG plugins, SQLite driver,
 and MinGW runtime are included. You do not need to install Qt or change the

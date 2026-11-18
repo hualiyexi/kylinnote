@@ -19,6 +19,7 @@ public:
     explicit ToastIsland(QWidget* parent = nullptr);
 
     void showMessage(const QString& text, int timeoutMs = 3000);
+    static void showTransient(QWidget* host, const QString& text);
     void showAction(const QString& text, const QString& accessibleAction,
                     std::function<bool()> action, int timeoutMs = 3000);
     int remainingTime() const;
@@ -30,6 +31,7 @@ signals:
 protected:
     void enterEvent(QEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:
@@ -43,6 +45,7 @@ private:
     std::function<bool()> m_callback;
     int m_remaining = 0;
     bool m_hovered = false;
+    bool m_followHost = false;
 };
 
 }  // namespace kl

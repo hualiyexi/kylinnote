@@ -42,6 +42,10 @@ public:
     QDate lastUpdateNoticeDate() const;
     void setLastUpdateNoticeDate(const QDate& date);
 
+    // 日期选择器的本地最近自定义提醒；只保存规则，不包含任务或标题数据。
+    QStringList recentReminderRules(bool allDay) const;
+    void addRecentReminderRule(const QString& ruleJson);
+
     // 待安装记录：安装器交接后写入，下次启动按实际版本确认结果。
     PendingInstall pendingInstall() const;
     void setPendingInstall(const PendingInstall& pending);

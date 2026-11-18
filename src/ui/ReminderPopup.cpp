@@ -6,16 +6,18 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMenu>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScreen>
 #include <QSizePolicy>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include "../domain/ViewSpec.h"
 #include "../app/Branding.h"
 #include "AppIcons.h"
+#include "PopupMenu.h"
+#include "WindowChrome.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
 namespace kl {
@@ -53,7 +55,8 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     }
     setAttribute(Qt::WA_DeleteOnClose);
     setAttribute(Qt::WA_TranslucentBackground);
-    setWindowTitle(QStringLiteral("待办提醒 · %1").arg(Branding::displayName()));
+    setWindowTitle(QStringLiteral("%1提醒 · %2")
+        .arg(task.kind == EntityKind::Note ? QStringLiteral("笔记") : QStringLiteral("待办"), Branding::displayName()));
     setObjectName(QStringLiteral("ReminderPopup"));
 
     auto* outer = new QVBoxLayout(this);
@@ -72,28 +75,32 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     auto* layout = new QVBoxLayout(m_card);
     layout->setContentsMargins(16, 12, 12, 16);
     layout->setSpacing(0);
-    auto* header = new QHBoxLayout;
+    auto* dragArea = new WindowDragArea(m_card);
+    dragArea->setObjectName(QStringLiteral("ReminderDragArea"));
+    dragArea->setDoubleClickMaximizes(false);
+    dragArea->setFixedHeight(28);
+    auto* header = new QHBoxLayout(dragArea);
     header->setContentsMargins(0, 0, 0, 0);
     header->setSpacing(8);
-    m_scheduleIcon = new QLabel(m_card);
+    m_scheduleIcon = new QLabel(dragArea);
     m_scheduleIcon->setObjectName(QStringLiteral("ReminderScheduleIcon"));
     m_scheduleIcon->setFixedSize(20, 28);
     m_scheduleIcon->setAlignment(Qt::AlignCenter);
     header->addWidget(m_scheduleIcon);
-    auto* schedule = new QLabel(reminderSchedule(task, m_reminderId), m_card);
+    auto* schedule = new QLabel(reminderSchedule(task, m_reminderId), dragArea);
     schedule->setObjectName(QStringLiteral("ReminderSchedule"));
     schedule->setFont(ds::qfont(ds::FontScene::Caption));
     schedule->setTextFormat(Qt::PlainText);
     header->addWidget(schedule);
     header->addStretch();
-    m_close = new QToolButton(m_card);
+    m_close = new QToolButton(dragArea);
     m_close->setObjectName(QStringLiteral("ReminderDismissButton"));
     m_close->setFixedSize(28, 28);
     m_close->setAccessibleName(QStringLiteral("关闭提醒"));
     m_close->setToolTip(QStringLiteral("关闭提醒，不修改任务状态"));
     m_close->setAutoRaise(true);
     header->addWidget(m_close);
-    layout->addLayout(header);
+    layout->addWidget(dragArea);
 
     m_title = new QPushButton(m_card);
     m_title->setObjectName(QStringLiteral("ReminderOpenButton"));
@@ -105,8 +112,9 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     QFont titleFont = ds::qfont(ds::FontScene::Body);
     titleFont.setPointSizeF(ds::pointSize(ds::TypeScale::Subtitle));
     m_title->setFont(titleFont);
-    m_title->setAccessibleName(QStringLiteral("查看任务：%1").arg(task.title));
-    m_title->setToolTip(QStringLiteral("%1\n点击查看任务").arg(task.title));
+    const QString entityLabel = task.kind == EntityKind::Note ? QStringLiteral("笔记") : QStringLiteral("任务");
+    m_title->setAccessibleName(QStringLiteral("查看%1：%2").arg(entityLabel, task.title));
+    m_title->setToolTip(QStringLiteral("%1\n点击查看%2").arg(task.title, entityLabel));
     m_title->installEventFilter(this);
     layout->addWidget(m_title);
     layout->addSpacing(14);
@@ -121,6 +129,7 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     done->setAccessibleName(QStringLiteral("标记完成"));
     done->setToolTip(QStringLiteral("标记任务完成"));
     buttons->addWidget(done, 1);
+    done->setVisible(task.kind == EntityKind::Task);
 
     m_snooze = new QToolButton(m_card);
     m_snooze->setObjectName(QStringLiteral("ReminderSnoozeButton"));
@@ -131,7 +140,7 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     m_snooze->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_snooze->setAccessibleName(QStringLiteral("稍后提醒"));
     m_snooze->setToolTip(QStringLiteral("选择稍后提醒时间"));
-    auto* menu = new QMenu(m_snooze);
+    auto* menu = new PopupMenu(m_snooze);
     menu->setObjectName(QStringLiteral("ReminderSnoozeMenu"));
     const auto addSnoozeAction = [this, menu](const QString& text, const QString& name, int minutes) {
         QAction* action = menu->addAction(text);
@@ -146,6 +155,9 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     addSnoozeAction(QStringLiteral("1 小时"), QStringLiteral("ReminderSnooze60"), 60);
     addSnoozeAction(QStringLiteral("3 小时"), QStringLiteral("ReminderSnooze180"), 180);
     m_snooze->setMenu(menu);
+    connect(menu, &QMenu::aboutToShow, this, [this, menu]() {
+        QTimer::singleShot(0, menu, [this, menu]() { positionSnoozeMenu(menu); });
+    });
     buttons->addWidget(m_snooze, 1);
     layout->addLayout(buttons);
 
@@ -161,6 +173,31 @@ ReminderPopup::ReminderPopup(const Entity& task, QString reminderId, QWidget* pa
     updateTitleElision();
     adjustSize();
     positionOnScreen();
+}
+
+void ReminderPopup::positionSnoozeMenu(PopupMenu* menu) {
+    if (!menu || !m_snooze) return;
+    constexpr int gap = 4;
+    const int margin = PopupMenu::shadowMargin();
+    QSize menuSize = menu->size();
+    if (menuSize.isEmpty()) menuSize = menu->sizeHint();
+    const QSize cardSize = menuSize - QSize(2 * margin, 2 * margin);
+    const QRect button(m_snooze->mapToGlobal(QPoint(0, 0)), m_snooze->size());
+    QScreen* screen = QGuiApplication::screenAt(button.center());
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    if (!screen) return;
+    const QRect available = screen->availableGeometry();
+    const int x = qBound(available.left(), button.left(),
+                         qMax(available.left(), available.right() - cardSize.width() + 1));
+    int y = button.bottom() + gap + 1;
+    const int aboveY = button.top() - gap - cardSize.height() + 1;
+    if (y + cardSize.height() - 1 > available.bottom() && aboveY >= available.top())
+        y = aboveY;
+    else
+        y = qBound(available.top(), y, qMax(available.top(), available.bottom() - cardSize.height() + 1));
+    // Qt 默认定位完成后再移动透明整窗，使可见卡片而不是阴影边距
+    // 贴住按钮，并由可见卡片高度决定是否上翻。
+    menu->move(QPoint(x, y) - QPoint(margin, margin));
 }
 
 void ReminderPopup::applyTheme() {

@@ -2,25 +2,32 @@
 #define KYLINLIST_TASKSTORE_H
 
 #include "../db/TaskRepository.h"
+#include "../domain/ScheduleValue.h"
 #include "../domain/TaskDrop.h"
+#include "../domain/TextDraft.h"
 #include "AttachmentStore.h"
 #include "Journal.h"
 #include "UsageStatistics.h"
 
 #include <QDate>
+#include <QHash>
 #include <QObject>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QStringList>
+#include <functional>
 #include <memory>
 
 namespace kl {
+
+class EntityTextSession;
 
 class TaskStore : public QObject
 {
     Q_OBJECT
 public:
     explicit TaskStore(const QSqlDatabase &database, QObject *parent = nullptr);
+    ~TaskStore() override;
     bool load(QString *error = nullptr);
 
     QVector<Entity> entities() const;
@@ -39,6 +46,10 @@ public:
     QString createNote(const QString &title, const QString &listId = QString(),
                        const QString &sectionId = QString());
     bool saveTask(Entity task);
+    // 完整日期编辑入口；可保存尚未创建的草稿，创建时返回新实体 id。
+    bool saveSchedule(Entity task, const ScheduleValue& schedule, QString* savedId = nullptr);
+    ScheduleValue schedule(const QString& entityId) const;
+    bool recurrenceSpec(const QString& entityId, RecurrenceSpec* spec) const;
     QString cloneTask(const QString &id);
     bool convertKind(const QString &id, EntityKind kind);
     bool setCompleted(const QString &id, bool completed);
@@ -94,36 +105,18 @@ public:
     // 带时刻的值在应用时区下保留时刻和跨日跨度；提醒及其余字段不动。
     // 单事务提交，失败不产生部分成功；返回 false 时可用 lastError() 查原因。
     bool postponeOverdueTasks(const QStringList &ids, const QDate &today);
-    // 拖放落点的原子命令：把 sourceId 放进 targetSection 的 orderedIds 顺序。
-    // orderedIds 是目标段当前显示顺序（已含 source 在目标位置）；store 逐 ID 从当前
-    // 快照重读并校验存在、无重复、必含 source，禁止用公开 Entity 的陈旧草稿。
-    // targetSection="list:<id>" 时，目标清单必须存在且未归档，source 与 orderedIds
-    // 中所有实体必须属于该清单；跨清单投放整批拒绝。
-    // 一次 EntityChanges + commit 把 orderedIds 的 sortOrder 规范为 0..n-1，只保存
-    // 实际变化的行；adjustPinned=true 时才修改 source 的 pinnedAt：pinned 置位时
-    // 未置顶取当前时刻、已置顶保持原值，清除时清空 pinnedAt；detachParent 清 parentId。
-    // 时间分区（TaskDrop::isTimeSection）要求 targetDate 与 TaskDrop::dateForSection
-    // 的映射一致，并按 source effectiveDate 到 targetDate 平移 allDayDate/startAt/dueAt
-    // （应用时区下保留时刻与跨度，提醒/重复不动）；无有效原日期的时间分区拖入拒绝。
-    // 非时间分区要求 targetDate 无效，不暗改日期。adjustPinned=true 且
-    // targetSection="pinned" 时 pinned 必须为 true（明显矛盾拒绝）。adjustDate=false
-    // 用于同段手动排序：targetDate 必须无效，保留“最近7天”段内原有的后天以后日期。
-    // adjustPinned=false 用于同父、同显示分区排序，保留实际 pinnedAt（含未置顶子任务）。
-    // targetParentId 非空时表示右下半区设父：源与父项必须都是同清单、未删除的进行中任务，
-    // 完整祖先链不得包含源；此时 detachParent/adjustDate/adjustPinned 必须均为 false，
-    // 只更新父子关系与目标顺序，不暗改日期或置顶。源已有后代保持原 parentId。
-    // 失败整批无部分成功；幂等返回 true。
-    bool moveEntityForDrop(const QString &sourceId, const QStringList &orderedIds,
-                           const QString &targetSection, const QDate &targetDate,
-                           bool pinned, bool detachParent, bool adjustDate = true,
-                           bool adjustPinned = true, const QString &targetParentId = QString());
+    // 类型化拖放：从 repository 重读完整快照，验证落点后一次原子保存。
+    // orderedIds 只提供可见顺序，清单迁移的后代闭包绝不依赖可见行；Created 与
+    // 终态目标拒绝。跨组写真实日期/优先级/清单及置顶属性，独立子项脱父；
+    // 同组仅排序，AsChild 仅设父和排序，保留日期/优先级/置顶及源子树关系。
+    bool applyDropIntent(const TaskDrop::Intent &intent);
+    // 详情清单选择器与 MoveTo 共用：独立子项脱父，完整子树（包括隐藏、终态
+    // 和回收站后代）一起迁移、清空旧 section；幂等零写，CAS 失败整批回滚。
+    bool moveEntityToList(const QString &entityId, const QString &listId);
     QString createSection(const QString &listId, const QString &name);
     bool renameSection(const QString &id, const QString &name);
     bool deleteSection(const QString &id);
 
-    QString addChecklistItem(const QString &entityId, const QString &text);
-    bool setChecklistDone(const QString &itemId, bool done);
-    bool removeChecklistItem(const QString &itemId);
     QVector<TaskReminder> reminders(const QString &entityId) const;
     TaskReminder addReminder(const QString &entityId, const QDateTime &triggerAt);
     bool removeReminder(const QString &reminderId);
@@ -142,6 +135,7 @@ public:
     bool removeDesktopNote(const QString &entityId, const QString &device = QString());
 
     QVector<Attachment> attachments(const QString &entityId) const;
+    QSet<QString> attachmentEntityIds() const;
     QString attachmentFilePath(const Attachment &attachment) const;
     Attachment importAttachment(const QString &entityId, const QString &sourcePath);
     bool removeAttachment(const QString &entityId, const QString &attachmentId);
@@ -156,12 +150,30 @@ public:
     QString beginEditSession(const QString &entityId);
     bool endEditSession(const QString &sessionId);
     bool endAllSessions();
+    // 会话 id 是否仍处于活动状态（endAllSessions/导入等外部终结后返回 false）。
+    bool isEditSessionActive(const QString &sessionId) const;
+    // 每实体一个共享文本编辑会话（TaskDetailWidget 与桌面便签共用同一权威草稿）。
+    // 首次调用按当前快照创建并以本 store 为父；之后同 id 返回同一实例。目标不存在/
+    // 已删除（含回收站）或未加载时返回 nullptr。
+    EntityTextSession *textSession(const QString &entityId);
+    // 正文字段（title/body）按 baseline/proposed 三方校验提交，供 TaskDetailWidget 与桌面便签共用：
+    // 不相关字段一律沿用当前快照；本地未变不覆盖远端；远端已等于本地视为成功零写入；
+    // 同字段双方都改且不同返回 Conflict（零写入，不碰 revision/updated_at/事件）；
+    // 目标不存在或已删除（含回收站）返回 Unavailable，不可复活；有效改变走既有
+    // saveTask/CAS/Journal 链，失败（CAS/SQL/校验）返回 Failed 且事务回滚。
+    // draft.sessionId 可选：成功写入后登记到该会话，供 cancelEditSession 精确归因事件。
+    TextCommitResult commitTextDraft(const TextDraft &draft);
+    // 丢弃编辑会话（重载草稿/目标被永久删除后关闭窗口）：只终结该 sessionId，不影响其他
+    // 编辑器会话；不写实体。未保存草稿取消零事件（目标已消失也幂等成功）；本会话早先有
+    // 成功写入则只补记自己真正写入的字段终值，该日志提交失败返回 false 并保留会话供重试
+    //（与 endEditSession 口径一致）。未知/已结束会话幂等返回 true。
+    bool cancelEditSession(const QString &sessionId);
 
     QString localMeta(const QString &key) const;
     bool setLocalMeta(const QString &key, const QString &value);
     QVector<OutboxItem> outbox() const { return m_snapshot.outbox; }
 
-    // 仅接受 KylinList.Entities v2/v3 + KLB1 magic 的新 .klb 容器；不兼容旧备份。
+    // 仅支持当前 KylinList.Entities v6 + KLB1 容器；开发期不做旧格式导入。
     bool exportBackup(const QString &path);
     bool importBackup(const QString &path);
     QString lastError() const { return m_lastError; }
@@ -171,16 +183,19 @@ signals:
     void tasksReset();
     void groupsChanged();
     void attachmentsChanged(QString entityId);
+    void eventsChanged(QString entityId);
     void desktopNoteChanged(QString entityId);
     void errorOccurred(const QString &message);
 
 private:
+    // 安全清空共享文本会话注册表（析构与成功导入复用）：先换出哈希再删除，
+    // 会话 destroyed 钩子只会清理已换出的空表，绝不迭代中被改写。
+    void destroyTextSessions();
     const StoredEntity *find(const QString &id) const;
     const TaskList *findList(const QString &id) const;
     const RecurrenceLink *linkFor(const QString &sourceId) const;
     const Attachment *findAttachment(const QString &id) const;
     const TaskReminder *findReminder(const QString &id) const;
-    const ChecklistItem *findChecklistItem(const QString &id) const;
     int nextAttachmentSortOrder(const QString &entityId) const;
     int nextListSortOrder(const QString &folderId) const;   // 容器尾部；顶层同时考虑文件夹共用序列
     int nextFolderSortOrder() const;                        // 顶层清单/文件夹共用序列尾部
@@ -189,8 +204,14 @@ private:
     bool hasSection(const QString &id) const;
     bool fail(const QString &message, QString *error = nullptr);
     bool ensureLoaded();
-    bool commit(EntityChanges *changes, bool reset = false);
-    bool prepareSave(Entity task, EntityChanges *changes);
+    // beforeSignals：事务落库成功后、替换快照与发出 taskChanged 等对外信号前执行的一次性钩子
+    //（commitTextDraft 用于登记编辑会话写入归因，不受信号回调的后续改动影响）。
+    bool commit(EntityChanges *changes, bool reset = false,
+                const std::function<void()> &beforeSignals = std::function<void()>());
+    enum class SavePurpose { Edit, GroupMove };
+    bool commitSnapshotUpdates(const EntitySnapshot &snapshot, const QVector<Entity> &updates);
+    bool prepareSave(Entity task, EntityChanges *changes, SavePurpose purpose = SavePurpose::Edit,
+                     const ScheduleValue* schedule = nullptr);
     void recordSaveEvents(const StoredEntity *previous, const Entity &value, EntityChanges *changes, const QDateTime &now);
     void applyDesktopFacade(Entity *task) const;
 
@@ -198,8 +219,12 @@ private:
     EntitySnapshot m_snapshot;
     Journal m_journal;
     std::unique_ptr<AttachmentStore> m_attachmentStore;
+    QHash<QString, EntityTextSession *> m_textSessions;   // 每实体共享文本会话注册表
     QString m_lastError;
     bool m_loaded = false;
+    // 仅在 commitTextDraft 携带有效会话归因保存期间为 true：这类保存的 title/body
+    // 差异由所属编辑会话结束/取消时统一记账，recordSaveEvents 据此跳过直存事件。
+    bool m_textCommitSave = false;
 };
 
 } // namespace kl

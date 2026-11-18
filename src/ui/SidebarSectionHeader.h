@@ -18,6 +18,7 @@ public:
     void setLeadingIcon(IconId icon);
     void setExpanded(bool expanded);
     void setDisclosureEnabled(bool enabled);
+    void setFolderPresentation(bool enabled);
     QToolButton* disclosureButton() const { return m_disclosure; }
     bool expanded() const { return m_expanded; }
     QToolButton* actionButton() const { return m_action; }
@@ -45,6 +46,7 @@ private:
     IconId m_actionIcon = IconId::None;
     bool m_collapseAction = false;
     bool m_expanded = true;
+    bool m_folderPresentation = false;
     bool m_hovered = false;
 };
 

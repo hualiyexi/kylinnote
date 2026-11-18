@@ -2,6 +2,7 @@
 #define KYLINLIST_ENTITYCODEC_H
 
 #include "Entity.h"
+#include "ReminderRule.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -99,51 +100,52 @@ inline bool validate(const Entity &task, QString *error)
                                task.completedAt, task.abandonedAt, task.reminderAt, task.notifiedAt, task.pinnedAt};
     for (const QDateTime &date : dates)
         if (!validDate(date)) return fail(error, QStringLiteral("任务时间超出有效范围"));
-    if (!validAllDayDate(task.allDayDate) || !validTimeZone(task.timeZone))
+    if (!validAllDayDate(task.allDayDate) || !validAllDayDate(task.allDayEndDate)
+        || !validTimeZone(task.timeZone))
         return fail(error, QStringLiteral("全天日期或 IANA 时区非法"));
-    if (task.startAt.isValid() && task.dueAt.isValid() && task.startAt > task.dueAt)
-        return fail(error, QStringLiteral("开始时间不能晚于截止时间"));
-    const QString normalizedRule = recurrenceRRule(task.rrule.isEmpty() ? task.recurrence : task.rrule);
-    if ((task.rrule.isEmpty() ? task.recurrence : task.rrule) != QStringLiteral("none")
-        && !(task.rrule.isEmpty() ? task.recurrence : task.rrule).isEmpty() && normalizedRule.isEmpty())
-        return fail(error, QStringLiteral("重复规则非法或包含未支持的扩展"));
-    if (!normalizedRule.isEmpty()) {
-        if (task.recurrenceSeriesId.isEmpty() || task.occurrenceKey.isEmpty())
-            return fail(error, QStringLiteral("重复任务必须关联 series 和唯一 occurrence"));
-        if (!task.dueAt.isValid() && !task.startAt.isValid() && !task.allDayDate.isValid())
-            return fail(error, QStringLiteral("重复任务必须有计划时间或全天日期"));
+    const bool timed = task.startAt.isValid() || task.dueAt.isValid();
+    const bool allDay = task.allDayDate.isValid() || task.allDayEndDate.isValid();
+    if (task.allDayDate.isValid() && task.startAt.isValid())
+        return fail(error, QStringLiteral("全天计划不能同时包含时刻"));
+    if (task.hasScheduleRange) {
+        if (allDay && (!task.allDayDate.isValid() || !task.allDayEndDate.isValid()
+                       || task.allDayEndDate < task.allDayDate))
+            return fail(error, QStringLiteral("全天时间段必须包含有序的起止日期"));
+        if (timed && (!task.startAt.isValid() || !task.dueAt.isValid() || task.startAt > task.dueAt))
+            return fail(error, QStringLiteral("开始时间不能晚于截止时间"));
+    } else if (task.startAt.isValid() || task.allDayEndDate.isValid()
+               || (timed && !task.dueAt.isValid())) {
+        return fail(error, QStringLiteral("单日计划不能包含时间段端点"));
     }
-    for (const ChecklistItem &item : task.checklist) {
-        if (!isUuid(item.id) || item.entityId != task.id || item.sortOrder < 0 || !validDate(item.createdAt)
-            || !validDate(item.updatedAt)) return fail(error, QStringLiteral("检查清单项非法"));
+    if (task.recurrenceSeriesId.isEmpty() != task.occurrenceKey.isEmpty())
+        return fail(error, QStringLiteral("series 和 occurrence 必须同时存在"));
+    if (!task.recurrenceSeriesId.isEmpty()) {
+        if (task.rrule.isEmpty() || (!timed && !allDay))
+            return fail(error, QStringLiteral("重复任务必须有频率摘要和计划时间"));
     }
     for (const TaskReminder &reminder : task.reminders) {
         if (!isUuid(reminder.id) || reminder.entityId != task.id || !reminder.triggerAt.isValid()
-            || !validDate(reminder.triggerAt) || !validDate(reminder.deliveredAt) || reminder.sortOrder < 0)
+            || !validDate(reminder.triggerAt) || !validDate(reminder.deliveredAt) || reminder.sortOrder <0)
             return fail(error, QStringLiteral("提醒非法"));
+        if (!reminder.ruleJson.isEmpty()) {
+            ReminderSpec spec;
+            QDateTime resolved;
+            if (!reminderFromRuleText(reminder.ruleJson, &spec, error)
+                || !resolveReminder(spec, task, &resolved, error) || resolved != reminder.triggerAt)
+                return fail(error, QStringLiteral("提醒规则与已解析时间不一致"));
+        }
     }
     if (error) error->clear();
     return true;
 }
 
-inline QJsonObject checklistJson(const ChecklistItem &item)
-{
-    QJsonObject object;
-    object.insert(QStringLiteral("id"), item.id);
-    object.insert(QStringLiteral("entityId"), item.entityId);
-    object.insert(QStringLiteral("text"), item.text);
-    object.insert(QStringLiteral("done"), item.done);
-    object.insert(QStringLiteral("sortOrder"), item.sortOrder);
-    object.insert(QStringLiteral("createdAtUtcMs"), dateJson(item.createdAt));
-    object.insert(QStringLiteral("updatedAtUtcMs"), dateJson(item.updatedAt));
-    return object;
-}
 inline QJsonObject reminderJson(const TaskReminder &reminder)
 {
     QJsonObject object;
     object.insert(QStringLiteral("id"), reminder.id);
     object.insert(QStringLiteral("entityId"), reminder.entityId);
     object.insert(QStringLiteral("triggerAtUtcMs"), dateJson(reminder.triggerAt));
+    object.insert(QStringLiteral("ruleJson"), reminder.ruleJson);
     object.insert(QStringLiteral("sortOrder"), reminder.sortOrder);
     object.insert(QStringLiteral("createdAtUtcMs"), dateJson(reminder.createdAt));
     object.insert(QStringLiteral("updatedAtUtcMs"), dateJson(reminder.updatedAt));
@@ -169,6 +171,8 @@ inline QJsonObject toJson(const Entity &task)
     object.insert(QStringLiteral("startAtUtcMs"), dateJson(task.startAt));
     object.insert(QStringLiteral("dueAtUtcMs"), dateJson(task.dueAt));
     object.insert(QStringLiteral("allDayDate"), allDayJson(task.allDayDate));
+    object.insert(QStringLiteral("allDayEndDate"), allDayJson(task.allDayEndDate));
+    object.insert(QStringLiteral("hasScheduleRange"), task.hasScheduleRange);
     object.insert(QStringLiteral("timeZone"), task.timeZone);
     object.insert(QStringLiteral("recurrenceSeriesId"), task.recurrenceSeriesId.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(task.recurrenceSeriesId));
     object.insert(QStringLiteral("occurrenceKey"), task.occurrenceKey.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(task.occurrenceKey));
@@ -180,9 +184,6 @@ inline QJsonObject toJson(const Entity &task)
     QJsonArray tags;
     for (const QString &tag : task.tags) tags.append(tag);
     object.insert(QStringLiteral("tags"), tags);
-    QJsonArray checklist;
-    for (const ChecklistItem &item : task.checklist) checklist.append(checklistJson(item));
-    object.insert(QStringLiteral("checklist"), checklist);
     QJsonArray reminders;
     for (const TaskReminder &reminder : task.reminders) reminders.append(reminderJson(reminder));
     object.insert(QStringLiteral("reminders"), reminders);
@@ -198,23 +199,6 @@ inline bool optionalId(const QJsonObject &object, const QString &key, QString *o
     return true;
 }
 
-inline bool readChecklist(const QJsonObject &object, ChecklistItem *out, QString *error)
-{
-    const QStringList keys = {QStringLiteral("id"), QStringLiteral("entityId"), QStringLiteral("text")};
-    for (const QString &key : keys) if (!object.value(key).isString()) return fail(error, QStringLiteral("清单字段类型非法"));
-    if (!isUuid(object.value(QStringLiteral("id")).toString()) || !isUuid(object.value(QStringLiteral("entityId")).toString())
-        || !object.value(QStringLiteral("done")).isBool()) return fail(error, QStringLiteral("清单 id/done 非法"));
-    qint64 order = 0;
-    if (!readInteger(object.value(QStringLiteral("sortOrder")), 0, 1000000, &order))
-        return fail(error, QStringLiteral("清单排序非法"));
-    out->id = object.value(QStringLiteral("id")).toString();
-    out->entityId = object.value(QStringLiteral("entityId")).toString();
-    out->text = object.value(QStringLiteral("text")).toString();
-    out->done = object.value(QStringLiteral("done")).toBool();
-    out->sortOrder = static_cast<int>(order);
-    return readDate(object.value(QStringLiteral("createdAtUtcMs")), &out->createdAt, error)
-        && readDate(object.value(QStringLiteral("updatedAtUtcMs")), &out->updatedAt, error);
-}
 inline bool readReminder(const QJsonObject &object, TaskReminder *out, QString *error)
 {
     if (!object.value(QStringLiteral("id")).isString() || !object.value(QStringLiteral("entityId")).isString()
@@ -226,6 +210,9 @@ inline bool readReminder(const QJsonObject &object, TaskReminder *out, QString *
     out->id = object.value(QStringLiteral("id")).toString();
     out->entityId = object.value(QStringLiteral("entityId")).toString();
     out->sortOrder = static_cast<int>(order);
+    if (!object.value(QStringLiteral("ruleJson")).isString())
+        return fail(error, QStringLiteral("提醒 ruleJson 必须为字符串"));
+    out->ruleJson = object.value(QStringLiteral("ruleJson")).toString();
     return readDate(object.value(QStringLiteral("triggerAtUtcMs")), &out->triggerAt, error)
         && readDate(object.value(QStringLiteral("createdAtUtcMs")), &out->createdAt, error)
         && readDate(object.value(QStringLiteral("updatedAtUtcMs")), &out->updatedAt, error)
@@ -270,7 +257,10 @@ inline bool fromJson(const QJsonObject &object, Entity *out, QString *error)
     for (const auto &entry : dates)
         if (!readDate(object.value(QLatin1String(entry.key)), &(task.*entry.field), error)) return false;
     task.deleted = task.deletedAt.isValid();
-    if (!readAllDay(object.value(QStringLiteral("allDayDate")), &task.allDayDate, error)) return false;
+    if (!readAllDay(object.value(QStringLiteral("allDayDate")), &task.allDayDate, error)
+        || !readAllDay(object.value(QStringLiteral("allDayEndDate")), &task.allDayEndDate, error)
+        || !object.value(QStringLiteral("hasScheduleRange")).isBool()) return false;
+    task.hasScheduleRange = object.value(QStringLiteral("hasScheduleRange")).toBool();
     task.timeZone = object.value(QStringLiteral("timeZone")).toString();
     const QJsonValue occurrence = object.value(QStringLiteral("occurrenceKey"));
     if (!occurrence.isNull() && !occurrence.isString()) return fail(error, QStringLiteral("occurrenceKey 非法"));
@@ -280,19 +270,15 @@ inline bool fromJson(const QJsonObject &object, Entity *out, QString *error)
     task.rrule = rrule.toString();
     task.recurrence = recurrenceName(task.rrule);
     const QJsonValue tags = object.value(QStringLiteral("tags"));
-    const QJsonValue checklist = object.value(QStringLiteral("checklist"));
     const QJsonValue reminders = object.value(QStringLiteral("reminders"));
-    if (!tags.isArray() || !checklist.isArray() || !reminders.isArray())
-        return fail(error, QStringLiteral("tags/checklist/reminders 必须为数组"));
+    if (!tags.isArray() || !reminders.isArray())
+        return fail(error, QStringLiteral("tags/reminders 必须为数组"));
+    // 正文是唯一内容表示；夹带已废弃的 checklist 字段一律拒绝。
+    if (object.contains(QStringLiteral("checklist")))
+        return fail(error, QStringLiteral("实体包含已废弃的 checklist 字段（新格式不得夹带旧清单表示）"));
     for (const QJsonValue &tag : tags.toArray()) {
         if (!tag.isString()) return fail(error, QStringLiteral("标签必须为字符串"));
         task.tags.append(tag.toString());
-    }
-    for (const QJsonValue &value : checklist.toArray()) {
-        if (!value.isObject()) return fail(error, QStringLiteral("清单项必须为对象"));
-        ChecklistItem item;
-        if (!readChecklist(value.toObject(), &item, error)) return false;
-        task.checklist.append(item);
     }
     for (const QJsonValue &value : reminders.toArray()) {
         if (!value.isObject()) return fail(error, QStringLiteral("提醒必须为对象"));

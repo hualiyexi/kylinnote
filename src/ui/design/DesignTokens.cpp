@@ -15,7 +15,7 @@ ColorTable makeLight() {
     set(ColorToken::Primary, Primary);
     set(ColorToken::PrimaryHover, PrimaryHover);
     set(ColorToken::PrimarySoft, PrimarySoft);
-    set(ColorToken::FocusRing, Primary);
+    set(ColorToken::FocusRing, L_Border);
     set(ColorToken::Bg, L_Bg);
     set(ColorToken::Surface, L_Surface);
     set(ColorToken::SurfaceHover, L_Hover);
@@ -60,6 +60,29 @@ ColorTable makeLight() {
     set(ColorToken::RowSelected, L_RowSelected);
     set(ColorToken::RailBg, L_RailBg);
     set(ColorToken::QuickAddBg, L_QuickAddBg);
+    set(ColorToken::AttachmentDocumentBg, 0xFFE8F4FF);
+    set(ColorToken::AttachmentSpreadsheetBg, 0xFFEAFBF2);
+    set(ColorToken::AttachmentTextBg, 0xFFEFF2F3);
+    set(ColorToken::AttachmentOtherBg, 0xFFEDF0FF);
+    set(ColorToken::AppIconBg, White);
+    set(ColorToken::SettingsRailBg, 0xFFF8F8F8);
+    set(ColorToken::SettingsSelectedBg, 0x0A191919);
+    set(ColorToken::SettingsContentBg, White);
+    set(ColorToken::SettingsSectionBg, 0x05191919);
+    QColor rail(Black);
+    rail.setAlphaF(0.4);
+    set(ColorToken::RailIcon, rail.rgba());
+    rail.setAlphaF(0.6);
+    set(ColorToken::RailIconHover, rail.rgba());
+    set(ColorToken::NotePaperYellow, L_NoteYellow);
+    set(ColorToken::NotePaperBlue, L_NoteBlue);
+    set(ColorToken::NotePaperGreen, L_NoteGreen);
+    set(ColorToken::NotePaperPink, L_NotePink);
+    set(ColorToken::NotePaperPurple, L_NotePurple);
+    set(ColorToken::NotePaperWhite, White);
+    set(ColorToken::NoteText, L_Text);
+    set(ColorToken::NoteMuted, L_TextSecondary);
+    set(ColorToken::NoteBorder, L_TextTertiary);
     return t;
 }
 
@@ -74,7 +97,7 @@ ColorTable makeDark() {
     set(ColorToken::Primary, Primary);
     set(ColorToken::PrimaryHover, PrimaryHover);
     set(ColorToken::PrimarySoft, D_PrimarySoft);
-    set(ColorToken::FocusRing, Primary);
+    set(ColorToken::FocusRing, D_Border);
     set(ColorToken::Bg, D_Bg);
     set(ColorToken::Surface, D_Surface);
     set(ColorToken::SurfaceHover, D_Hover);
@@ -119,6 +142,29 @@ ColorTable makeDark() {
     set(ColorToken::RowSelected, D_RowSelected);
     set(ColorToken::RailBg, D_RailBg);
     set(ColorToken::QuickAddBg, D_Field);
+    set(ColorToken::AttachmentDocumentBg, 0xFF203144);
+    set(ColorToken::AttachmentSpreadsheetBg, 0xFF1D352A);
+    set(ColorToken::AttachmentTextBg, 0xFF282D33);
+    set(ColorToken::AttachmentOtherBg, 0xFF2A2E48);
+    set(ColorToken::AppIconBg, White);
+    set(ColorToken::SettingsRailBg, D_RailBg);
+    set(ColorToken::SettingsSelectedBg, D_Hover);
+    set(ColorToken::SettingsContentBg, D_Surface);
+    set(ColorToken::SettingsSectionBg, D_Field);
+    QColor rail(White);
+    rail.setAlphaF(0.4);
+    set(ColorToken::RailIcon, rail.rgba());
+    rail.setAlphaF(0.6);
+    set(ColorToken::RailIconHover, rail.rgba());
+    set(ColorToken::NotePaperYellow, D_NoteYellow);
+    set(ColorToken::NotePaperBlue, D_NoteBlue);
+    set(ColorToken::NotePaperGreen, D_NoteGreen);
+    set(ColorToken::NotePaperPink, D_NotePink);
+    set(ColorToken::NotePaperPurple, D_NotePurple);
+    set(ColorToken::NotePaperWhite, D_Surface);
+    set(ColorToken::NoteText, D_Text);
+    set(ColorToken::NoteMuted, D_TextSecondary);
+    set(ColorToken::NoteBorder, t[static_cast<size_t>(ColorToken::WindowBorder)]);
     return t;
 }
 

@@ -1,11 +1,14 @@
 #include "DisplaySettingsDialog.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QRadioButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
+#include "MenuComboBox.h"
 #include "design/ThemeManager.h"
 #include "design/TypeSystem.h"
 
@@ -18,6 +21,16 @@ DisplaySettingsDialog::DisplaySettingsDialog(bool countdownDates, bool popupDeta
     setDialogTitle(QStringLiteral("显示设置"));
     setMinimumWidth(420);
 
+    auto* completedSection = new QFrame(this);
+    completedSection->setObjectName(QStringLiteral("DisplaySettingsSection"));
+    auto* completedRow = new QHBoxLayout(completedSection);
+    completedRow->setContentsMargins(18, 12, 18, 12);
+    m_showCompleted = new QCheckBox(QStringLiteral("显示已完成和已放弃"), completedSection);
+    m_showCompleted->setObjectName(QStringLiteral("ShowCompletedEntities"));
+    completedRow->addWidget(m_showCompleted);
+    contentLayout()->addWidget(completedSection);
+    connect(m_showCompleted, &QCheckBox::toggled, this, &DisplaySettingsDialog::completedVisibilityChanged);
+
     auto* dateSection = new QFrame(this);
     dateSection->setObjectName(QStringLiteral("DisplaySettingsSection"));
     auto* dateRow = new QHBoxLayout(dateSection);
@@ -25,9 +38,10 @@ DisplaySettingsDialog::DisplaySettingsDialog(bool countdownDates, bool popupDeta
     dateRow->setSpacing(8);
     auto* dateLabel = new QLabel(QStringLiteral("日期显示为"), dateSection);
     dateRow->addWidget(dateLabel, 1);
-    m_dateDisplay = new QComboBox(dateSection);
+    m_dateDisplay = new MenuComboBox(dateSection);
     m_dateDisplay->setObjectName(QStringLiteral("DateDisplayMode"));
     m_dateDisplay->setAccessibleName(QStringLiteral("日期显示方式"));
+    m_dateDisplay->setFixedHeight(30);
     m_dateDisplay->addItem(QStringLiteral("任务时间"), false);
     m_dateDisplay->addItem(QStringLiteral("倒数日"), true);
     m_dateDisplay->setCurrentIndex(countdownDates ? 1 : 0);
@@ -76,6 +90,11 @@ bool DisplaySettingsDialog::countdownDates() const {
 
 bool DisplaySettingsDialog::popupDetail() const {
     return m_popup->isChecked();
+}
+
+void DisplaySettingsDialog::setCompletedVisible(bool visible) {
+    const QSignalBlocker blocker(m_showCompleted);
+    m_showCompleted->setChecked(visible);
 }
 
 void DisplaySettingsDialog::applyTheme() {

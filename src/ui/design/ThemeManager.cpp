@@ -6,6 +6,8 @@
 #include <QStyleFactory>
 #include <QWidget>
 #include "QssBuilder.h"
+#include "WorkspaceStyle.h"
+#include "FontManager.h"
 
 namespace kl {
 namespace {
@@ -52,7 +54,7 @@ QColor ThemeManager::color(ds::ColorToken token) const {
 }
 
 void ThemeManager::applyBootstrap(QApplication& app) {
-    app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    app.setStyle(new WorkspaceStyle());
     const ds::Theme theme = m_resolved;
     QPalette palette;
     palette.setColor(QPalette::Window, ds::color(ds::ColorToken::Bg, theme));
@@ -72,6 +74,7 @@ void ThemeManager::applyBootstrap(QApplication& app) {
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, ds::color(ds::ColorToken::MenuDisabled, theme));
     app.setPalette(palette);
     app.setStyleSheet(ds::buildStyleSheet(theme));
+    FontManager::instance().applyBootstrap(app);
 }
 
 void ThemeManager::setPreference(Preference pref) {

@@ -2,6 +2,7 @@
 
 #include "ModalDialog.h"
 
+class QCheckBox;
 class QComboBox;
 class QRadioButton;
 
@@ -15,13 +16,16 @@ public:
                                    QWidget* parent = nullptr);
     bool countdownDates() const;
     bool popupDetail() const;
+    void setCompletedVisible(bool visible);
 signals:
     void optionsChanged(bool countdownDates, bool popupDetail);
+    void completedVisibilityChanged(bool visible);
 
 protected:
     void applyTheme() override;
 
 private:
+    QCheckBox* m_showCompleted = nullptr;
     QComboBox* m_dateDisplay = nullptr;
     QRadioButton* m_sidebar = nullptr;
     QRadioButton* m_popup = nullptr;

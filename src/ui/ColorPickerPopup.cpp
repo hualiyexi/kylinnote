@@ -158,9 +158,7 @@ protected:
         black.setColorAt(1, QColor(0, 0, 0, 255));
         painter.fillRect(area, black);
         painter.setClipping(false);
-        painter.setPen(QPen(hasFocus() ? token(ds::ColorToken::FocusRing)
-                                       : token(ds::ColorToken::Divider),
-                            1.0));
+        painter.setPen(QPen(token(ds::ColorToken::Divider), 1.0));
         painter.setBrush(Qt::NoBrush);
         painter.drawRoundedRect(area, 6, 6);
         const QPointF cursor(m_sat / 255.0 * (width() - 1),
@@ -511,23 +509,23 @@ void ColorPickerPopup::applyTheme()
         "QPushButton#ColorCustomEntry{color:%3;background:transparent;"
         "border:1px solid transparent;border-radius:8px;padding:0 8px;text-align:left;}"
         "QPushButton#ColorCustomEntry:hover{background:%6;}"
-        "QPushButton#ColorCustomEntry:focus{border-color:%7;}"
+        "QPushButton#ColorCustomEntry:focus{background:%6;}"
         "QPushButton#ColorCancel{color:%4;background:%8;border:1px solid %2;"
         "border-radius:6px;}"
         "QPushButton#ColorCancel:hover{background:%9;}"
-        "QPushButton#ColorCancel:focus{border-color:%7;}"
+        "QPushButton#ColorCancel:focus{background:%9;}"
         "QPushButton#ColorSave{color:%10;background:%11;border:1px solid %11;"
         "border-radius:6px;}"
         "QPushButton#ColorSave:hover{background:%12;border-color:%12;}"
-        "QPushButton#ColorSave:focus{border-color:%7;}"
+        "QPushButton#ColorSave:focus{border-color:%11;}"
         "QLineEdit#ColorHexEdit{color:%3;background:%8;border:1px solid %2;"
         "border-radius:6px;padding:5px 8px;selection-background-color:%11;"
         "selection-color:%10;}"
-        "QLineEdit#ColorHexEdit:focus{border-color:%7;}"
+        "QLineEdit#ColorHexEdit:focus{background:%9;}"
         "QToolButton#ColorCustomBack{background:transparent;"
         "border:1px solid transparent;border-radius:6px;padding:0;}"
         "QToolButton#ColorCustomBack:hover{background:%6;}"
-        "QToolButton#ColorCustomBack:focus{border-color:%7;}")
+        "QToolButton#ColorCustomBack:focus{background:%6;}")
         .arg(token(ds::ColorToken::MenuBg).name())
         .arg(token(ds::ColorToken::Divider).name())
         .arg(token(ds::ColorToken::Text).name())

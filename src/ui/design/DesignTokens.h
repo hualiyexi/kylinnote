@@ -37,10 +37,10 @@ constexpr QRgb Info = 0xFF4772FA;
 constexpr QRgb L_Text = 0xFF20242C;
 constexpr QRgb L_TextSecondary = 0xFF6B7484;
 constexpr QRgb L_TextTertiary = 0xFFAEB5C0;
-constexpr QRgb L_Surface = 0xFFFEFEFE;
+constexpr QRgb L_Surface = 0xFFFFFFFF;
 constexpr QRgb L_Bg = 0xFFF5F7FC;
-constexpr QRgb L_Sidebar = 0xFFFBFBFB;
-constexpr QRgb L_RailBg = 0xFFF5F5F5;
+constexpr QRgb L_Sidebar = 0xFFFFFFFF;
+constexpr QRgb L_RailBg = 0xFFF9F9F9;
 constexpr QRgb L_SidebarHover = 0xFFEBEFF8;
 constexpr QRgb L_Hover = 0xFFF2F4F8;
 constexpr QRgb L_Field = 0xFFF2F4F8;
@@ -79,6 +79,16 @@ constexpr QRgb D_RowHover = 0xFF222222;
 constexpr QRgb D_RowSelected = 0xFF2B2B2B;
 constexpr QRgb D_TooltipBg = 0xFF2C2C2C;
 constexpr QRgb D_PrimarySoft = 0xFF2A3350;  // 深色选中底
+constexpr QRgb L_NoteYellow = 0xFFFFF4AD;
+constexpr QRgb L_NoteBlue = 0xFFE0EEF8;
+constexpr QRgb L_NoteGreen = 0xFFE5F1DE;
+constexpr QRgb L_NotePink = 0xFFF9E8EE;
+constexpr QRgb L_NotePurple = 0xFFEDE8F7;
+constexpr QRgb D_NoteYellow = 0xFF3D3825;
+constexpr QRgb D_NoteBlue = 0xFF273846;
+constexpr QRgb D_NoteGreen = 0xFF2F3C2D;
+constexpr QRgb D_NotePink = 0xFF443039;
+constexpr QRgb D_NotePurple = 0xFF373046;
 }  // namespace raw
 
 // ---------------------------------------------------------------------------
@@ -104,6 +114,13 @@ enum class ColorToken : int {
     RowHover, RowSelected,
     RailBg,
     QuickAddBg,
+    AttachmentDocumentBg, AttachmentSpreadsheetBg, AttachmentTextBg, AttachmentOtherBg,
+    // 软件级应用图标的固定白底：同一品牌 Logo 的白底版画布，两主题均为白，不随主题变化。
+    AppIconBg,
+    SettingsRailBg, SettingsSelectedBg, SettingsContentBg, SettingsSectionBg,
+    RailIcon, RailIconHover,
+    NotePaperYellow, NotePaperBlue, NotePaperGreen, NotePaperPink, NotePaperPurple, NotePaperWhite,
+    NoteText, NoteMuted, NoteBorder,
     Count
 };
 

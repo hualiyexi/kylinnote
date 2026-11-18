@@ -54,7 +54,7 @@ void ReminderScheduler::checkDue(const QDateTime &now)
     const QSet<QString> archived = m_store->archivedListIds();
     for (const Entity &task : tasks) {
         if (!m_store) break;
-        if (task.kind != EntityKind::Task || task.status != TaskStatus::Active || task.deleted) continue;
+        if ((task.kind == EntityKind::Task && task.status != TaskStatus::Active) || task.deleted) continue;
         if (archived.contains(task.listId)) continue;   // 归档清单：初查即排除
         for (const TaskReminder &reminder : task.reminders) {
             if (!m_store) break;
@@ -66,7 +66,7 @@ void ReminderScheduler::checkDue(const QDateTime &now)
             bool stillCurrent = false;
             for (const TaskReminder &row : current.reminders)
                 if (row.id == reminder.id && row.triggerAt == reminder.triggerAt) stillCurrent = true;
-            if (current.id.isEmpty() || current.kind != EntityKind::Task || current.status != TaskStatus::Active
+            if (current.id.isEmpty() || (current.kind == EntityKind::Task && current.status != TaskStatus::Active)
                 || current.deleted || m_store->isListArchived(current.listId) || !stillCurrent) continue;
             emit reminderDue(task.id); emit reminderTriggered(task.id, reminder.id);
         }
@@ -78,18 +78,22 @@ bool ReminderScheduler::snoozeReminder(const QString &reminderId, int minutes)
     Entity value;
     for (const Entity &candidate : m_store->entities()) for (const TaskReminder &row : candidate.reminders)
         if (row.id == reminderId) value = candidate;
-    if (value.id.isEmpty() || value.kind != EntityKind::Task || value.status != TaskStatus::Active || value.deleted
+    if (value.id.isEmpty() || (value.kind == EntityKind::Task && value.status != TaskStatus::Active) || value.deleted
         || m_store->isListArchived(value.listId)) return false;
     const QDateTime next = QDateTime::currentDateTimeUtc().addSecs(qint64(minutes) * 60);
     if (!next.isValid() || next.date().year() > 9999) return false;
     bool found = false;
-    for (TaskReminder &row : value.reminders) if (row.id == reminderId) { row.triggerAt = next; found = true; }
+    for (TaskReminder &row : value.reminders) if (row.id == reminderId) {
+        row.triggerAt = next;
+        row.ruleJson.clear(); // 稍后提醒只改变本次绝对触发时刻，不制造持续提醒。
+        found = true;
+    }
     return found && m_store->saveTask(value);
 }
 bool ReminderScheduler::snooze(const QString &entityId, int minutes)
 {
     if (!m_store) return false; const Entity value = m_store->entity(entityId);
-    if (value.id.isEmpty() || value.kind != EntityKind::Task || value.status != TaskStatus::Active || value.deleted
+    if (value.id.isEmpty() || (value.kind == EntityKind::Task && value.status != TaskStatus::Active) || value.deleted
         || m_store->isListArchived(value.listId)) return false;
     const int primary = primaryReminderIndex(value);
     return primary >= 0 && snoozeReminder(value.reminders.at(primary).id, minutes);

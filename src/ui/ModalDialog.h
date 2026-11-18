@@ -35,6 +35,7 @@ public:
     QHBoxLayout* buttonLayout() const { return m_buttonLayout; }
     // 圆角卡片本体；子类需要挂局部 QSS 时挂这里，不要挂到透明窗口上。
     QWidget* card() const { return m_card; }
+    QWidget* header() const { return m_header; }
 
 protected:
     // 重建卡片局部 QSS 与阴影颜色。子类可重载追加自己的规则，但需先调基类实现。
@@ -43,6 +44,7 @@ protected:
 
 private:
     QWidget* m_card = nullptr;
+    QWidget* m_header = nullptr;
     QLabel* m_titleLabel = nullptr;
     QToolButton* m_closeButton = nullptr;
     QVBoxLayout* m_contentLayout = nullptr;

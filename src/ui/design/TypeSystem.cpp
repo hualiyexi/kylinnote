@@ -3,24 +3,11 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include "FontManager.h"
 
 namespace kl {
 namespace ds {
 namespace {
-
-// 可选的内置字体目录。若发布包在 <应用目录>/fonts 放入 OFL/开源授权的
-// TTF/OTF，启动时自动注册；未放置时完全走系统字体链，不产生额外依赖。
-// 这样既支持「目标机缺中文字体」的离线兜底，也不强制增大安装包体积。
-int loadBundledFonts() {
-    const QString dir = QCoreApplication::applicationDirPath() + QStringLiteral("/fonts");
-    if (!QDir(dir).exists()) return 0;
-    int loaded = 0;
-    for (const QFileInfo& info : QDir(dir).entryInfoList(
-             {QStringLiteral("*.ttf"), QStringLiteral("*.otf")}, QDir::Files)) {
-        if (QFontDatabase::addApplicationFont(info.absoluteFilePath()) >= 0) ++loaded;
-    }
-    return loaded;
-}
 
 // 随包注册的 OFL 字体优先于系统字体，确保目标机没有 Emoji 字体也能绘制。
 QString bundledEmojiFamily() {
@@ -47,7 +34,7 @@ QString bundledEmojiFamily() {
 
 qreal pointSize(TypeScale scale) {
     switch (scale) {
-        case TypeScale::Caption: return 8.5;
+        case TypeScale::Caption: return 9.0;
         case TypeScale::Body: return 10.5;
         case TypeScale::Menu: return 9.75;
         case TypeScale::MenuCaption: return 9.0;
@@ -61,30 +48,29 @@ qreal pointSize(TypeScale scale) {
 }
 
 QStringList fontFamilies() {
-    // 与滴答一致使用系统无衬线主字体，再回退中文与通用字体。
-    // 内置字体（若发布包提供）注册后会以这些族名之一出现在 QFontDatabase 中。
-    return {QStringLiteral("Segoe UI"), QStringLiteral("Noto Sans CJK SC"),
-            QStringLiteral("Microsoft YaHei UI"), QStringLiteral("Microsoft YaHei"),
-            QStringLiteral("Source Han Sans SC"), QStringLiteral("Source Han Sans CN"),
-            QStringLiteral("WenQuanYi Micro Hei"), QStringLiteral("PingFang SC"),
-            QStringLiteral("Hiragino Sans GB"), QStringLiteral("sans-serif")};
+    // 中文界面直接选择可缩放的中文无衬线族，避免 Segoe UI 的系统回退落到点阵宋体。
+#ifdef Q_OS_WIN
+    return {QStringLiteral("Microsoft YaHei UI"), QStringLiteral("Microsoft YaHei"),
+            QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Source Han Sans SC"),
+            QStringLiteral("Source Han Sans CN"), QStringLiteral("Segoe UI"),
+            QStringLiteral("sans-serif")};
+#else
+    return {QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Source Han Sans SC"),
+            QStringLiteral("Source Han Sans CN"), QStringLiteral("WenQuanYi Micro Hei"),
+            QStringLiteral("PingFang SC"), QStringLiteral("Hiragino Sans GB"),
+            QStringLiteral("sans-serif")};
+#endif
 }
 
 namespace {
 QString resolveFamily() {
-    static const QString resolved = [] {
-        loadBundledFonts();  // 先注册可选内置字体，再探测
-        const QStringList available = QFontDatabase().families();
-        for (const QString& name : fontFamilies())
-            if (available.contains(name)) return name;
-        return QApplication::font().family();
-    }();
-    return resolved;
+    return FontManager::instance().family();
 }
 }  // namespace
 
 QFont qfont(FontScene scene) {
     QFont f(resolveFamily());
+    f.setStyleHint(QFont::SansSerif);
     switch (scene) {
         case FontScene::Base:
             f.setPointSizeF(pointSize(TypeScale::Body));
@@ -125,6 +111,7 @@ QFont qfont(FontScene scene) {
         case FontScene::Count:
             break;
     }
+    f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferAntialias | QFont::PreferOutline));
     return f;
 }
 

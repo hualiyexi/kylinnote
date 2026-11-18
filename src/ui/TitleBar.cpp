@@ -1,109 +1,92 @@
 #include "TitleBar.h"
 #include "AppIcons.h"
-#include "ColorTheme.h"
 #include "design/ThemeManager.h"
 
 #include <QHBoxLayout>
-#include <QIcon>
 #include <QMouseEvent>
-#include <QPainter>
-#include <QPixmap>
 #include <QToolButton>
 
 namespace kl {
 
 TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("TitleBar"));
-    setFixedHeight(TitleBarHeight);
+    setAccessibleName(QStringLiteral("拖动桌面便签"));
+    setFixedHeight(20);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setCursor(Qt::ArrowCursor);
-    setAttribute(Qt::WA_StyledBackground, true);
-
-    QHBoxLayout* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(10, 3, 10, 0);
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(10, 1, 8, 1);
     layout->setSpacing(4);
-    m_openButton = new QToolButton(this);
-    m_openButton->setObjectName(QStringLiteral("OpenTaskButton"));
-    m_openButton->setIcon(AppIcons::icon(IconId::More));
-    m_openButton->setIconSize(QSize(16, 16));
-    m_openButton->setFixedSize(28, 24);
-    m_openButton->setToolTip(QStringLiteral("打开待办详情，设置时间、提醒和附件"));
-    m_openButton->setAccessibleName(QStringLiteral("打开待办详情"));
-    layout->addWidget(m_openButton);
-    connect(m_openButton, &QToolButton::clicked, this, &TitleBar::openClicked);
     layout->addStretch(1);
-
-    m_colorButton = new QToolButton(this);
-    m_colorButton->setObjectName(QStringLiteral("ColorButton"));
-    m_colorButton->setFixedSize(20, 20);
-    m_colorButton->setIconSize(QSize(14, 14));
-    m_colorButton->setToolTip(QStringLiteral("\u5207\u6362\u989c\u8272\uff086 \u8272\u5faa\u73af\uff09"));
-    m_colorButton->setAccessibleName(QStringLiteral("切换便签颜色"));
-    m_colorButton->setCursor(Qt::ArrowCursor);
-    layout->addWidget(m_colorButton);
-
-    m_closeButton = new QToolButton(this);
-    m_closeButton->setObjectName(QStringLiteral("CloseButton"));
-    m_closeButton->setFixedSize(26, 26);
-    m_closeButton->setIcon(AppIcons::icon(IconId::Close));
-    m_closeButton->setIconSize(QSize(16, 16));
-    m_closeButton->setToolTip(QStringLiteral("取消贴到桌面（任务会保留在面板中）"));
-    m_closeButton->setAccessibleName(QStringLiteral("取消贴到桌面"));
-    m_closeButton->setCursor(Qt::ArrowCursor);
-    layout->addWidget(m_closeButton);
-
+    const auto button = [this, layout](const QString& name, const QString& label) {
+        auto* control = new QToolButton(this);
+        control->setObjectName(name);
+        control->setFixedSize(18, 18);
+        control->setIconSize(QSize(12, 12));
+        control->setAutoRaise(true);
+        control->setFocusPolicy(Qt::NoFocus);
+        control->setToolTip(label);
+        control->setAccessibleName(label);
+        control->setCursor(Qt::PointingHandCursor);
+        QSizePolicy policy = control->sizePolicy();
+        policy.setRetainSizeWhenHidden(true);
+        control->setSizePolicy(policy);
+        layout->addWidget(control);
+        return control;
+    };
+    m_colorButton = button(QStringLiteral("ColorButton"), QStringLiteral("便签颜色"));
+    m_pinButton = button(QStringLiteral("NotePinButton"), QStringLiteral("置顶便签"));
+    m_pinButton->setCheckable(true);
+    m_closeButton = button(QStringLiteral("CloseButton"), QStringLiteral("关闭便签，保留任务"));
+    const auto icons = [this]() {
+        m_colorButton->setIcon(AppIcons::icon(IconId::Theme, ds::ColorToken::TextTertiary, 12));
+        m_pinButton->setIcon(AppIcons::icon(IconId::Pin,
+            m_pinned ? ds::ColorToken::Primary : ds::ColorToken::TextTertiary, 12));
+        m_closeButton->setIcon(AppIcons::icon(IconId::Close, ds::ColorToken::TextTertiary, 12));
+    };
+    icons();
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [icons](ds::Theme) { icons(); });
     connect(m_colorButton, &QToolButton::clicked, this, &TitleBar::colorClicked);
+    connect(m_pinButton, &QToolButton::clicked, this, &TitleBar::pinClicked);
     connect(m_closeButton, &QToolButton::clicked, this, &TitleBar::closeClicked);
+    setHovered(false);
 }
 
 void TitleBar::setHovered(bool hovered) {
-    m_openButton->setVisible(hovered);
     m_colorButton->setVisible(hovered);
+    m_pinButton->setVisible(hovered);
+    m_closeButton->setVisible(hovered);
 }
 
-void TitleBar::setColorIndicator(NoteColor color) {
-    QPixmap pixmap(14, 14);
-    pixmap.fill(Qt::transparent);
+void TitleBar::setColorIndicator(NoteColor) {
+    m_colorButton->setIcon(AppIcons::icon(IconId::Theme, ds::ColorToken::TextTertiary, 12));
+}
 
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    QColor outline = ThemeManager::instance().color(ds::ColorToken::TextSecondary);
-    outline.setAlpha(90);
-    painter.setPen(QPen(outline, 1));
-    painter.setBrush(QColor(ColorTheme::spec(color).body));
-    painter.drawEllipse(1, 1, 12, 12);
-    painter.end();
+void TitleBar::setPinned(bool pinned) {
+    if (m_pinned == pinned) return;
+    m_pinned = pinned;
+    m_pinButton->setChecked(pinned);
+    const auto token = pinned ? ds::ColorToken::Primary : ds::ColorToken::TextTertiary;
+    m_pinButton->setIcon(AppIcons::icon(IconId::Pin, token, 12));
+    m_pinButton->setToolTip(pinned ? QStringLiteral("取消便签置顶") : QStringLiteral("置顶便签"));
+}
 
-    m_colorButton->setIcon(QIcon(pixmap));
+void TitleBar::setMoveConstraint(std::function<QPoint(const QPoint&)> constraint) {
+    m_moveConstraint = std::move(constraint);
 }
 
 void TitleBar::mousePressEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton) {
-        QWidget::mousePressEvent(event);
-        return;
-    }
-    QWidget* top = window();
-    if (!top) {
-        QWidget::mousePressEvent(event);
-        return;
-    }
+    if (event->button() != Qt::LeftButton) return QWidget::mousePressEvent(event);
     m_dragging = true;
     m_dragStartGlobal = event->globalPos();
-    m_dragStartWindowPos = top->frameGeometry().topLeft();
+    m_dragStartWindowPos = window()->pos();
     event->accept();
 }
 
 void TitleBar::mouseMoveEvent(QMouseEvent* event) {
-    if (!m_dragging) {
-        QWidget::mouseMoveEvent(event);
-        return;
-    }
-    QWidget* top = window();
-    if (!top) {
-        return;
-    }
-    const QPoint offset = event->globalPos() - m_dragStartGlobal;
-    top->move(m_dragStartWindowPos + offset);
+    if (!m_dragging || !(event->buttons() & Qt::LeftButton)) return QWidget::mouseMoveEvent(event);
+    const QPoint raw = m_dragStartWindowPos + event->globalPos() - m_dragStartGlobal;
+    window()->move(m_moveConstraint ? m_moveConstraint(raw) : raw);
     event->accept();
 }
 
@@ -116,4 +99,4 @@ void TitleBar::mouseReleaseEvent(QMouseEvent* event) {
     QWidget::mouseReleaseEvent(event);
 }
 
-}  // namespace kl
+} // namespace kl

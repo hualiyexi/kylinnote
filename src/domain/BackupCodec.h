@@ -4,6 +4,7 @@
 #include "../db/TaskRepository.h"
 #include "AttachmentCodec.h"
 #include "EntityCodec.h"
+#include "RecurrenceRule.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -14,38 +15,28 @@
 namespace kl {
 namespace backupcodec {
 
-// v4：folders 增加 icon。读入兼容 v2/v3（缺省补默认值：文件夹无图标）；
-// 更旧版本与 v5+ 一律拒绝，旧程序（只认 v3）也会拒绝 v4。
-const int kVersion = 4;
-const int kMinimumVersion = 2;
+// 只读写当前 v6 格式：时间段、完整重复规格与正常一次性提醒规则均为权威字段。
+// 开发阶段不兼容其他版本；不建立旧备份转换层。
+const int kVersion = 6;
 const qint64 kMaximumRevision = 9007199254740991LL;
 inline QString formatName() { return QStringLiteral("KylinList.Entities"); }
 inline bool readFolderIcon(const QJsonObject &object, QString *icon, QString *error)
 {
-    icon->clear();
-    if (object.contains(QStringLiteral("icon"))) {
-        if (!object.value(QStringLiteral("icon")).isString()) return entitycodec::fail(error, QStringLiteral("文件夹 icon 必须为字符串"));
-        *icon = object.value(QStringLiteral("icon")).toString();
-    }
+    if (!object.value(QStringLiteral("icon")).isString())
+        return entitycodec::fail(error, QStringLiteral("文件夹 icon 必须为字符串"));
+    *icon = object.value(QStringLiteral("icon")).toString();
     if (!isValidListIcon(*icon)) return entitycodec::fail(error, QStringLiteral("文件夹 icon 非法"));
     return true;
 }
 inline bool readListAppearance(const QJsonObject &object, QString *icon, QString *color,
                                qint64 *archivedAtUtcMs, QString *error)
 {
-    icon->clear(); color->clear(); *archivedAtUtcMs = 0;
-    if (object.contains(QStringLiteral("icon"))) {
-        if (!object.value(QStringLiteral("icon")).isString()) return entitycodec::fail(error, QStringLiteral("清单 icon 必须为字符串"));
-        *icon = object.value(QStringLiteral("icon")).toString();
-    }
-    if (object.contains(QStringLiteral("color"))) {
-        if (!object.value(QStringLiteral("color")).isString()) return entitycodec::fail(error, QStringLiteral("清单 color 必须为字符串"));
-        *color = object.value(QStringLiteral("color")).toString();
-    }
-    if (object.contains(QStringLiteral("archivedAtUtcMs"))) {
-        if (!entitycodec::readInteger(object.value(QStringLiteral("archivedAtUtcMs")), 0, kMaximumRevision, archivedAtUtcMs))
-            return entitycodec::fail(error, QStringLiteral("清单归档时间非法"));
-    }
+    if (!object.value(QStringLiteral("icon")).isString() || !object.value(QStringLiteral("color")).isString())
+        return entitycodec::fail(error, QStringLiteral("清单 icon/color 必须为字符串"));
+    if (!entitycodec::readInteger(object.value(QStringLiteral("archivedAtUtcMs")), 0, kMaximumRevision, archivedAtUtcMs))
+        return entitycodec::fail(error, QStringLiteral("清单归档时间非法"));
+    *icon = object.value(QStringLiteral("icon")).toString();
+    *color = object.value(QStringLiteral("color")).toString();
     if (!isValidListIcon(*icon) || !isValidListColor(*color))
         return entitycodec::fail(error, QStringLiteral("清单 icon 或 color 非法"));
     return true;
@@ -106,6 +97,9 @@ inline QJsonObject seriesJson(const RecurrenceSeries &series)
 {
     QJsonObject object;
     object.insert(QStringLiteral("id"), series.id); object.insert(QStringLiteral("rrule"), series.rrule);
+    object.insert(QStringLiteral("ruleJson"), series.ruleJson);
+    object.insert(QStringLiteral("occurrenceOrdinal"), series.occurrenceOrdinal);
+    object.insert(QStringLiteral("completionCount"), series.completionCount);
     object.insert(QStringLiteral("anchorDay"), series.anchorDay); object.insert(QStringLiteral("timeZone"), series.timeZone);
     object.insert(QStringLiteral("dtstartAtUtcMs"), entitycodec::dateJson(series.dtstartAt));
     object.insert(QStringLiteral("dtstartDate"), entitycodec::allDayJson(series.dtstartDate));
@@ -130,6 +124,7 @@ inline QJsonObject eventJson(const EntityEvent &event)
     object.insert(QStringLiteral("oldValue"), eventValueJson(event.oldValue));
     object.insert(QStringLiteral("newValue"), eventValueJson(event.newValue));
     object.insert(QStringLiteral("occurredAtUtcMs"), entitycodec::dateJson(event.occurredAt));
+    object.insert(QStringLiteral("context"), event.context);
     return object;
 }
 inline bool validEventType(const QString &type)
@@ -163,6 +158,10 @@ inline bool readEvent(const QJsonObject &object, EntityEvent *out, QString *erro
         || !readEventValue(object.value(QStringLiteral("newValue")), &event.newValue, error)
         || !entitycodec::readDate(object.value(QStringLiteral("occurredAtUtcMs")), &event.occurredAt, error)
         || !event.occurredAt.isValid()) return entitycodec::fail(error, QStringLiteral("事件内容非法"));
+    const QJsonValue context = object.value(QStringLiteral("context"));
+    if (!context.isObject())
+        return entitycodec::fail(error, QStringLiteral("事件 context 必须为 JSON 对象"));
+    event.context = context.toObject();
     *out = event; return true;
 }
 inline QString snapshotTimeZone(const EntitySnapshot &snapshot)
@@ -170,12 +169,6 @@ inline QString snapshotTimeZone(const EntitySnapshot &snapshot)
     for (const LocalMeta &meta : snapshot.localMeta)
         if (meta.key == QStringLiteral("default_timezone") && entitycodec::validTimeZone(meta.value)) return meta.value;
     return defaultTimeZone();
-}
-inline QJsonObject checklistJson(const ChecklistItem &item)
-{
-    QJsonObject object = entitycodec::checklistJson(item);
-    object.insert(QStringLiteral("revision"), static_cast<double>(item.revision));
-    object.insert(QStringLiteral("serverRevision"), static_cast<double>(item.serverRevision)); return object;
 }
 inline QJsonObject reminderJson(const TaskReminder &reminder)
 {
@@ -195,7 +188,7 @@ inline QJsonObject toJson(const EntitySnapshot &snapshot, const QVector<EntityEv
     root.insert(QStringLiteral("format"), formatName()); root.insert(QStringLiteral("version"), kVersion);
     root.insert(QStringLiteral("defaultTimezone"), snapshotTimeZone(snapshot));
     QJsonArray folders, lists, sections, series, entities, links, attachments, eventArray;
-    QJsonArray checklist, tags, entityTags, reminders, viewDefs;
+    QJsonArray tags, entityTags, reminders, viewDefs;
     for (const Folder &row : snapshot.folders) {
         QJsonObject object = namedJson(row.id, row.name, QString(), row.sortOrder, row.createdAt, row.updatedAt,
                                        QString(), row.revision, row.serverRevision);
@@ -227,10 +220,6 @@ inline QJsonObject toJson(const EntitySnapshot &snapshot, const QVector<EntityEv
         object.insert(QStringLiteral("serverRevision"), static_cast<double>(row.serverRevision)); links.append(object);
     }
     for (const Attachment &row : snapshot.attachments) attachments.append(attachmentJson(row));
-    const QVector<ChecklistItem> checklistRows = !snapshot.checklistItems.isEmpty() ? snapshot.checklistItems : [&snapshot]() {
-        QVector<ChecklistItem> rows; for (const StoredEntity &entity : snapshot.entities) rows.append(entity.entity.checklist); return rows;
-    }();
-    for (const ChecklistItem &row : checklistRows) checklist.append(checklistJson(row));
     for (const Tag &row : snapshot.tags) {
         QJsonObject object; object.insert(QStringLiteral("id"), row.id); object.insert(QStringLiteral("name"), row.name);
         object.insert(QStringLiteral("normalizedName"), row.normalizedName); object.insert(QStringLiteral("color"), row.color);
@@ -259,7 +248,7 @@ inline QJsonObject toJson(const EntitySnapshot &snapshot, const QVector<EntityEv
     root.insert(QStringLiteral("sections"), sections); root.insert(QStringLiteral("recurrenceSeries"), series);
     root.insert(QStringLiteral("entities"), entities); root.insert(QStringLiteral("recurrenceLinks"), links);
     root.insert(QStringLiteral("attachments"), attachments); root.insert(QStringLiteral("events"), eventArray);
-    root.insert(QStringLiteral("checklistItems"), checklist); root.insert(QStringLiteral("tags"), tags);
+    root.insert(QStringLiteral("tags"), tags);
     root.insert(QStringLiteral("entityTags"), entityTags); root.insert(QStringLiteral("reminders"), reminders);
     root.insert(QStringLiteral("viewDefs"), viewDefs);
     return root;
@@ -272,13 +261,15 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
     qint64 version = 0;
     const QString defaultTimezone = root.value(QStringLiteral("defaultTimezone")).toString();
     if (root.value(QStringLiteral("format")).toString() != formatName()
-        || !entitycodec::readInteger(root.value(QStringLiteral("version")), kMinimumVersion, kVersion, &version)
+        || !entitycodec::readInteger(root.value(QStringLiteral("version")), kVersion, kVersion, &version)
         || !entitycodec::validTimeZone(defaultTimezone))
-        return entitycodec::fail(error, QStringLiteral("不是受支持的 KylinList.Entities v2/v3/v4 备份；旧格式不迁移"));
+        return entitycodec::fail(error, QStringLiteral("不是受支持的 KylinList.Entities v%1 备份（开发阶段不兼容其他版本）").arg(kVersion));
     const char *const arrays[] = {"folders","lists","sections","recurrenceSeries","entities","recurrenceLinks",
-        "attachments","events","checklistItems","tags","entityTags","reminders","viewDefs"};
+        "attachments","events","tags","entityTags","reminders","viewDefs"};
     for (const char *key : arrays) if (!root.value(QLatin1String(key)).isArray())
         return entitycodec::fail(error, QStringLiteral("备份缺少必需数组"));
+    if (root.contains(QStringLiteral("checklistItems")))
+            return entitycodec::fail(error, QStringLiteral("当前格式备份不得包含已废弃的 checklistItems 字段"));
     EntitySnapshot snapshot;
     QSet<QString> folderIds, listIds, sectionIds, seriesIds, entityIds, attachmentIds;
     for (const QJsonValue &value : root.value(QStringLiteral("folders")).toArray()) {
@@ -286,7 +277,6 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
         Folder row; QString ignoredParent;
         if (!readNamed(value.toObject(), QString(), &row.id, &row.name, &ignoredParent,
                        &row.sortOrder, &row.createdAt, &row.updatedAt, &row.revision, &row.serverRevision, error)) return false;
-        // v2/v3 备份没有 folders[].icon：读入补空（默认文件夹图标）。
         if (!readFolderIcon(value.toObject(), &row.icon, error)) return false;
         if (folderIds.contains(row.id)) return entitycodec::fail(error, QStringLiteral("文件夹 id 重复"));
         folderIds.insert(row.id); snapshot.folders.append(row);
@@ -323,28 +313,38 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
         if (!value.isObject()) return entitycodec::fail(error, QStringLiteral("series 必须为对象"));
         const QJsonObject object = value.toObject(); RecurrenceSeries row;
         if (!object.value(QStringLiteral("id")).isString() || !object.value(QStringLiteral("rrule")).isString()
-            || !object.value(QStringLiteral("timeZone")).isString()) return entitycodec::fail(error, QStringLiteral("series 字段非法"));
+            || !object.value(QStringLiteral("timeZone")).isString()
+            || !object.value(QStringLiteral("ruleJson")).isString()) return entitycodec::fail(error, QStringLiteral("series 字段非法"));
         row.id = object.value(QStringLiteral("id")).toString(); row.rrule = object.value(QStringLiteral("rrule")).toString();
-        row.timeZone = object.value(QStringLiteral("timeZone")).toString(); qint64 anchor = 0;
+        row.ruleJson = object.value(QStringLiteral("ruleJson")).toString();
+        row.timeZone = object.value(QStringLiteral("timeZone")).toString(); qint64 anchor = 0, ordinal = 0, completions = 0;
         if (!entitycodec::readInteger(object.value(QStringLiteral("anchorDay")), 0, 31, &anchor)
+            || !entitycodec::readInteger(object.value(QStringLiteral("occurrenceOrdinal")), 1, std::numeric_limits<int>::max(), &ordinal)
+            || !entitycodec::readInteger(object.value(QStringLiteral("completionCount")), 0, std::numeric_limits<int>::max(), &completions)
             || !readRevision(object, &row.revision, error) || !readServerRevision(object, &row.serverRevision, error)
             || !entitycodec::readDate(object.value(QStringLiteral("dtstartAtUtcMs")), &row.dtstartAt, error)
             || !entitycodec::readAllDay(object.value(QStringLiteral("dtstartDate")), &row.dtstartDate, error)
             || !entitycodec::readDate(object.value(QStringLiteral("createdAtUtcMs")), &row.createdAt, error)
             || !entitycodec::readDate(object.value(QStringLiteral("updatedAtUtcMs")), &row.updatedAt, error)) return false;
         row.anchorDay = static_cast<int>(anchor);
-        if (seriesIds.contains(row.id) || !isUuid(row.id) || recurrenceRRule(row.rrule) != row.rrule
-            || !entitycodec::validTimeZone(row.timeZone) || !row.createdAt.isValid() || !row.updatedAt.isValid())
+        row.occurrenceOrdinal = static_cast<int>(ordinal);
+        row.completionCount = static_cast<int>(completions);
+        RecurrenceSpec spec;
+        if (seriesIds.contains(row.id) || !recurrenceFromRuleText(row.ruleJson, &spec, error)
+            || recurrenceFrequencyName(spec) != row.rrule
+            || !entitycodec::validTimeZone(row.timeZone) || !row.createdAt.isValid() || !row.updatedAt.isValid()
+            || row.dtstartAt.isValid() == row.dtstartDate.isValid())
             return entitycodec::fail(error, QStringLiteral("series 内容非法"));
         seriesIds.insert(row.id); snapshot.recurrenceSeries.append(row);
     }
     QSet<QString> occurrenceKeys;
     for (const QJsonValue &value : root.value(QStringLiteral("entities")).toArray()) {
         if (!value.isObject()) return entitycodec::fail(error, QStringLiteral("实体必须为对象"));
+        const QJsonObject object = value.toObject();
         StoredEntity row;
-        if (!entitycodec::fromJson(value.toObject(), &row.entity, error)
-            || !readRevision(value.toObject(), &row.revision, error)
-            || !readServerRevision(value.toObject(), &row.serverRevision, error)) return false;
+        if (!entitycodec::fromJson(object, &row.entity, error)
+            || !readRevision(object, &row.revision, error)
+            || !readServerRevision(object, &row.serverRevision, error)) return false;
         if (entityIds.contains(row.entity.id) || (!row.entity.folderId.isEmpty() && !folderIds.contains(row.entity.folderId))
             || !listIds.contains(row.entity.listId)
             || (!row.entity.sectionId.isEmpty() && (!sectionLists.contains(row.entity.sectionId)
@@ -356,7 +356,10 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
             if (occurrenceKeys.contains(occurrence)) return entitycodec::fail(error, QStringLiteral("重复 occurrence 键"));
             occurrenceKeys.insert(occurrence);
             for (const RecurrenceSeries &series : snapshot.recurrenceSeries) if (series.id == row.entity.recurrenceSeriesId) {
-                if (series.rrule != row.entity.rrule) return entitycodec::fail(error, QStringLiteral("实体与 series RRULE 不一致"));
+                if (series.rrule != row.entity.rrule) return entitycodec::fail(error, QStringLiteral("实体与 series 频率摘要不一致"));
+                RecurrenceSpec spec;
+                if (!recurrenceFromRuleText(series.ruleJson, &spec, error)) return false;
+                row.entity.recurrence = recurrenceSummary(spec);
                 row.recurrenceAnchorDay = series.anchorDay;
             }
         }
@@ -378,30 +381,6 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
             path.insert(id); id = parentById.value(id);
         }
     }
-
-    QHash<QString, ChecklistItem> nestedChecklist;
-    for (const StoredEntity &entity : snapshot.entities) for (const ChecklistItem &item : entity.entity.checklist) {
-        if (nestedChecklist.contains(item.id)) return entitycodec::fail(error, QStringLiteral("嵌套清单项 id 重复"));
-        nestedChecklist.insert(item.id, item);
-    }
-    QSet<QString> checklistIds;
-    for (const QJsonValue &value : root.value(QStringLiteral("checklistItems")).toArray()) {
-        if (!value.isObject()) return entitycodec::fail(error, QStringLiteral("独立清单项必须为对象"));
-        ChecklistItem row; qint64 revision = 0;
-        if (!entitycodec::readChecklist(value.toObject(), &row, error)
-            || !readRevision(value.toObject(), &revision, error)
-            || !readServerRevision(value.toObject(), &row.serverRevision, error))
-            return entitycodec::fail(error, QStringLiteral("独立清单项字段或 revision 非法"));
-        row.revision = revision;
-        const auto nested = nestedChecklist.constFind(row.id);
-        if (checklistIds.contains(row.id) || !entityIds.contains(row.entityId) || nested == nestedChecklist.constEnd()
-            || nested->entityId != row.entityId || nested->text != row.text || nested->done != row.done
-            || nested->sortOrder != row.sortOrder || nested->createdAt != row.createdAt || nested->updatedAt != row.updatedAt
-            || !row.createdAt.isValid() || !row.updatedAt.isValid())
-            return entitycodec::fail(error, QStringLiteral("独立清单项与实体嵌套内容不一致"));
-        checklistIds.insert(row.id); snapshot.checklistItems.append(row);
-    }
-    if (checklistIds.size() != nestedChecklist.size()) return entitycodec::fail(error, QStringLiteral("独立清单项数量不完整"));
 
     QSet<QString> tagIds, tagNames;
     QHash<QString, Tag> tagsById;
@@ -454,6 +433,7 @@ inline bool fromJson(const QJsonObject &root, EntitySnapshot *out, QVector<Entit
         const auto nested = nestedReminders.constFind(row.id);
         if (reminderIds.contains(row.id) || !entityIds.contains(row.entityId) || nested == nestedReminders.constEnd()
             || nested->entityId != row.entityId || nested->triggerAt != row.triggerAt || nested->sortOrder != row.sortOrder
+            || nested->ruleJson != row.ruleJson
             || nested->createdAt != row.createdAt || nested->updatedAt != row.updatedAt
             || !row.createdAt.isValid() || !row.updatedAt.isValid())
             return entitycodec::fail(error, QStringLiteral("独立提醒与实体嵌套内容不一致"));

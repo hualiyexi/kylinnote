@@ -57,7 +57,7 @@ void paint(QPainter* painter, const TaskList& list, const QRectF& rect,
         return;
     }
     QFont font = ds::emojiFont();
-    int pixelSize = qBound(8, qFloor(content.height()), 19);
+    int pixelSize = qMax(8, qFloor(content.height()));
     font.setPixelSize(pixelSize);
     QFontMetricsF metrics(font);
     QRectF bounds = metrics.boundingRect(name);
