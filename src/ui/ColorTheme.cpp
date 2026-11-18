@@ -1,11 +1,17 @@
 #include "ColorTheme.h"
-#include "design/ThemeManager.h"
+#include "design/QssBuilder.h"
 #include "design/TypeSystem.h"
 
 #include <QPalette>
 #include <QWidget>
 
 namespace kl {
+
+QColor ColorTheme::borderColor() {
+    QColor border = ds::color(ds::ColorToken::NoteBorder, paperTheme());
+    border.setAlpha(110);
+    return border;
+}
 
 ColorTheme::Spec ColorTheme::spec(NoteColor color) {
     static const char* keys[] = {"yellow", "blue", "green", "pink", "purple", "white"};
@@ -15,13 +21,11 @@ ColorTheme::Spec ColorTheme::spec(NoteColor color) {
         ds::ColorToken::NotePaperPink, ds::ColorToken::NotePaperPurple, ds::ColorToken::NotePaperWhite
     };
     const int index = toInt(fromInt(toInt(color)));
-    const auto& theme = ThemeManager::instance();
-    const QString paper = theme.color(papers[index]).name();
-    QColor border = theme.color(ds::ColorToken::NoteBorder);
-    border.setAlpha(110);
-    return {keys[index], labels[index], paper, paper, border.name(QColor::HexArgb),
-            theme.color(ds::ColorToken::NoteText).name(), theme.color(ds::ColorToken::NoteMuted).name(),
-            theme.color(ds::ColorToken::Selection).name()};
+    const auto theme = paperTheme();
+    const QString paper = ds::color(papers[index], theme).name();
+    return {keys[index], labels[index], paper, paper, borderColor().name(QColor::HexArgb),
+            ds::color(ds::ColorToken::NoteText, theme).name(), ds::color(ds::ColorToken::NoteMuted, theme).name(),
+            ds::color(ds::ColorToken::Selection, theme).name()};
 }
 
 NoteColor ColorTheme::next(NoteColor color) { return fromInt((toInt(color) + 1) % ColorCount); }
@@ -30,8 +34,8 @@ int ColorTheme::toInt(NoteColor color) { return colorToInt(color); }
 
 QString ColorTheme::windowStyle(NoteColor color) {
     const Spec s = spec(color);
-    const auto& theme = ThemeManager::instance();
-    const QString hover = theme.color(ds::ColorToken::SurfaceHover).name();
+    const auto theme = paperTheme();
+    const QString hover = ds::color(ds::ColorToken::SurfaceHover, theme).name();
     return QStringLiteral(
         "QWidget#NoteWidget,QWidget#NotePaper,QWidget#TitleBar{background:transparent;border:0;}"
         "QWidget#NoteWidget QWidget#TaskDetailHost,QWidget#NoteWidget QWidget#TaskDetailForm,"
@@ -42,13 +46,15 @@ QString ColorTheme::windowStyle(NoteColor color) {
         "QWidget#NoteWidget QLabel,QWidget#NoteWidget QLineEdit#TaskTitle,"
         "QWidget#NoteWidget QTextEdit#DescriptionEditor{background:transparent;color:%1;border:0;padding:0;}"
         "QWidget#NoteWidget QLineEdit#TaskTitle{font-size:%5pt;font-weight:600;}"
-        "QWidget#NoteWidget QTextEdit#DescriptionEditor{selection-background-color:%3;}"
+        "QWidget#NoteWidget QLineEdit#TaskTitle,QWidget#NoteWidget QTextEdit#DescriptionEditor"
+        "{selection-background-color:%3;selection-color:%1;}"
         "QWidget#NoteWidget QPushButton#DateChip{background:transparent;border:0;color:%2;"
         "padding:0;font-size:%6pt;font-weight:400;min-width:0;}"
         "QWidget#NoteWidget QPushButton#DateChip:hover{background:transparent;color:%1;}"
         "QWidget#NoteWidget QToolButton#DetailMore,QWidget#TitleBar QToolButton"
         "{background:transparent;border:0;color:%2;padding:0;margin:0;}"
-        "QWidget#NoteWidget QToolButton#DetailMore:hover,QWidget#TitleBar QToolButton:hover"
+        "QWidget#NoteWidget QToolButton#DetailMore:hover,QWidget#NoteWidget QToolButton#DetailMore:pressed,"
+        "QWidget#TitleBar QToolButton:hover,QWidget#TitleBar QToolButton:pressed"
         "{background:%4;border-radius:3px;}"
         "QWidget#NoteWidget QScrollBar:vertical{background:transparent;width:5px;}"
         "QWidget#NoteWidget QScrollBar::handle:vertical{background:%2;border-radius:2px;min-height:18px;}"
@@ -58,7 +64,8 @@ QString ColorTheme::windowStyle(NoteColor color) {
     ).arg(s.text, s.barText, s.selection, hover)
      .arg(ds::qfont(ds::FontScene::ListSection).pointSizeF())
      .arg(ds::qfont(ds::FontScene::Caption).pointSizeF())
-     .arg(theme.color(ds::ColorToken::Danger).name());
+     .arg(ds::color(ds::ColorToken::Danger, theme).name())
+        + ds::buildAttachmentCardStyle(theme);
 }
 
 void ColorTheme::apply(QWidget* window, NoteColor color) {
@@ -70,6 +77,10 @@ void ColorTheme::apply(QWidget* window, NoteColor color) {
     palette.setColor(QPalette::Base, QColor(s.body));
     palette.setColor(QPalette::Text, QColor(s.text));
     palette.setColor(QPalette::WindowText, QColor(s.text));
+    palette.setColor(QPalette::ButtonText, QColor(s.barText));
+    palette.setColor(QPalette::PlaceholderText, QColor(s.barText));
+    palette.setColor(QPalette::Highlight, QColor(s.selection));
+    palette.setColor(QPalette::HighlightedText, QColor(s.text));
     window->setPalette(palette);
 }
 

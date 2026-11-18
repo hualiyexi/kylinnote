@@ -1687,15 +1687,18 @@ void TaskPanel::showTaskMenu(const QPoint& position) {
     });
 
     if (!entity.deleted && entity.kind == EntityKind::Task) {
-        const bool desktopOpen = m_store->desktopNote(id).open;
+        const bool desktopOpen = m_store->desktopNote(id).isOpen();
         auto* desktop = new QAction(AppIcons::icon(IconId::DesktopNote, 18),
                                     desktopOpen ? QStringLiteral("关闭桌面便签")
                                                 : QStringLiteral("贴到桌面"), menu);
         desktop->setObjectName(QStringLiteral("CmdDesktopNote"));
-        connect(desktop, &QAction::triggered, this, [this, id, desktopOpen]() {
+        connect(desktop, &QAction::triggered, this, [this, id, open = !desktopOpen]() {
             const Entity current = m_store->entity(id);
-            m_store->saveDesktopState(id, current.color, current.geometry,
-                                      current.zOrder, current.layer, !desktopOpen);
+            if (current.id.isEmpty() || current.deleted || current.kind != EntityKind::Task
+                || m_store->desktopNote(id).isOpen() == open) return;
+            if (!m_store->saveDesktopState(id, current.color, current.geometry,
+                                           current.zOrder, current.layer, open))
+                showError(m_store->lastError());
         });
         QAction* before = nullptr;
         for (QAction* action : menu->actions())

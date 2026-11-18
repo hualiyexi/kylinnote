@@ -31,23 +31,23 @@ struct SynthCache {
 // 失效键用 QIcon::cacheKey() 作为“加载代数”：Branding::load() 每次都会
 // 重建 QIcon（或重置为空图标，cacheKey 为 0），显式重读配置后绝不复用
 // 旧渲染，即使路径、大小、修改时间都没变。
-QString synthCacheKey(const QIcon& custom)
+QString synthCacheKey(const QIcon& custom, ds::ColorToken markToken)
 {
     auto& theme = ThemeManager::instance();
     return QStringLiteral("%1:%2:%3:%4").arg(custom.cacheKey())
-        .arg(theme.color(ds::ColorToken::Primary).rgba())
+        .arg(theme.color(markToken).rgba())
         .arg(theme.color(ds::ColorToken::OnPrimary).rgba())
         .arg(theme.color(ds::ColorToken::AppIconBg).rgba());
 }
 
 // 默认品牌标绘制（全程序唯一实现）。edge 为目标设备像素边长，几何按
 // 64 设计稿等比缩放；按目标尺寸原生绘制以保证小尺寸清晰。
-void paintDefaultMark(QPainter* painter, int edge)
+void paintDefaultMark(QPainter* painter, int edge, const QColor& background)
 {
     const qreal s = edge / kDefaultMarkDesignEdge;
     painter->setRenderHint(QPainter::Antialiasing);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(ThemeManager::instance().color(ds::ColorToken::Primary));
+    painter->setBrush(background);
     painter->drawRoundedRect(QRectF(5 * s, 4 * s, 54 * s, 56 * s), 12 * s, 12 * s);
     AppIcons::paint(painter, IconId::Check, QRectF(13 * s, 13 * s, 38 * s, 38 * s),
                     ThemeManager::instance().color(ds::ColorToken::OnPrimary));
@@ -56,7 +56,8 @@ void paintDefaultMark(QPainter* painter, int edge)
 // 把素材等比放入 edge×edge 方形画布并居中。master 为空时画默认品牌标。
 // whiteCanvas 为真时画布填充固定白（AppIconBg 令牌），否则
 // 透明。缩放只用 KeepAspectRatio + Smooth，不裁剪、不染色。
-QPixmap composeSquare(const QPixmap& master, int edge, qreal dpr, bool whiteCanvas)
+QPixmap composeSquare(const QPixmap& master, int edge, qreal dpr, bool whiteCanvas,
+                      const QColor& markColor)
 {
     QPixmap canvas(edge, edge);
     canvas.fill(whiteCanvas
@@ -65,7 +66,7 @@ QPixmap composeSquare(const QPixmap& master, int edge, qreal dpr, bool whiteCanv
     {
         QPainter painter(&canvas);
         if (master.isNull()) {
-            paintDefaultMark(&painter, edge);
+            paintDefaultMark(&painter, edge, markColor);
         } else {
             painter.setRenderHint(QPainter::SmoothPixmapTransform);
             QSize scaled = master.size();
@@ -81,12 +82,13 @@ QPixmap composeSquare(const QPixmap& master, int edge, qreal dpr, bool whiteCanv
     return canvas;
 }
 
-QIcon makeIcon(const QPixmap& master, bool whiteCanvas)
+QIcon makeIcon(const QPixmap& master, bool whiteCanvas, ds::ColorToken markToken)
 {
     QIcon icon;
+    const QColor markColor = ThemeManager::instance().color(markToken);
     for (int size : kLogicalSizes) {
         for (qreal dpr : kPixelRatios)
-            icon.addPixmap(composeSquare(master, qRound(size * dpr), dpr, whiteCanvas),
+            icon.addPixmap(composeSquare(master, qRound(size * dpr), dpr, whiteCanvas, markColor),
                            QIcon::Normal, QIcon::Off);
     }
     return icon;
@@ -115,19 +117,19 @@ const QIcon& synthesizedAppIcon(const QIcon& custom, const QString& key)
     if (cache.key != key) {
         // 母版取不到像素的极端情况同样回退默认品牌标。
         const QPixmap master = custom.isNull() ? QPixmap() : masterPixmap(custom);
-        cache.app = makeIcon(master, true);
+        cache.app = makeIcon(master, true, ds::ColorToken::Primary);
         cache.key = key;
     }
     return cache.app;
 }
 
 // 无自定义素材时的默认品牌标（透明底，多尺寸 + 1x/2x）。同一 load 周期
-// 内结果确定，直接按 cacheKey 复用同一份缓存（key 与白底版一致）。
+// 内按自身的背景色缓存。
 const QIcon& defaultLogoIcon(const QString& key)
 {
     static SynthCache cache;
     if (cache.key != key) {
-        cache.app = makeIcon(QPixmap(), false);
+        cache.app = makeIcon(QPixmap(), false, ds::ColorToken::BrandLogoBg);
         cache.key = key;
     }
     return cache.app;
@@ -138,16 +140,15 @@ const QIcon& defaultLogoIcon(const QString& key)
 QIcon brandLogoIcon()
 {
     const QIcon custom = Branding::appIcon();  // 空表示未配置或坏图
-    const QString key = synthCacheKey(custom);
     if (!custom.isNull())
         return custom;  // 原始透明 Logo 原样透传：保留矢量与原生尺寸能力，不做重采样
-    return defaultLogoIcon(key);
+    return defaultLogoIcon(synthCacheKey(custom, ds::ColorToken::BrandLogoBg));
 }
 
 QIcon applicationBrandIcon()
 {
     const QIcon custom = Branding::appIcon();
-    return synthesizedAppIcon(custom, synthCacheKey(custom));
+    return synthesizedAppIcon(custom, synthCacheKey(custom, ds::ColorToken::Primary));
 }
 
 }  // namespace kl

@@ -65,6 +65,7 @@ ColorTable makeLight() {
     set(ColorToken::AttachmentTextBg, 0xFFEFF2F3);
     set(ColorToken::AttachmentOtherBg, 0xFFEDF0FF);
     set(ColorToken::AppIconBg, White);
+    set(ColorToken::BrandLogoBg, BrandLogoRed);
     set(ColorToken::SettingsRailBg, 0xFFF8F8F8);
     set(ColorToken::SettingsSelectedBg, 0x0A191919);
     set(ColorToken::SettingsContentBg, White);
@@ -147,6 +148,7 @@ ColorTable makeDark() {
     set(ColorToken::AttachmentTextBg, 0xFF282D33);
     set(ColorToken::AttachmentOtherBg, 0xFF2A2E48);
     set(ColorToken::AppIconBg, White);
+    set(ColorToken::BrandLogoBg, BrandLogoRed);
     set(ColorToken::SettingsRailBg, D_RailBg);
     set(ColorToken::SettingsSelectedBg, D_Hover);
     set(ColorToken::SettingsContentBg, D_Surface);

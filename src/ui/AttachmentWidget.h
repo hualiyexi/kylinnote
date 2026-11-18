@@ -6,6 +6,7 @@
 #include <QWidget>
 
 #include "../domain/Attachment.h"
+#include "design/DesignTokens.h"
 
 class QVBoxLayout;
 class QLabel;
@@ -26,6 +27,7 @@ public:
     void setReadOnly(bool readOnly);
     void setCompact(bool compact);
     void setInlineMode(bool inlineMode);
+    void setThemeOverride(ds::Theme theme);
     void refresh();
     QString filePath(const Attachment& attachment) const;
     // 与文件选择入口共用逐文件导入；返回已成功添加的数量。
@@ -49,6 +51,7 @@ private:
     QPointer<TaskStore> m_store;
     QString m_entityId;
     QVector<Attachment> m_items;
+    ds::Theme m_themeOverride = ds::Theme::Count;
     bool m_readOnly = false;
     bool m_compact = false;
     bool m_inlineMode = false;

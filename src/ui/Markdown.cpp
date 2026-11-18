@@ -232,9 +232,10 @@ QString Markdown::highlightLabel(const QString& name) {
         if (name == QLatin1String(spec.name)) return QString::fromUtf8(spec.label);
     return QString();
 }
-QColor Markdown::highlightColor(const QString& name) {
+QColor Markdown::highlightColor(const QString& name, ds::Theme theme) {
+    if (theme == ds::Theme::Count) theme = ThemeManager::instance().resolvedTheme();
     for (const HighlightSpec& spec : highlights)
-        if (name == QLatin1String(spec.name)) return ThemeManager::instance().color(spec.token);
+        if (name == QLatin1String(spec.name)) return ds::color(spec.token, theme);
     return QColor();
 }
 QString Markdown::toHtml(const QString& source, const EntityMap& targets) {

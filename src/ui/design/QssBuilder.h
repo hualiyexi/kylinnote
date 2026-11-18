@@ -10,6 +10,7 @@ namespace ds {
 
 // 用指定主题渲染整份应用 QSS。
 QString buildStyleSheet(Theme theme);
+QString buildAttachmentCardStyle(Theme theme);
 // 用指定主题渲染 Markdown 预览 CSS。
 QString buildPreviewCss(Theme theme);
 

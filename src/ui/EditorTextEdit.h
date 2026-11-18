@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QTextEdit>
 #include <functional>
+#include "design/DesignTokens.h"
 
 class QToolButton;
 
@@ -18,6 +19,7 @@ public:
     explicit EditorTextEdit(QWidget* parent = nullptr);
     ~EditorTextEdit() override;
     void setBlockGutterEnabled(bool enabled);
+    void setThemeOverride(ds::Theme theme);
     void refreshBlockIndicator();
     QRect checkBoxRect(const QTextBlock& block) const;
     void breakTyping() { m_typingEnd = -1; m_typingTimer.invalidate(); }
@@ -54,6 +56,7 @@ private:
     bool canInsertBlock() const;
     QWidget* m_gutter = nullptr;
     QToolButton* m_indicator = nullptr;
+    ds::Theme m_themeOverride = ds::Theme::Count;
     bool m_gutterEnabled = false;
     bool m_composing = false;
     bool m_keyEditing = false, m_keyChanged = false;

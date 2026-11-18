@@ -28,6 +28,7 @@ constexpr QRgb Black = 0xFF191919;
 constexpr QRgb Primary = 0xFF4772FA;
 constexpr QRgb PrimaryHover = 0xFF3A63E0;   // 由主色加深，hover/pressed
 constexpr QRgb PrimarySoft = 0xFFEAF0FF;    // 选中底（主色极浅）
+constexpr QRgb BrandLogoRed = 0xFFE13E39;
 // 功能色（考据 PriorityHighColor/OutDateColor=#E13E39、PriorityMiddleColor=#FAA80C）
 constexpr QRgb Danger = 0xFFE13E39;
 constexpr QRgb Warning = 0xFFFAA80C;
@@ -116,7 +117,7 @@ enum class ColorToken : int {
     QuickAddBg,
     AttachmentDocumentBg, AttachmentSpreadsheetBg, AttachmentTextBg, AttachmentOtherBg,
     // 软件级应用图标的固定白底：同一品牌 Logo 的白底版画布，两主题均为白，不随主题变化。
-    AppIconBg,
+    AppIconBg, BrandLogoBg,
     SettingsRailBg, SettingsSelectedBg, SettingsContentBg, SettingsSectionBg,
     RailIcon, RailIconHover,
     NotePaperYellow, NotePaperBlue, NotePaperGreen, NotePaperPink, NotePaperPurple, NotePaperWhite,

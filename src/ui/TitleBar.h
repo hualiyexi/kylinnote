@@ -16,7 +16,6 @@ class TitleBar : public QWidget {
     Q_OBJECT
 public:
     explicit TitleBar(QWidget* parent = nullptr);
-    void setColorIndicator(NoteColor color);
     void setHovered(bool hovered);
     void setPinned(bool pinned);
     void setMoveConstraint(std::function<QPoint(const QPoint&)> constraint);

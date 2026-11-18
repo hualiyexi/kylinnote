@@ -8,6 +8,7 @@
 #include <limits>
 #include <QClipboard>
 #include <QDragEnterEvent>
+#include <QDir>
 #include <QDropEvent>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -36,6 +37,7 @@
 #include "ActivityTimelineWidget.h"
 #include "AppIcons.h"
 #include "AttachmentWidget.h"
+#include "ColorTheme.h"
 #include "DatePickerPopup.h"
 #include "DetailPopups.h"
 #include "EntityCommands.h"
@@ -183,11 +185,21 @@ QFrame* separator(QWidget* parent, const QString& name, int height) {
     return host;
 }
 
+const QLatin1String kPeonyUris("peony-qt/encoded-uris");
+
 QStringList localFilePaths(const QMimeData* mime) {
     QStringList paths;
-    if (!mime || !mime->hasUrls()) return paths;
-    for (const QUrl& url : mime->urls())
-        if (url.isLocalFile() && !url.toLocalFile().isEmpty()) paths.append(url.toLocalFile());
+    const auto addLocalPath = [&paths](const QUrl& url) {
+        if (!url.isLocalFile()) return;
+        const QString path = url.toLocalFile();
+        if (QDir::isAbsolutePath(path) && !paths.contains(path)) paths.append(path);
+    };
+    for (const QUrl& url : mime->urls()) addLocalPath(url);
+    if (paths.isEmpty() && mime->hasFormat(kPeonyUris)) {
+        // Peony joins percent-encoded file URIs with spaces.
+        const auto encoded = mime->data(kPeonyUris).split(' ');
+        for (const QByteArray& uri : encoded) addLocalPath(QUrl::fromEncoded(uri, QUrl::StrictMode));
+    }
     return paths;
 }
 }  // namespace
@@ -259,6 +271,9 @@ void TaskDetailWidget::setOverlayMode(bool overlay) {
 void TaskDetailWidget::setDesktopMode(bool desktop) {
     if (m_desktopMode == desktop) return;
     m_desktopMode = desktop;
+    const auto theme = desktop ? ColorTheme::paperTheme() : ds::Theme::Count;
+    m_description->setThemeOverride(theme);
+    m_attachments->setThemeOverride(theme);
     auto* header = findChild<QFrame*>(QStringLiteral("DetailHeader"));
     auto* footer = findChild<QFrame*>(QStringLiteral("DetailFooter"));
     auto* footerLayout = static_cast<QHBoxLayout*>(footer->layout());
@@ -770,7 +785,10 @@ void TaskDetailWidget::refreshIcons() {
     m_infoButton->style()->polish(m_infoButton);
     m_closeButton->setIcon(AppIcons::icon(IconId::Close, 15));
     m_formatButton->setIcon(AppIcons::icon(IconId::Format, 18));
-    m_moreButton->setIcon(AppIcons::icon(IconId::MoreTitlebar, 18));
+    const QColor noteInk = ds::color(ds::ColorToken::NoteMuted, ColorTheme::paperTheme());
+    m_moreButton->setIcon(m_desktopMode
+        ? AppIcons::icon(AppIcons::iconName(IconId::MoreTitlebar), noteInk, 12)
+        : AppIcons::icon(IconId::MoreTitlebar, 18));
     m_attachmentAdd->setIcon(AppIcons::icon(IconId::Add, ds::ColorToken::TextSecondary, 16));
     auto& theme = ThemeManager::instance();
     QPalette dividerPalette = m_attachmentDivider->palette();
@@ -1306,24 +1324,31 @@ bool TaskDetailWidget::handleFileDrop(QObject* watched, QEvent* event) {
     if (event->type() != QEvent::DragEnter && event->type() != QEvent::DragMove
         && event->type() != QEvent::Drop) return false;
     auto* drop = static_cast<QDropEvent*>(event);
-    const QStringList paths = localFilePaths(drop->mimeData());
-    if (paths.isEmpty()) return false;
-    const bool writable = m_store && !m_id.isEmpty() && !m_store->entity(m_id).id.isEmpty()
-        && !m_store->entity(m_id).deleted && (drop->possibleActions() & Qt::CopyAction);
-    if (!writable) {
+    const QMimeData* mime = drop->mimeData();
+    if (!mime || (!mime->hasUrls() && !mime->hasFormat(kPeonyUris))) return false;
+    const bool copy = drop->possibleActions() & Qt::CopyAction;
+    // Qt 5.12 xcb exposes only the proposed action of an external drag.
+    // Qt file managers (including older Peony, which sends standard URIs)
+    // interpret an accepted XdndStatus with no action atom as Copy.
+    const bool xcbCopy = !copy && !drop->source()
+        && QGuiApplication::platformName() == QLatin1String("xcb")
+        && (drop->possibleActions() == Qt::MoveAction || drop->possibleActions() == Qt::IgnoreAction);
+    const Entity entity = m_store && !m_id.isEmpty() ? m_store->entity(m_id) : Entity();
+    if (entity.id.isEmpty() || entity.deleted || (!copy && !xcbCopy)) {
         setDropHintVisible(false);
         drop->ignore();
         return true;
     }
     if (event->type() == QEvent::Drop) {
         setDropHintVisible(false);
+        const QStringList paths = localFilePaths(mime);
         const QString target = m_id;
-        if (!finishEditing() || target != m_id || m_attachments->importPaths(paths) == 0) {
+        if (paths.isEmpty() || !finishEditing() || target != m_id || m_attachments->importPaths(paths) == 0) {
             drop->ignore();
             return true;
         }
     } else setDropHintVisible(true);
-    drop->setDropAction(Qt::CopyAction);
+    drop->setDropAction(copy ? Qt::CopyAction : Qt::IgnoreAction);
     drop->accept();
     return true;
 }

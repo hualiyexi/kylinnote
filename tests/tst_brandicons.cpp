@@ -212,18 +212,18 @@ void BrandIconsTest::noConfigUsesDefaultMark()
     Branding::load();
     QVERIFY(Branding::appIcon().isNull());  // core 提供者语义保持：未配置为空
 
-    const QIcon logo = brandLogoIcon();
-    QVERIFY2(!logo.isNull(), "无配置时 brandLogoIcon 应回退默认品牌标而非空图标");
-    const QImage logoImg = iconImage(logo, QSize(64, 64));
-    QVERIFY2(logoImg.size() == QSize(64, 64), "默认标应为方形画布");
-    QCOMPARE(qAlpha(logoImg.pixel(2, 2)), 0);          // 圆角外保持透明
-    QCOMPARE(logoImg.pixel(57, 32), kPrimary);         // 主色方块（对勾区右侧）
+    for (ThemeManager::Preference theme : {ThemeManager::Preference::Light, ThemeManager::Preference::Dark}) {
+        ThemeManager::instance().setPreference(theme);
+        const QImage logo = iconImage(brandLogoIcon(), QSize(64, 64));
+        QCOMPARE(logo.size(), QSize(64, 64));
+        QCOMPARE(qAlpha(logo.pixel(2, 2)), 0);
+        QCOMPARE(logo.pixel(57, 32), ds::raw::BrandLogoRed);
 
-    const QIcon app = applicationBrandIcon();
-    QVERIFY(!app.isNull());
-    const QImage appImg = iconImage(app, QSize(64, 64));
-    QCOMPARE(appImg.pixel(2, 2), QRgb(0xFFFFFFFF));    // 原透明角落 → 固定白
-    QCOMPARE(appImg.pixel(57, 32), kPrimary);          // 默认标原样叠在白底上
+        const QImage app = iconImage(applicationBrandIcon(), QSize(64, 64));
+        QCOMPARE(app.size(), QSize(64, 64));
+        QCOMPARE(app.pixel(2, 2), ds::raw::White);
+        QCOMPARE(app.pixel(57, 32), kPrimary);
+    }
 }
 
 // 配置命中：原始 Logo 原样透传，原生尺寸（非方形）与透明度不被改写。
@@ -335,7 +335,7 @@ void BrandIconsTest::reloadRebuildsIcons()
     Branding::load();
     const QImage logo = iconImage(brandLogoIcon(), QSize(64, 64));
     QCOMPARE(qAlpha(logo.pixel(2, 2)), 0);
-    QCOMPARE(logo.pixel(57, 32), kPrimary);
+    QCOMPARE(logo.pixel(57, 32), ds::raw::BrandLogoRed);
     QCOMPARE(iconImage(applicationBrandIcon(), QSize(64, 64)).pixel(2, 2), QRgb(0xFFFFFFFF));
 }
 
@@ -354,7 +354,7 @@ void BrandIconsTest::brokenLogoFallsBackToDefault()
     QVERIFY(!logoIcon.isNull());
     const QImage logo = iconImage(logoIcon, QSize(64, 64));
     QCOMPARE(qAlpha(logo.pixel(2, 2)), 0);
-    QCOMPARE(logo.pixel(57, 32), kPrimary);
+    QCOMPARE(logo.pixel(57, 32), ds::raw::BrandLogoRed);
     const QImage app = iconImage(applicationBrandIcon(), QSize(64, 64));
     QCOMPARE(app.pixel(2, 2), QRgb(0xFFFFFFFF));
     QCOMPARE(app.pixel(57, 32), kPrimary);

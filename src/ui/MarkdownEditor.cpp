@@ -165,7 +165,7 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     body->selectedSource = [this]() { return MarkdownDocument::selectedMarkdown(m_editor->textCursor()); };
     body->insertMarkdown = [this](const QString& source) {
         QTextDocument fragment;
-        MarkdownDocument::importMarkdown(&fragment, source, m_targets);
+        MarkdownDocument::importMarkdown(&fragment, source, m_targets, m_themeOverride);
         QTextCursor cursor = m_editor->textCursor();
         cursor.insertFragment(QTextDocumentFragment(&fragment));
         m_editor->setTextCursor(cursor);
@@ -214,7 +214,7 @@ MarkdownEditor::MarkdownEditor(QWidget* parent) : QWidget(parent) {
     connect(&FontManager::instance(), &FontManager::fontChanged,
             this, &MarkdownEditor::applyFontPreference);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ds::Theme) {
-        if (m_loading || m_rendering) return;
+        if (m_loading || m_rendering || m_themeOverride != ds::Theme::Count) return;
         synchronizeSource(); updateLineStates(true); refreshPreview();
     });
     updateContentHeight();
@@ -418,6 +418,13 @@ void MarkdownEditor::setBlockControlsEnabled(bool enabled) {
     if (!enabled && m_blockMenu) m_blockMenu->hide();
     updateContentHeight();
 }
+void MarkdownEditor::setThemeOverride(ds::Theme theme) {
+    if (m_themeOverride == theme) return;
+    m_themeOverride = theme;
+    static_cast<EditorTextEdit*>(m_editor)->setThemeOverride(theme);
+    if (!m_sourceLines.isEmpty()) updateLineStates(true);
+}
+
 void MarkdownEditor::updateContentHeight() {
     if (m_sizing || m_rendering || !m_editor || !m_stack) return;
     m_sizing = true;
@@ -477,7 +484,8 @@ void MarkdownEditor::refreshPreview() {
 
 void MarkdownEditor::renderDocument() {
     m_rendering = true;
-    MarkdownDocument::importMarkdown(m_editor->document(), m_sourceLines.join(QLatin1Char('\n')), m_targets);
+    MarkdownDocument::importMarkdown(m_editor->document(), m_sourceLines.join(QLatin1Char('\n')),
+                                     m_targets, m_themeOverride);
     QTextCursor cursor(m_editor->document()); cursor.movePosition(QTextCursor::Start);
     m_editor->setTextCursor(cursor);
     m_editor->document()->setModified(false);
@@ -545,7 +553,8 @@ void MarkdownEditor::updateLineStates(bool force) {
             tail.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor); tail.removeSelectedText();
         }
         for (int i = 0; i < m_sourceLines.size(); ++i)
-            MarkdownDocument::renderBlock(document->findBlockByNumber(i), m_sourceLines.at(i), contexts.at(i), m_targets, force);
+            MarkdownDocument::renderBlock(document->findBlockByNumber(i), m_sourceLines.at(i),
+                                          contexts.at(i), m_targets, force, m_themeOverride);
         const auto restore = [document](const SavedPosition& saved, const QString& previousText, int visible) {
             const QTextBlock block = document->findBlockByNumber(qMin(saved.block, document->blockCount() - 1));
             return block.text() == previousText ? block.position() + qMin(visible, block.length() - 1)

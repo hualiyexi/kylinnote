@@ -74,7 +74,8 @@ int closingStyleTag(const QString& text, const QString& opening, const QString& 
 }
 
 void insertInline(QTextCursor& cursor, const QString& text, const QTextCharFormat& base,
-                  int depth, Block* data, int sourceOffset, const QHash<QString, Entity>& targets) {
+                  int depth, Block* data, int sourceOffset, const QHash<QString, Entity>& targets,
+                  ds::Theme theme) {
     if (depth > 16) { insertMapped(cursor, text, base, data, sourceOffset); return; }
     const QVector<MarkdownLink> links = markdownLinks(text);
     int linkIndex = 0;
@@ -102,7 +103,7 @@ void insertInline(QTextCursor& cursor, const QString& text, const QTextCharForma
                 format.setAnchor(true);
                 format.setAnchorHref(resolved ? id : link.target);
                 format.setFontUnderline(true);
-                format.setForeground(ThemeManager::instance().color(ds::ColorToken::Primary));
+                format.setForeground(ds::color(ds::ColorToken::Primary, theme));
                 format.setToolTip(resolved ? target->title : link.target);
             }
             format.setProperty(LinkSourceProperty, text.mid(link.start, link.length));
@@ -117,9 +118,9 @@ void insertInline(QTextCursor& cursor, const QString& text, const QTextCharForma
             } else {
                 QTextDocument display;
                 QTextCursor displayCursor(&display);
-                insertInline(displayCursor, link.labelSource, base, depth + 1, nullptr, 0, targets);
+                insertInline(displayCursor, link.labelSource, base, depth + 1, nullptr, 0, targets, theme);
                 format.setProperty(LinkLabelProperty, display.toPlainText());
-                insertInline(cursor, link.labelSource, format, depth + 1, nullptr, 0, targets);
+                insertInline(cursor, link.labelSource, format, depth + 1, nullptr, 0, targets, theme);
             }
             if (data) {
                 for (int character = 0; character < cursor.position() - before; ++character) {
@@ -152,7 +153,7 @@ void insertInline(QTextCursor& cursor, const QString& text, const QTextCharForma
                 QTextCharFormat format = withStyle(base, delimiter + (padded ? QStringLiteral(" ") : QString()),
                                                    (padded ? QStringLiteral(" ") : QString()) + delimiter);
                 format.setFontFamily(ds::qfont(ds::FontScene::Mono).family());
-                format.setBackground(ThemeManager::instance().color(ds::ColorToken::Field));
+                format.setBackground(ds::color(ds::ColorToken::Field, theme));
                 insertMapped(cursor, content, format, data, sourceOffset + i + count + (padded ? 1 : 0));
                 i = end + count;
                 continue;
@@ -168,7 +169,7 @@ void insertInline(QTextCursor& cursor, const QString& text, const QTextCharForma
                 const auto match = mark.match(text.mid(i));
                 if (match.hasMatch()) {
                     opening = match.captured(0); closing = QStringLiteral("</mark>");
-                    format.setBackground(Markdown::highlightColor(match.captured(1)));
+                    format.setBackground(Markdown::highlightColor(match.captured(1), theme));
                 }
             }
             if (!opening.isEmpty()) {
@@ -178,7 +179,7 @@ void insertInline(QTextCursor& cursor, const QString& text, const QTextCharForma
                     flush();
                     insertInline(cursor, text.mid(i + opening.size(), end - i - opening.size()),
                                  withStyle(format, opening, closing), depth + 1, data,
-                                 sourceOffset + i + opening.size(), targets);
+                                 sourceOffset + i + opening.size(), targets, theme);
                     i = end + closing.size();
                     continue;
                 }
@@ -204,7 +205,7 @@ void insertInline(QTextCursor& cursor, const QString& text, const QTextCharForma
                 if (style == Italic || delimiter.size() == 3) format.setFontItalic(true);
                 if (style == Strike) format.setFontStrikeOut(true);
                 insertInline(cursor, text.mid(i + delimiter.size(), end - i - delimiter.size()), format,
-                             depth + 1, data, sourceOffset + i + delimiter.size(), targets);
+                             depth + 1, data, sourceOffset + i + delimiter.size(), targets, theme);
                 i = end + delimiter.size();
                 continue;
             }
@@ -403,12 +404,13 @@ Block readBlock(const QTextBlock& block) {
     return result;
 }
 
-void importMarkdown(QTextDocument* document, const QString& source, const QHash<QString, Entity>& targets) {
+void importMarkdown(QTextDocument* document, const QString& source, const QHash<QString, Entity>& targets,
+                    ds::Theme theme) {
     const QStringList lines = source.split(QLatin1Char('\n'), QString::KeepEmptyParts);
     const auto contexts = codeContexts(lines);
     document->setPlainText(source);
     for (int i = 0; i < lines.size(); ++i)
-        renderBlock(document->findBlockByNumber(i), lines.at(i), contexts.at(i), targets);
+        renderBlock(document->findBlockByNumber(i), lines.at(i), contexts.at(i), targets, false, theme);
 }
 
 QString selectedMarkdown(const QTextCursor& selection) {
@@ -470,11 +472,12 @@ QTextCharFormat insertionFormat(const QTextBlock& block, int sourceOffset) {
 }
 
 void renderBlock(const QTextBlock& original, const QString& source, CodeContext context,
-                 const QHash<QString, Entity>& targets, bool force) {
+                 const QHash<QString, Entity>& targets, bool force, ds::Theme theme) {
     if (!original.isValid()) return;
     const auto previous = original.blockFormat();
     if (!force && hasSnapshot(original) && previous.stringProperty(SourceProperty) == source
         && previous.intProperty(ContextProperty) == static_cast<int>(context)) return;
+    if (theme == ds::Theme::Count) theme = ThemeManager::instance().resolvedTheme();
     QTextCursor cursor(original);
     cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
     cursor.removeSelectedText();
@@ -497,12 +500,12 @@ void renderBlock(const QTextBlock& original, const QString& source, CodeContext 
     if (context == CodeContext::Fence) {
         blockKind = Kind::CodeFence; contentStart = source.size();
         base.setFontFamily(ds::qfont(ds::FontScene::Mono).family());
-        format.setBackground(ThemeManager::instance().color(ds::ColorToken::Field));
+        format.setBackground(ds::color(ds::ColorToken::Field, theme));
         format.setLeftMargin(8); format.setRightMargin(8);
     } else if (context == CodeContext::Content) {
         blockKind = Kind::Code;
         base.setFontFamily(ds::qfont(ds::FontScene::Mono).family());
-        format.setBackground(ThemeManager::instance().color(ds::ColorToken::Field));
+        format.setBackground(ds::color(ds::ColorToken::Field, theme));
         format.setLeftMargin(8); format.setRightMargin(8);
     } else if (isHorizontalRule(source)) {
         blockKind = Kind::HorizontalRule; contentStart = source.size();
@@ -525,7 +528,7 @@ void renderBlock(const QTextBlock& original, const QString& source, CodeContext 
             blockKind = Kind::TaskList; contentStart = taskMatch.capturedStart(4);
             checked = taskMatch.captured(2) != QLatin1String(" ");
             format.setLeftMargin(22); format.setBottomMargin(2);
-            if (checked) { base.setFontStrikeOut(true); base.setForeground(ThemeManager::instance().color(ds::ColorToken::TextTertiary)); }
+            if (checked) { base.setFontStrikeOut(true); base.setForeground(ds::color(ds::ColorToken::TextTertiary, theme)); }
         } else if (unorderedMatch.hasMatch()) {
             blockKind = Kind::UnorderedList; contentStart = unorderedMatch.capturedStart(1);
             marker = QStringLiteral("•"); format.setLeftMargin(22); format.setBottomMargin(2);
@@ -535,8 +538,8 @@ void renderBlock(const QTextBlock& original, const QString& source, CodeContext 
             format.setBottomMargin(2);
         } else if (quoteMatch.hasMatch()) {
             blockKind = Kind::Quote; contentStart = quoteMatch.capturedStart(1);
-            base.setFontItalic(true); base.setForeground(ThemeManager::instance().color(ds::ColorToken::TextSecondary));
-            format.setLeftMargin(12); format.setBackground(ThemeManager::instance().color(ds::ColorToken::Field));
+            base.setFontItalic(true); base.setForeground(ds::color(ds::ColorToken::TextSecondary, theme));
+            format.setLeftMargin(12); format.setBackground(ds::color(ds::ColorToken::Field, theme));
             format.setTopMargin(3); format.setBottomMargin(3);
         }
     }
@@ -552,7 +555,7 @@ void renderBlock(const QTextBlock& original, const QString& source, CodeContext 
     data.source = source; data.emptyOffset = contentStart;
     if (context == CodeContext::Content) insertMapped(cursor, source, base, &data, 0);
     else if (context != CodeContext::Fence && blockKind != Kind::HorizontalRule)
-        insertInline(cursor, source.mid(contentStart), base, 0, &data, contentStart, targets);
+        insertInline(cursor, source.mid(contentStart), base, 0, &data, contentStart, targets, theme);
     const QTextBlock block = cursor.block();
     format = block.blockFormat();
     format.setProperty(SourceProperty, source);

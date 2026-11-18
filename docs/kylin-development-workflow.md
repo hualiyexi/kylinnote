@@ -14,8 +14,8 @@
 | 源码基线 | C++14、Qt Widgets；新增 API 须能在 Qt 5.12.8 下编译 |
 | Linux 桌面路径 | X11，沿用现有托盘、输入法和窗口集成 |
 | Windows 用途 | Windows x64 上的开发预览、辅助调试；MinGW 7.3 |
-| 默认 Linux 安装包 | 使用系统 Qt 的 `kylinlist_<版本>_arm64.deb` |
-| 备用 Linux 安装包 | 自带 Qt 的 `kylinlist_<版本>_arm64_bundle.deb` |
+| 推荐 Linux 安装包 | 自带 Qt 5.12.8 的 `kylinlist_<版本>_arm64_bundle.deb` |
+| 系统 Qt 版本 | `kylinlist_<版本>_arm64.deb`，用于 Qt 运行库和插件兼容的设备 |
 
 Ubuntu 20.04 提供了与已测麒麟环境相符的旧版基础库。保持这一构建基线，可以避免编译时无意间引入更新系统库的要求。Windows 开发机通过 Docker 的 Linux 环境完成 deb 构建，无需在麒麟虚拟机里开发。
 
@@ -30,11 +30,11 @@ ARM64 和 x86_64 共用源码，分别编译。`--arch` 用于核对构建架构
 | 上述虚拟机的运行库（历史实测） | Qt `5.12.12+dfsg-0kylin1k1.54`；glibc `2.31`；libstdc++ 提供至 `GLIBCXX_3.4.28` |
 | 本地 Ubuntu 20.04 ARM64 容器构建 | 已产出 `Architecture: arm64`、ELF `AArch64` 的 deb |
 | GitHub Actions | 2026-11-10 的运行 [#42763725286](https://github.com/hualiyexi/kylinnote/actions/runs/42763725286) 已通过 Linux ARM64、Linux amd64 与 Windows x64 的构建、测试、打包及现有安装启动检查；Windows 在首次 UI 测试异常退出后，以相同源码重试通过 |
-| 飞腾 FT-2000 真机 | 尚未试装，由用户实际使用时确认；具体补丁号和运行库版本尚未从真机读取 |
+| 旧版银河麒麟实机（KylinList 1.0.0） | 用户试装反馈系统 Qt 包无法启动。系统补丁号与 Qt 运行库版本尚未核对。 |
 
-这些历史结果支撑将 Ubuntu 20.04 固定为日常构建方案。x86 虚拟机试用和 ARM64 自动化各有意义，但不能沿用为后续版本的通过记录。**本轮 schema v10 版本尚未完成银河麒麟 V10 SP1 虚拟机／飞腾 FT-2000 ARM64 真机验收**，原生桌面表现由用户亲自试用；Windows 自动化、Ubuntu 容器或 QEMU 结果均不能替代。本轮Windows构建／CTest结果见[当前集成记录](updates.md#当前实现与验证状态)，此处不重复计数。
+上述虚拟机结果对应当时的系统和版本。Ubuntu 20.04 ARM64 容器覆盖构建、测试、安装与启动。1.0.1 的旧麒麟桌面拖放、默认打开和登录恢复由用户在目标机上试用。
 
-目标机没有 `qmake` 不代表没有 Qt：`qmake` 属于开发工具，运行应用只需要 Qt 运行库及插件。更名前的系统 Qt 小包和 2026-11-10 当时的 KylinList 包均有用户虚拟机试装记录，后者当时的窗口表现获反馈与 Windows 一致；该历史事实不延伸到本轮 v10。默认选择几百 KB 的普通 deb；只有目标机缺少 Qt 且不便补齐时，才选自带 Qt 的 bundle；bundle 仍使用系统的 glibc、时区数据、图形驱动和基础桌面库。
+1.0.0 实机试装反馈显示，旧版银河麒麟上的系统 Qt 版无法启动。这类设备优先使用 `_bundle.deb`，包内提供 Qt 5.12.8 及运行所需的 Qt 插件。自带 Qt 版仍使用系统的 glibc、时区数据、图形驱动和基础桌面库。上表所列虚拟机结果对应各自的历史环境。
 
 ## 日常工作方式
 

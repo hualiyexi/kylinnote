@@ -5,6 +5,7 @@
 #include <QTextBlock>
 #include <QVector>
 #include "../domain/Entity.h"
+#include "design/DesignTokens.h"
 
 class QTextCursor;
 class QTextDocument;
@@ -52,12 +53,13 @@ QVector<CodeContext> codeContexts(const QStringList& lines);
 bool isHorizontalRule(const QString& source);
 bool hasSnapshot(const QTextBlock& block);
 Block readBlock(const QTextBlock& block);
-void importMarkdown(QTextDocument* document, const QString& source, const QHash<QString, Entity>& targets);
+void importMarkdown(QTextDocument* document, const QString& source, const QHash<QString, Entity>& targets,
+                    ds::Theme theme = ds::Theme::Count);
 QString selectedMarkdown(const QTextCursor& selection);
 int insertionOffset(const QTextBlock& block, int visibleOffset, const QTextCharFormat& format);
 QTextCharFormat insertionFormat(const QTextBlock& block, int sourceOffset);
 void renderBlock(const QTextBlock& block, const QString& source, CodeContext context,
-                 const QHash<QString, Entity>& targets, bool force = false);
+                 const QHash<QString, Entity>& targets, bool force = false, ds::Theme theme = ds::Theme::Count);
 QString plainLine(const QString& source, CodeContext context, const QHash<QString, Entity>& targets);
 Kind kind(const QTextBlock& block);
 

@@ -4585,6 +4585,59 @@ private slots:
         menu->close();
         delete menu;
     }
+    void newTaskCanBePinnedToDesktopFromItsFirstContextMenu() {
+        const QString id = m_store->createTask(QStringLiteral("第一次贴到桌面"));
+        QVERIFY(!id.isEmpty());
+        NoteManager notes(m_store.get());
+        TaskPanel panel(m_store.get()); panel.show();
+        auto* view = panel.findChild<QListView*>(QStringLiteral("TaskList"));
+        QVERIFY(view);
+        auto* model = qobject_cast<TaskListModel*>(view->model());
+        QVERIFY(model);
+
+        const auto invokeDesktopCommand = [&]() {
+            QString label;
+            QTimer::singleShot(0, &panel, [&]() {
+                auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (!menu) return;
+                if (menu->objectName() == QLatin1String("EntityContextMenu")) {
+                    QPointer<QMenu> guard(menu);
+                    for (QAction* action : menu->actions()) {
+                        if (action->objectName() != QLatin1String("CmdDesktopNote")) continue;
+                        label = action->text();
+                        action->trigger();
+                        break;
+                    }
+                    if (guard) guard->close();
+                } else menu->close();
+            });
+            emit view->customContextMenuRequested(view->visualRect(model->indexForTask(id)).center());
+            return label;
+        };
+
+        QVERIFY(model->indexForTask(id).isValid());
+        QVERIFY(m_store->desktopNote(id).id.isEmpty());
+        QVERIFY(!notes.note(id));
+        QCOMPARE(invokeDesktopCommand(), QStringLiteral("贴到桌面"));
+        QVERIFY(m_store->desktopNote(id).isOpen());
+        QVERIFY(notes.note(id));
+        const QRect geometry = notes.note(id)->geometry();
+        QVERIFY(m_store->saveDesktopState(id, NoteColor::Pink, geometry, 0, NoteLayer::Normal, true));
+        const QString recordId = m_store->desktopNote(id).id;
+
+        QCOMPARE(invokeDesktopCommand(), QStringLiteral("关闭桌面便签"));
+        QVERIFY(!notes.note(id));
+        QVERIFY(!m_store->desktopNote(id).isOpen());
+        QCOMPARE(m_store->desktopNote(id).id, recordId);
+        QCOMPARE(m_store->entity(id).title, QStringLiteral("第一次贴到桌面"));
+
+        QCOMPARE(invokeDesktopCommand(), QStringLiteral("贴到桌面"));
+        QVERIFY(notes.note(id));
+        QCOMPARE(m_store->desktopNote(id).id, recordId);
+        QCOMPARE(notes.note(id)->snapshot().color, NoteColor::Pink);
+        QCOMPARE(notes.note(id)->geometry(), geometry);
+    }
+
     void taskContextMenuAddsSubtask() {
         const QDate today = toAppTime(appNow()).date();
         const QString parent = m_store->createTask(QStringLiteral("右键父任务"));

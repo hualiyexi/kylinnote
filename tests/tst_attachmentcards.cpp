@@ -21,6 +21,8 @@
 #include <QLayout>
 #include <QMenu>
 #include <QPointer>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -45,7 +47,8 @@
 
 using namespace kl;
 
-// 全程只捕获测试进程的 file URL；即使测试回归，也不能启动真实文件关联程序。
+// 非 Linux：全程只捕获测试进程的 file URL；即使测试回归，也不能启动真实文件关联程序。
+// Linux：外部打开走 QProcess+env，用临时 PATH 里的假 xdg-open 截获真实 spawn（见 installFakeXdgOpen）。
 class AttachmentFileUrlTrap final : public QObject {
     Q_OBJECT
 public:
@@ -215,6 +218,88 @@ bool dismissAttachmentError(QDialog* dialog, QString* title, QString* message, b
     else dialog->reject();
     return true;
 }
+
+// 测试进程内临时改写环境变量，作用域结束精确还原（未设置/空串/原值语义都保留）。
+class ScopedEnv final {
+public:
+    explicit ScopedEnv(const char* name)
+        : m_name(name), m_had(qEnvironmentVariableIsSet(name)), m_previous(qgetenv(name)) {}
+    ~ScopedEnv() {
+        if (m_had) qputenv(m_name, m_previous);
+        else qunsetenv(m_name);
+    }
+    void set(const QByteArray& value) { qputenv(m_name, value); }
+    void unset() { qunsetenv(m_name); }
+private:
+    const char* m_name;
+    bool m_had;
+    QByteArray m_previous;
+};
+
+#ifdef Q_OS_LINUX
+// Linux 的外部打开由产品代码经 findExecutable("xdg-open"/"gio") + QProcess 派发；
+// 测试把假 xdg-open 放进临时 PATH 前缀来截获真实 spawn：只记录 argv 与净化后的
+// 关键环境（@unset@ 表示子进程内该变量不存在），绝不启动真实查看器。
+struct OpenerRecord {
+    QHash<QString, QString> env;
+    QString arg() const { return env.value(QStringLiteral("arg")); }
+};
+
+QVector<OpenerRecord> parseOpenerDump(const QString& dumpPath) {
+    QVector<OpenerRecord> records;
+    QFile file(dumpPath);
+    if (!file.open(QIODevice::ReadOnly)) return records;
+    for (const QByteArray& line : file.readAll().split('\n')) {
+        const int split = line.indexOf('=');
+        if (split <= 0) continue;
+        if (line.startsWith("arg=")) records.append(OpenerRecord());
+        if (records.isEmpty()) continue;
+        records.last().env.insert(QString::fromLatin1(line.left(split)),
+                                  QString::fromLocal8Bit(line.mid(split + 1)));
+    }
+    return records;
+}
+
+bool installFakeXdgOpen(const QString& scriptPath) {
+    QFile file(scriptPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    const QByteArray script = QStringLiteral(
+        "#!/bin/sh\n"
+        "# KylinList 测试专用 fake xdg-open：仅记录 argv 与环境，不启动任何真实程序。\n"
+        "d=\"${KYLINLIST_FAKE_OPENER_DUMP:?}\"\n"
+        "{\n"
+        "printf 'arg=%s\\n' \"$1\"\n"
+        "printf 'LD_LIBRARY_PATH=%s\\n' \"${LD_LIBRARY_PATH-@unset@}\"\n"
+        "printf 'QT_PLUGIN_PATH=%s\\n' \"${QT_PLUGIN_PATH-@unset@}\"\n"
+        "printf 'QT_QPA_PLATFORM_PLUGIN_PATH=%s\\n' \"${QT_QPA_PLATFORM_PLUGIN_PATH-@unset@}\"\n"
+        "printf 'QT_QPA_PLATFORM=%s\\n' \"${QT_QPA_PLATFORM-@unset@}\"\n"
+        "printf 'KYLINLIST_PRE_LD_LIBRARY_PATH=%s\\n' \"${KYLINLIST_PRE_LD_LIBRARY_PATH-@unset@}\"\n"
+        "printf 'KYLINLIST_PRE_QT_PLUGIN_PATH=%s\\n' \"${KYLINLIST_PRE_QT_PLUGIN_PATH-@unset@}\"\n"
+        "printf 'KYLINLIST_PRE_QT_QPA_PLATFORM_PLUGIN_PATH=%s\\n' \"${KYLINLIST_PRE_QT_QPA_PLATFORM_PLUGIN_PATH-@unset@}\"\n"
+        "printf 'KYLINLIST_PRE_QT_QPA_PLATFORM=%s\\n' \"${KYLINLIST_PRE_QT_QPA_PLATFORM-@unset@}\"\n"
+        "printf 'SESSION=%s\\n' \"${FAKE_SESSION_MARKER-@unset@}\"\n"
+        "} >> \"$d\"\n"
+        "exit 0\n").toUtf8();
+    const bool written = file.write(script) == script.size();
+    file.close();
+    if (!written) return false;
+    return QFile::setPermissions(scriptPath,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+        | QFileDevice::ReadGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther | QFileDevice::ExeOther);
+}
+
+QHash<QString, QString> parseKeyValueLines(const QString& path) {
+    QHash<QString, QString> result;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return result;
+    for (const QByteArray& line : file.readAll().split('\n')) {
+        const int split = line.indexOf('=');
+        if (split <= 0) continue;
+        result.insert(QString::fromLatin1(line.left(split)), QString::fromLocal8Bit(line.mid(split + 1)));
+    }
+    return result;
+}
+#endif // Q_OS_LINUX
 } // namespace
 
 class AttachmentCardsTest final : public QObject {
@@ -232,11 +317,28 @@ private slots:
         AppStyle::apply(*qobject_cast<QApplication*>(qApp));
         disableNativeWindowShadows();
         QDesktopServices::setUrlHandler(QStringLiteral("file"), &m_fileUrls, "capture");
+#ifdef Q_OS_LINUX
+        // 全程用临时 PATH 前缀放假 xdg-open：任何用例都不允许启动真实查看器；
+        // 产品代码按 findExecutable 解析，天然命中这里的假程序。
+        const QString fakeBin = m_settingsDir->path() + QStringLiteral("/fake-bin");
+        QVERIFY2(QDir().mkpath(fakeBin) && installFakeXdgOpen(fakeBin + QStringLiteral("/xdg-open")),
+                 "fake xdg-open 安装失败");
+        m_hadPath = qEnvironmentVariableIsSet("PATH");
+        m_previousPath = qgetenv("PATH");
+        qputenv("PATH", QFile::encodeName(fakeBin) + ':' + m_previousPath);
+        m_hadOpenerDump = qEnvironmentVariableIsSet("KYLINLIST_FAKE_OPENER_DUMP");
+        m_previousOpenerDump = qgetenv("KYLINLIST_FAKE_OPENER_DUMP");
+#endif
     }
     void init() {
         m_dir.reset(new QTemporaryDir); QVERIFY(m_dir->isValid());
         qputenv("KYLINLIST_DATA_DIR", m_dir->path().toUtf8());
         m_fileUrls.urls.clear();
+#ifdef Q_OS_LINUX
+        m_openerDump = m_dir->path() + QStringLiteral("/opener-dump.log");
+        QFile::remove(m_openerDump);
+        qputenv("KYLINLIST_FAKE_OPENER_DUMP", QFile::encodeName(m_openerDump));
+#endif
         ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
         QString error;
         QVERIFY2(Database::instance().openAt(m_dir->path() + QStringLiteral("/attachmentcards.db"), &error), qPrintable(error));
@@ -252,6 +354,12 @@ private slots:
         QSettings::setDefaultFormat(m_previousSettingsFormat);
         if (m_hadDataDir) qputenv("KYLINLIST_DATA_DIR", m_previousDataDir);
         else qunsetenv("KYLINLIST_DATA_DIR");
+#ifdef Q_OS_LINUX
+        if (m_hadPath) qputenv("PATH", m_previousPath);
+        else qunsetenv("PATH");
+        if (m_hadOpenerDump) qputenv("KYLINLIST_FAKE_OPENER_DUMP", m_previousOpenerDump);
+        else qunsetenv("KYLINLIST_FAKE_OPENER_DUMP");
+#endif
     }
     void appearanceFallbacksAndBinarySizeLabels() {
         using namespace AttachmentAppearance;
@@ -403,6 +511,9 @@ private slots:
         if (entry == QLatin1String("return") || entry == QLatin1String("enter") || entry == QLatin1String("space")) {
             clickActualChild(cards, row->mapTo(&cards, QPoint(row->width() / 2, 3)));
             QTRY_VERIFY(row->hasFocus()); triggered.clear(); m_fileUrls.urls.clear();
+#ifdef Q_OS_LINUX
+            QFile::remove(m_openerDump); // 聚焦点击本身已交接一次，之后只计键盘那次
+#endif
             QTest::keyClick(row, entry == QLatin1String("space") ? Qt::Key_Space
                 : entry == QLatin1String("enter") ? Qt::Key_Enter : Qt::Key_Return);
         } else {
@@ -414,11 +525,195 @@ private slots:
             const QPoint point = target == row ? QPoint(row->width() / 2, 3) : target->rect().center();
             clickActualChild(cards, target->mapTo(&cards, point));
         }
-        QCOMPARE(triggered.count(), 1); QCOMPARE(m_fileUrls.urls.size(), 1);
-        QCOMPARE(QFileInfo(m_fileUrls.urls.first().toLocalFile()).canonicalFilePath(),
-                 QFileInfo(m_store->attachmentFilePath(attachment)).canonicalFilePath());
+        QCOMPARE(triggered.count(), 1);
+        // 外部打开拿到的是“已验证内容的临时副本 + 真实后缀”，不是受管存储名本身。
+#ifdef Q_OS_LINUX
+        QTRY_VERIFY(openerRecords().size() == 1); // detached 交接是异步的
+        const QString openedPath = openerRecords().first().arg();
+#else
+        QTRY_COMPARE(m_fileUrls.urls.size(), 1);
+        const QString openedPath = m_fileUrls.urls.first().toLocalFile();
+#endif
+        verifyOpenCopyPath(openedPath, attachment, QByteArray("safe synthetic file URL"));
         QCOMPARE(m_store->attachments(id).size(), 1); QVERIFY(m_store->lastError().isEmpty());
     }
+    void openHandsVerifiedCopyWithRealSuffixAndReusesIt() {
+        const QString id = m_store->createTask(QStringLiteral("外部打开临时副本"));
+        const QByteArray payload("%PDF-1.4 synthetic kylinlist open copy");
+        QString source;
+        const Attachment attachment = addFile(id, QStringLiteral("manual.pdf"), payload, &source);
+        QVERIFY(!attachment.id.isEmpty());
+        // 兼容已有存储名：受管文件名保持 UUID_pdf（无点分隔后缀），不迁移既有数据。
+        QCOMPARE(attachment.relativePath, attachment.id + QStringLiteral("_pdf"));
+        AttachmentWidget cards(m_store.get()); cards.setInlineMode(true); cards.setTask(id);
+        cards.resize(360, 120); cards.show();
+        QAbstractButton* row = nullptr; QTRY_VERIFY((row = rowFor(cards, attachment.id)) != nullptr);
+        clickActualChild(cards, row->mapTo(&cards, QPoint(row->width() / 2, 3)));
+#ifdef Q_OS_LINUX
+        QTRY_COMPARE(openerRecords().size(), 1);
+        const QString firstPath = openerRecords().first().arg();
+#else
+        QTRY_COMPARE(m_fileUrls.urls.size(), 1);
+        const QString firstPath = m_fileUrls.urls.first().toLocalFile();
+#endif
+        verifyOpenCopyPath(firstPath, attachment, payload);
+        // 同一附件再次打开：命中同一份已验证副本，重复点击不产生新文件。
+        clickActualChild(cards, row->mapTo(&cards, QPoint(row->width() / 2, 3)));
+#ifdef Q_OS_LINUX
+        QTRY_COMPARE(openerRecords().size(), 2);
+        QCOMPARE(openerRecords().last().arg(), firstPath);
+#else
+        QTRY_COMPARE(m_fileUrls.urls.size(), 2);
+        QCOMPARE(m_fileUrls.urls.last().toLocalFile(), firstPath);
+#endif
+        QCOMPARE(fileBytes(source), payload);
+        QCOMPARE(fileBytes(m_store->attachmentFilePath(attachment)), payload);
+    }
+    void imageCardsOpenLikeDocumentsAndKeepPreviewMenuAction() {
+        const QString id = m_store->createTask(QStringLiteral("图片卡片系统打开"));
+        QString source;
+        const Attachment attachment = addFile(id, QStringLiteral("snapshot.png"), QByteArray(), &source, true);
+        QVERIFY(!attachment.id.isEmpty());
+        const QByteArray payload = fileBytes(source);
+        AttachmentWidget cards(m_store.get()); cards.setInlineMode(true); cards.setTask(id);
+        cards.resize(360, 120); cards.show();
+        QAbstractButton* row = nullptr; QTRY_VERIFY((row = rowFor(cards, attachment.id)) != nullptr);
+        // 图片普通点击与文档一致走系统默认打开：不得弹任何应用内模态。
+        int unexpected = 0;
+        ModalDriver guard([&](QDialog*) { ++unexpected; return false; });
+        clickActualChild(cards, row->mapTo(&cards, QPoint(row->width() / 2, 3)));
+        guard.stop();
+        QCOMPARE(unexpected, 0); QCOMPARE(guard.unexpectedDialogs, 0);
+#ifdef Q_OS_LINUX
+        QTRY_COMPARE(openerRecords().size(), 1);
+        const QString openedPath = openerRecords().first().arg();
+#else
+        QTRY_COMPARE(m_fileUrls.urls.size(), 1);
+        const QString openedPath = m_fileUrls.urls.first().toLocalFile();
+#endif
+        verifyOpenCopyPath(openedPath, attachment, payload); // 副本带 .png 真实后缀
+        // 应用内预览保留为一个明确的菜单动作（第一项），仍只读受管副本，不产生外部请求。
+        auto* menu = menuFor(row); QVERIFY(menu);
+        auto* preview = menu->findChild<QAction*>(QStringLiteral("PreviewAttachment"));
+        QVERIFY(preview); QVERIFY(preview->isVisible() && preview->isEnabled());
+        QCOMPARE(preview->data().toString(), attachment.id);
+        QCOMPARE(menu->actions().value(0), preview);
+        int previews = 0; bool titleMatch = false, hasImage = false, closedByButton = false;
+        ModalDriver driver([&](QDialog* dialog) {
+            ++previews;
+            titleMatch = dialog->windowTitle() == attachment.originalName;
+            auto* label = dialog->findChild<QLabel*>();
+            hasImage = label && !labelPixmap(label).isNull();
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            auto* close = buttons ? buttons->button(QDialogButtonBox::Close) : nullptr;
+            if (close) { closedByButton = true; QTest::mouseClick(close, Qt::LeftButton); }
+            else dialog->reject();
+            return true;
+        });
+        QVERIFY(chooseAttachmentAction(row, QStringLiteral("PreviewAttachment")));
+        driver.stop();
+        QVERIFY(!driver.timedOut); QCOMPARE(driver.unexpectedDialogs, 0);
+        QCOMPARE(previews, 1); QVERIFY(titleMatch); QVERIFY(hasImage); QVERIFY(closedByButton);
+#ifdef Q_OS_LINUX
+        QCOMPARE(openerRecords().size(), 1);
+#else
+        QCOMPARE(m_fileUrls.urls.size(), 1);
+#endif
+    }
+#ifdef Q_OS_LINUX
+    void systemOpenRestoresPreWrapperEnvironmentForViewers() {
+        const QString id = m_store->createTask(QStringLiteral("外部环境还原"));
+        const QByteArray payload("synthetic pre-wrapper environment payload");
+        const Attachment attachment = addFile(id, QStringLiteral("env.txt"), payload);
+        QVERIFY(!attachment.id.isEmpty());
+        // 合成“经过 wrapper 注入后”的进程环境：注入值在变量里，原值在 KYLINLIST_PRE_*
+        // 标记里。覆盖 未设置(哨兵)/空串/原值 三种语义；QT_QPA_PLATFORM 无标记 =>
+        // 手动启动语义，必须原样继承当前值。
+        ScopedEnv injectedLibrary("LD_LIBRARY_PATH"), markerLibrary("KYLINLIST_PRE_LD_LIBRARY_PATH"),
+            injectedPlugins("QT_PLUGIN_PATH"), markerPlugins("KYLINLIST_PRE_QT_PLUGIN_PATH"),
+            injectedPlatformPlugins("QT_QPA_PLATFORM_PLUGIN_PATH"),
+            markerPlatformPlugins("KYLINLIST_PRE_QT_QPA_PLATFORM_PLUGIN_PATH"),
+            session("FAKE_SESSION_MARKER");
+        injectedLibrary.set(QByteArray("/opt/kylinlist/bundled-lib"));
+        markerLibrary.set(QByteArray("1/user/pre/lib"));
+        injectedPlugins.set(QByteArray("/opt/kylinlist/bundled-plugins"));
+        markerPlugins.set(QByteArray("1")); // wrapper 前是空串：子进程也必须是已设置的空串
+        injectedPlatformPlugins.set(QByteArray("/opt/kylinlist/bundled-platforms"));
+        markerPlatformPlugins.set(QByteArray("0")); // wrapper 前未设置：子进程必须移除
+        session.set(QByteArray("keep-session"));
+        AttachmentWidget cards(m_store.get()); cards.setInlineMode(true); cards.setTask(id);
+        cards.resize(360, 120); cards.show();
+        QAbstractButton* row = nullptr; QTRY_VERIFY((row = rowFor(cards, attachment.id)) != nullptr);
+        clickActualChild(cards, row->mapTo(&cards, QPoint(row->width() / 2, 3)));
+        QTRY_COMPARE(openerRecords().size(), 1);
+        const OpenerRecord record = openerRecords().first();
+        QCOMPARE(record.env.value(QStringLiteral("LD_LIBRARY_PATH")), QStringLiteral("/user/pre/lib"));
+        QCOMPARE(record.env.value(QStringLiteral("QT_PLUGIN_PATH")), QString());
+        QCOMPARE(record.env.value(QStringLiteral("QT_QPA_PLATFORM_PLUGIN_PATH")), QStringLiteral("@unset@"));
+        const bool platformSet = qEnvironmentVariableIsSet("QT_QPA_PLATFORM");
+        const QByteArray platformValue = qgetenv("QT_QPA_PLATFORM");
+        QCOMPARE(record.env.value(QStringLiteral("QT_QPA_PLATFORM")),
+                 platformSet ? QString::fromLocal8Bit(platformValue) : QStringLiteral("@unset@"));
+        // 标记本身不泄漏给外部程序；桌面 session 其余变量原样继承。
+        QCOMPARE(record.env.value(QStringLiteral("KYLINLIST_PRE_LD_LIBRARY_PATH")), QStringLiteral("@unset@"));
+        QCOMPARE(record.env.value(QStringLiteral("SESSION")), QStringLiteral("keep-session"));
+        verifyOpenCopyPath(record.arg(), attachment, payload);
+    }
+    void wrapperScriptRecordsPreWrapperStateForExternalPrograms() {
+        // 独立临时目录搭一个假 prefix：真实 wrapper 脚本 + 假主程序（只 dump 环境），
+        // 合成数据验证标记记录语义，不碰真实桌面与真实程序。
+        const QString prefix = m_dir->path() + QStringLiteral("/fake-prefix");
+        QVERIFY(QDir().mkpath(prefix + QStringLiteral("/bin")));
+        QVERIFY(QDir().mkpath(prefix + QStringLiteral("/lib/kylinlist")));
+        QVERIFY(QFile::copy(QStringLiteral(KYLINLIST_SOURCE_DIR) + QStringLiteral("/packaging/kylinlist-wrapper.sh"),
+                            prefix + QStringLiteral("/bin/kylinlist-wrapper.sh")));
+        const QString innerDump = m_dir->path() + QStringLiteral("/wrapper-inner.log");
+        QFile dumper(prefix + QStringLiteral("/lib/kylinlist/kylinlist"));
+        QVERIFY(dumper.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        const QByteArray script = QStringLiteral(
+            "#!/bin/sh\n"
+            "for v in LD_LIBRARY_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QT_QPA_PLATFORM "
+            "KYLINLIST_PRE_LD_LIBRARY_PATH KYLINLIST_PRE_QT_PLUGIN_PATH "
+            "KYLINLIST_PRE_QT_QPA_PLATFORM_PLUGIN_PATH KYLINLIST_PRE_QT_QPA_PLATFORM; do\n"
+            "eval \"printf '%s=%s\\n' \\\"$v\\\" \\\"\\${$v-@unset@}\\\"\"\n"
+            "done > \"$KYLINLIST_WRAPPER_INNER_DUMP\"\n").toUtf8();
+        QVERIFY(dumper.write(script) == script.size());
+        dumper.close();
+        QVERIFY(QFile::setPermissions(dumper.fileName(),
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+            | QFileDevice::ReadGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther | QFileDevice::ExeOther));
+        QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+        environment.insert(QStringLiteral("LD_LIBRARY_PATH"), QStringLiteral("/user/pre/lib"));
+        environment.insert(QStringLiteral("QT_PLUGIN_PATH"), QString());
+        environment.remove(QStringLiteral("QT_QPA_PLATFORM_PLUGIN_PATH"));
+        environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("/orig/qpa"));
+        environment.insert(QStringLiteral("KYLINLIST_WRAPPER_INNER_DUMP"), innerDump);
+        QProcess wrapper;
+        wrapper.setProcessEnvironment(environment);
+        wrapper.start(QStringLiteral("sh"),
+                      QStringList{prefix + QStringLiteral("/bin/kylinlist-wrapper.sh")});
+        QVERIFY2(wrapper.waitForStarted(10000), qPrintable(wrapper.errorString()));
+        QVERIFY2(wrapper.waitForFinished(15000), qPrintable(wrapper.errorString()));
+        QCOMPARE(wrapper.exitCode(), 0);
+        const QHash<QString, QString> state = parseKeyValueLines(innerDump);
+        // wrapper 注入生效：随包路径在前，系统原值兜底；用户显式 QT_QPA_PLATFORM 不被覆盖。
+        // （wrapper 内部用 readlink -f 定位自身，这里同样取规范化路径比对。）
+        const QString canonicalPrefix = QFileInfo(prefix).canonicalFilePath();
+        QVERIFY(!canonicalPrefix.isEmpty());
+        QCOMPARE(state.value(QStringLiteral("LD_LIBRARY_PATH")),
+                 canonicalPrefix + QStringLiteral("/lib/kylinlist:/user/pre/lib"));
+        QCOMPARE(state.value(QStringLiteral("QT_PLUGIN_PATH")),
+                 canonicalPrefix + QStringLiteral("/lib/kylinlist/plugins"));
+        QCOMPARE(state.value(QStringLiteral("QT_QPA_PLATFORM_PLUGIN_PATH")),
+                 canonicalPrefix + QStringLiteral("/lib/kylinlist/plugins/platforms"));
+        QCOMPARE(state.value(QStringLiteral("QT_QPA_PLATFORM")), QStringLiteral("/orig/qpa"));
+        // 标记精确记录进入 wrapper 前的状态：原值/空串/未设置三种语义。
+        QCOMPARE(state.value(QStringLiteral("KYLINLIST_PRE_LD_LIBRARY_PATH")), QStringLiteral("1/user/pre/lib"));
+        QCOMPARE(state.value(QStringLiteral("KYLINLIST_PRE_QT_PLUGIN_PATH")), QStringLiteral("1"));
+        QCOMPARE(state.value(QStringLiteral("KYLINLIST_PRE_QT_QPA_PLATFORM_PLUGIN_PATH")), QStringLiteral("0"));
+        QCOMPARE(state.value(QStringLiteral("KYLINLIST_PRE_QT_QPA_PLATFORM")), QStringLiteral("1/orig/qpa"));
+    }
+#endif // Q_OS_LINUX
     void saveAsDialogAcceptCancelAndRejectsStaleContexts() {
         // 仅本 case 关闭原生文件对话框，离开作用域即恢复原进程属性。
         const NonNativeFileDialogs nonNative;
@@ -591,13 +886,14 @@ private slots:
         QVERIFY(withAttachmentMenu(row, MenuEntry::MouseContext, [&](PopupMenu* visible) {
             QStringList selectable;
             for (auto* action : visible->actions()) if (action->isVisible() && action->isEnabled()) selectable.append(action->objectName());
-            menuAllowsOnlySave = selectable == QStringList({QStringLiteral("SaveAttachmentAs")});
+            // 图片行多一个“预览图片…”动作；只读下删除仍不可见。
+            menuAllowsOnlySave = selectable == QStringList({QStringLiteral("PreviewAttachment"), QStringLiteral("SaveAttachmentAs")});
             QTest::keyClick(visible, Qt::Key_Escape);
         }));
         QVERIFY(menuAllowsOnlySave);
         QSignalSpy changed(m_store.get(), &TaskStore::attachmentsChanged); int dialogs = 0;
         ModalDriver driver([&](QDialog*) { ++dialogs; return false; });
-        // 不点击图片卡片（会进图片预览），用 Tab 从真实溢出按钮获得卡片焦点。
+        // 不点击图片卡片（普通点击也走系统打开），用 Tab 从真实溢出按钮获得卡片焦点。
         auto* actions = row->findChild<QToolButton*>(QStringLiteral("AttachmentActions")); QVERIFY(actions);
         actions->setFocus(); QTest::keyClick(actions, Qt::Key_Backtab); QTRY_VERIFY(row->hasFocus());
         QTest::keyClick(row, Qt::Key_Delete); remove->trigger(); driver.stop();
@@ -627,6 +923,9 @@ private slots:
         QCOMPARE(feedbacks, 1); QVERIFY(!driver.timedOut); QCOMPARE(driver.unexpectedDialogs, 0);
         QCOMPARE(title, QStringLiteral("无法打开附件")); QVERIFY(plainText && !message.isEmpty());
         QCOMPARE(errors.count(), 1); QCOMPARE(m_fileUrls.urls.size(), 0); QCOMPARE(fileBytes(source), payload);
+#ifdef Q_OS_LINUX
+        QCOMPARE(openerRecords().size(), 0); // 校验失败绝不派发外部程序
+#endif
         QCOMPARE(m_store->attachments(id).size(), 1);
         QCOMPARE(m_store->attachments(id).first().localState, missing ? AttachmentFileState::Missing : AttachmentFileState::Corrupt);
     }
@@ -641,6 +940,28 @@ private:
         } else if (!writeBytes(path, payload)) return Attachment();
         return m_store->importAttachment(entityId, path);
     }
+    // 外部打开必须拿到“应用独占临时目录 + 真实后缀 + 已验证内容”的副本，
+    // 与受管存储名（UUID_ext）和用户数据目录彻底分离。
+    void verifyOpenCopyPath(const QString& openedPath, const Attachment& attachment, const QByteArray& payload) {
+        QVERIFY2(!openedPath.isEmpty(), "外部打开请求必须携带路径");
+        const QFileInfo opened(openedPath);
+        QVERIFY(opened.isFile());
+        const QString suffix = attachment.relativePath.mid(attachment.id.size() + 1);
+        QCOMPARE(opened.fileName(), QStringLiteral("%1_%2.%3")
+            .arg(attachment.id, attachment.sha256.left(16), suffix));
+        QCOMPARE(fileBytes(openedPath), payload);
+        QCOMPARE(QString::fromLatin1(QCryptographicHash::hash(fileBytes(openedPath), QCryptographicHash::Sha256).toHex()),
+                 attachment.sha256);
+        const QString openedDir = QFileInfo(opened.absolutePath()).canonicalFilePath();
+        const QString dataDir = QFileInfo(m_dir->path()).canonicalFilePath();
+        QVERIFY(!openedDir.isEmpty() && !dataDir.isEmpty());
+        QVERIFY(openedDir != dataDir && !openedDir.startsWith(dataDir + QLatin1Char('/')));
+        QVERIFY(opened.canonicalFilePath()
+            != QFileInfo(m_store->attachmentFilePath(attachment)).canonicalFilePath());
+    }
+#ifdef Q_OS_LINUX
+    QVector<OpenerRecord> openerRecords() const { return parseOpenerDump(m_openerDump); }
+#endif
     bool m_hadDataDir = false;
     QByteArray m_previousDataDir;
     QSettings::Format m_previousSettingsFormat = QSettings::NativeFormat;
@@ -648,6 +969,13 @@ private:
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<TaskStore> m_store;
     AttachmentFileUrlTrap m_fileUrls;
+#ifdef Q_OS_LINUX
+    bool m_hadPath = false;
+    QByteArray m_previousPath;
+    bool m_hadOpenerDump = false;
+    QByteArray m_previousOpenerDump;
+    QString m_openerDump;
+#endif
 };
 
 QTEST_MAIN(AttachmentCardsTest)

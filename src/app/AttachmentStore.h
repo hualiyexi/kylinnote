@@ -12,6 +12,8 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QSaveFile>
+#include <QScopedPointer>
+#include <QTemporaryDir>
 #include <QUrl>
 
 namespace kl {
@@ -44,6 +46,12 @@ private:
     {
         fail(message, error); return Attachment();
     }
+    // 受管存储名是 UUID_ext（无点分隔的真实后缀），外部程序按后缀关联时会失效。
+    // 打开一律先把 readContent 校验过的内容写入应用独占的临时副本（真实后缀、
+    // 目录与文件名均由应用生成，不取自原始文件名），副本随本 store 生命周期清理。
+    bool ensureOpenCopy(const Attachment &attachment, const QByteArray &content,
+                        QString *path, QString *error) const;
+    static QString openCopySuffix(const Attachment &attachment);
     bool ensureStorage(QString *error) const
     {
         if (m_root.isEmpty()) return fail(QStringLiteral("附件数据目录未配置"), error);
@@ -88,6 +96,9 @@ private:
         return QStringLiteral("application/octet-stream");
     }
     QString m_root;
+    // 每个附件至多一份打开副本（文件名含 id 与已验证 SHA 前缀，同名即同内容，
+    // 直接复用）；目录懒创建，store 析构时由 QTemporaryDir 自动清理，无全局状态。
+    mutable QScopedPointer<QTemporaryDir> m_openCopies;
 };
 
 } // namespace kl

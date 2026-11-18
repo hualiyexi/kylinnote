@@ -1,6 +1,6 @@
 #include "TitleBar.h"
 #include "AppIcons.h"
-#include "design/ThemeManager.h"
+#include "ColorTheme.h"
 
 #include <QHBoxLayout>
 #include <QMouseEvent>
@@ -38,14 +38,10 @@ TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     m_pinButton = button(QStringLiteral("NotePinButton"), QStringLiteral("置顶便签"));
     m_pinButton->setCheckable(true);
     m_closeButton = button(QStringLiteral("CloseButton"), QStringLiteral("关闭便签，保留任务"));
-    const auto icons = [this]() {
-        m_colorButton->setIcon(AppIcons::icon(IconId::Theme, ds::ColorToken::TextTertiary, 12));
-        m_pinButton->setIcon(AppIcons::icon(IconId::Pin,
-            m_pinned ? ds::ColorToken::Primary : ds::ColorToken::TextTertiary, 12));
-        m_closeButton->setIcon(AppIcons::icon(IconId::Close, ds::ColorToken::TextTertiary, 12));
-    };
-    icons();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [icons](ds::Theme) { icons(); });
+    const QColor ink = ds::color(ds::ColorToken::NoteMuted, ColorTheme::paperTheme());
+    m_colorButton->setIcon(AppIcons::icon(AppIcons::iconName(IconId::Theme), ink, 12));
+    m_pinButton->setIcon(AppIcons::icon(AppIcons::iconName(IconId::Pin), ink, 12));
+    m_closeButton->setIcon(AppIcons::icon(AppIcons::iconName(IconId::Close), ink, 12));
     connect(m_colorButton, &QToolButton::clicked, this, &TitleBar::colorClicked);
     connect(m_pinButton, &QToolButton::clicked, this, &TitleBar::pinClicked);
     connect(m_closeButton, &QToolButton::clicked, this, &TitleBar::closeClicked);
@@ -58,16 +54,13 @@ void TitleBar::setHovered(bool hovered) {
     m_closeButton->setVisible(hovered);
 }
 
-void TitleBar::setColorIndicator(NoteColor) {
-    m_colorButton->setIcon(AppIcons::icon(IconId::Theme, ds::ColorToken::TextTertiary, 12));
-}
-
 void TitleBar::setPinned(bool pinned) {
     if (m_pinned == pinned) return;
     m_pinned = pinned;
     m_pinButton->setChecked(pinned);
-    const auto token = pinned ? ds::ColorToken::Primary : ds::ColorToken::TextTertiary;
-    m_pinButton->setIcon(AppIcons::icon(IconId::Pin, token, 12));
+    const auto token = pinned ? ds::ColorToken::Primary : ds::ColorToken::NoteMuted;
+    m_pinButton->setIcon(AppIcons::icon(AppIcons::iconName(IconId::Pin),
+        ds::color(token, ColorTheme::paperTheme()), 12));
     m_pinButton->setToolTip(pinned ? QStringLiteral("取消便签置顶") : QStringLiteral("置顶便签"));
 }
 

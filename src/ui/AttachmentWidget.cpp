@@ -193,6 +193,7 @@ AttachmentWidget::AttachmentWidget(TaskStore* store, QWidget* parent) : QWidget(
     root->addWidget(m_rowsHost);
     connect(m_add, &QPushButton::clicked, this, &AttachmentWidget::importFiles);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
+        if (m_themeOverride != ds::Theme::Count) return;
         m_add->setIcon(AppIcons::icon(IconId::Attachment));
         m_rowsDirty = true;
         refresh();
@@ -268,6 +269,13 @@ QSize AttachmentWidget::minimumSizeHint() const {
     if (m_entityId.isEmpty() || ((m_inlineMode || m_compact) && m_items.isEmpty()))
         return QSize(0, 0);
     return QWidget::minimumSizeHint();
+}
+
+void AttachmentWidget::setThemeOverride(ds::Theme theme) {
+    if (m_themeOverride == theme) return;
+    m_themeOverride = theme;
+    m_rowsDirty = true;
+    refresh();
 }
 
 void AttachmentWidget::clearRows() {
@@ -400,7 +408,8 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     auto* actions = new QToolButton(row);
     actions->setObjectName(QStringLiteral("AttachmentActions"));
     actions->setText(QStringLiteral("附件操作"));
-    actions->setIcon(AppIcons::icon(IconId::MoreTitlebar, 18));
+    actions->setIcon(m_themeOverride == ds::Theme::Count ? AppIcons::icon(IconId::MoreTitlebar, 18)
+        : AppIcons::icon(AppIcons::iconName(IconId::MoreTitlebar), ds::color(ds::ColorToken::TextSecondary, m_themeOverride), 18));
     actions->setIconSize(QSize(18, 18));
     actions->setFixedSize(m_inlineMode ? QSize(30, 30) : QSize(24, 24));
     actions->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -411,17 +420,25 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     actions->setFocusPolicy(Qt::StrongFocus);
     actions->setPopupMode(QToolButton::InstantPopup);
     auto* menu = new PopupMenu(actions);
+    if (m_themeOverride != ds::Theme::Count) menu->setThemeOverride(m_themeOverride);
     menu->setObjectName(QStringLiteral("AttachmentMenu"));
     menu->setProperty("entityMenu", true);
     menu->setFont(ds::qfont(ds::FontScene::Menu));
     menu->setMinimumWidth(164 + 2 * PopupMenu::shadowMargin());
     auto* open = new QAction(QStringLiteral("打开"), row);
     open->setObjectName(QStringLiteral("OpenAttachment"));
+    // 图片预览保留为一个明确的菜单动作；卡片普通点击与文档一致走系统默认打开。
+    QAction* previewAction = nullptr;
+    if (attachment.isImage) {
+        previewAction = menu->addAction(QStringLiteral("预览图片…"));
+        previewAction->setObjectName(QStringLiteral("PreviewAttachment"));
+    }
     auto* saveAs = menu->addAction(QStringLiteral("另存为…"));
     saveAs->setObjectName(QStringLiteral("SaveAttachmentAs"));
     auto* remove = menu->addAction(QStringLiteral("删除"));
     remove->setObjectName(QStringLiteral("RemoveAttachment"));
     for (QAction* action : {open, saveAs, remove}) action->setData(attachment.id);
+    if (previewAction) previewAction->setData(attachment.id);
     remove->setVisible(removable);
     remove->setEnabled(removable);
     actions->setMenu(menu);
@@ -438,22 +455,28 @@ void AttachmentWidget::addRow(const Attachment& attachment) {
     connect(open, &QAction::triggered, this, [this, attachment, store, entityId]() {
         Attachment current;
         if (!currentAttachment(store, entityId, attachment.id, &current)) return;
-        if (current.isImage) {
+        // 图片与文档一致：交给系统默认程序打开应用持有的已验证临时副本，
+        // 只读/校验失败等错误提示沿用 store 的统一口径。
+        if (!store->openAttachment(current.id))
+            showAttachmentError(this, QStringLiteral("无法打开附件"), store->lastError());
+    });
+    if (previewAction) {
+        connect(previewAction, &QAction::triggered, this, [this, attachment, store, entityId]() {
+            Attachment current;
+            if (!currentAttachment(store, entityId, attachment.id, &current)) return;
             if (!store->refreshAttachmentState(current.id)) {
-                showAttachmentError(this, QStringLiteral("无法打开附件"), store->lastError());
+                showAttachmentError(this, QStringLiteral("无法预览图片"), store->lastError());
                 return;
             }
             if (!currentAttachment(store, entityId, attachment.id, &current)) return;
             if (current.localState != AttachmentFileState::Available) {
-                showAttachmentError(this, QStringLiteral("无法打开附件"), QStringLiteral("附件文件已丢失或损坏，无法预览。"));
+                showAttachmentError(this, QStringLiteral("无法预览图片"), QStringLiteral("附件文件已丢失或损坏，无法预览。"));
                 return;
             }
             ImagePreviewDialog dialog(current, filePath(current), this);
             dialog.exec();
-        } else if (!store->openAttachment(current.id)) {
-            showAttachmentError(this, QStringLiteral("无法打开附件"), store->lastError());
-        }
-    });
+        });
+    }
     connect(saveAs, &QAction::triggered, this, [this, attachment, store, entityId]() {
         Attachment selected;
         if (!currentAttachment(store, entityId, attachment.id, &selected)) return;

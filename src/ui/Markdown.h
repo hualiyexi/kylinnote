@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QTextBrowser>
 #include "../domain/Entity.h"
+#include "design/DesignTokens.h"
 namespace kl {
 class TaskStore;
 class EntityHoverPreview;
@@ -17,7 +18,7 @@ EntityMap entityMap(const QVector<Entity>& entities);
 // Persist only semantic color names in <mark data-color="…">; theme colors stay in the renderer.
 QStringList highlightColors();
 QString highlightLabel(const QString& name);
-QColor highlightColor(const QString& name);
+QColor highlightColor(const QString& name, ds::Theme theme = ds::Theme::Count);
 QString toHtml(const QString& source, const EntityMap& targets = EntityMap());
 QString displayHtml(const Entity& task, const EntityMap& targets = EntityMap());
 QString plainText(const Entity& task, const EntityMap& targets = EntityMap());

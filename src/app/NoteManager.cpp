@@ -55,7 +55,7 @@ void NoteManager::syncTask(QString id) {
     NoteWidget* window = m_notes.value(id, nullptr);
     if (window && window->isSaving()) return;
     // 归档清单的任务退出桌面活动投影；desktop_notes 行保留，取消归档后由 restoreAll 恢复。
-    if (task.id.isEmpty() || task.kind != EntityKind::Task || desktop.id.isEmpty() || !desktop.open
+    if (task.id.isEmpty() || task.kind != EntityKind::Task || !desktop.isOpen()
         || task.deleted || task.status != TaskStatus::Active || m_store->isListArchived(task.listId)) {
         if (window) {
             // 落盘期间 taskChanged 会重入 syncTask 的本分支；重入时让最外层继续，

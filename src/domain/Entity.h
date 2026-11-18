@@ -253,6 +253,8 @@ struct DesktopNote {
     bool open = true;
     QDateTime createdAt;
     QDateTime updatedAt;
+
+    bool isOpen() const { return !id.isEmpty() && open; }
 };
 
 struct ViewDef {

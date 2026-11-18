@@ -54,7 +54,7 @@ QTextCharFormat inputFormat(QTextEdit* edit) {
             format.clearProperty(MarkdownDocument::LinkOffsetProperty);
             format.setProperty(MarkdownDocument::InlineStylesProperty, cursor.block().charFormat().property(MarkdownDocument::InlineStylesProperty));
             format.setFontUnderline(false);
-            format.setForeground(ThemeManager::instance().color(ds::ColorToken::Text));
+            format.setForeground(edit->palette().text());
         }
     }
     return format;
@@ -135,6 +135,11 @@ EditorTextEdit::~EditorTextEdit() {
     disconnect(document(), nullptr, this, nullptr);
     disconnect(document()->documentLayout(), nullptr, this, nullptr);
     disconnect(&ThemeManager::instance(), nullptr, this, nullptr);
+}
+
+void EditorTextEdit::setThemeOverride(ds::Theme theme) {
+    m_themeOverride = theme;
+    viewport()->update();
 }
 
 void EditorTextEdit::setBlockGutterEnabled(bool enabled) {
@@ -219,36 +224,38 @@ void EditorTextEdit::paintEvent(QPaintEvent* event) {
     QTextEdit::paintEvent(event);
     QPainter painter(viewport());
     painter.setRenderHint(QPainter::Antialiasing);
-    const auto& theme = ThemeManager::instance();
+    const auto theme = m_themeOverride == ds::Theme::Count
+        ? ThemeManager::instance().resolvedTheme() : m_themeOverride;
+    const auto color = [theme](ds::ColorToken token) { return ds::color(token, theme); };
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         const QRect firstLine = blockFirstLineRect(block).toRect();
         if (firstLine.height() <= 0 || firstLine.bottom() < 0 || firstLine.top() >= viewport()->height()) continue;
         const auto kind = MarkdownDocument::kind(block);
         if (kind == MarkdownDocument::Kind::HorizontalRule) {
-            painter.setPen(theme.color(ds::ColorToken::Divider));
+            painter.setPen(color(ds::ColorToken::Divider));
             painter.drawLine(0, firstLine.center().y(), viewport()->width(), firstLine.center().y());
         } else if (kind == MarkdownDocument::Kind::TaskList) {
             const QRectF box = QRectF(checkBoxRect(block)).adjusted(0.5, 0.5, -0.5, -0.5);
             const bool checked = block.blockFormat().boolProperty(MarkdownDocument::CheckedProperty);
-            painter.setPen(QPen(theme.color(checked ? ds::ColorToken::Primary : ds::ColorToken::TextTertiary), 1));
-            painter.setBrush(checked ? QBrush(theme.color(ds::ColorToken::Primary)) : Qt::NoBrush);
+            painter.setPen(QPen(color(checked ? ds::ColorToken::Primary : ds::ColorToken::TextTertiary), 1));
+            painter.setBrush(checked ? QBrush(color(ds::ColorToken::Primary)) : Qt::NoBrush);
             painter.drawRoundedRect(box, 2, 2);
             if (checked) {
                 QPainterPath check;
                 check.moveTo(box.left() + 2.5, box.top() + 6.5);
                 check.lineTo(box.left() + 5.2, box.top() + 9.2);
                 check.lineTo(box.left() + 10.3, box.top() + 3.8);
-                painter.setPen(QPen(theme.color(ds::ColorToken::OnPrimary), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                painter.setPen(QPen(color(ds::ColorToken::OnPrimary), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
                 painter.drawPath(check);
             }
             painter.setBrush(Qt::NoBrush);
         } else if (kind == MarkdownDocument::Kind::UnorderedList || kind == MarkdownDocument::Kind::OrderedList) {
             painter.setFont(block.charFormat().font().resolve(document()->defaultFont()));
-            painter.setPen(theme.color(ds::ColorToken::TextSecondary));
+            painter.setPen(color(ds::ColorToken::TextSecondary));
             painter.drawText(QRect(0, firstLine.top(), qMax(0, firstLine.left() - 7), firstLine.height()), Qt::AlignRight | Qt::AlignVCenter,
                              block.blockFormat().stringProperty(MarkdownDocument::ListMarkerProperty));
         } else if (kind == MarkdownDocument::Kind::Quote) {
-            painter.setPen(QPen(theme.color(ds::ColorToken::Divider), 2));
+            painter.setPen(QPen(color(ds::ColorToken::Divider), 2));
             const qreal height = document()->documentLayout()->blockBoundingRect(block).height();
             painter.drawLine(QPointF(firstLine.left() - 8, firstLine.top()), QPointF(firstLine.left() - 8, firstLine.top() + height));
         }

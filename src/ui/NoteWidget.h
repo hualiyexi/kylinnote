@@ -87,7 +87,6 @@ private:
     QPointer<QWidget> m_menu;
     QTimer m_saveTimer;
     QImage m_shadow;
-    QColor m_shadowColor;
     int m_appliedColor = -1;
     bool m_loading = false, m_saveFailed = false, m_temporary = false;
     bool m_applyingFlags = false, m_saving = false, m_desktopDirty = false;

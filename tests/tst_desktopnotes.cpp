@@ -401,6 +401,7 @@ private slots:
     void titleBarDragSnapsPaperToPeersAndScreen();
     // 自绘
     void paperRenderingCornersBorderShadowBothThemes();
+    void paperPaletteAndMarkupStayFixed();
 
 private:
     QString dbPath() const { return m_dir->filePath(QStringLiteral("desktopnotes.db")); }
@@ -1691,9 +1692,8 @@ void DesktopNotesTest::paperRenderingCornersBorderShadowBothThemes()
     QVERIFY(QTest::qWaitForWindowExposed(&note));
     QApplication::processEvents();
 
+    const QColor body(ds::raw::L_NoteYellow);
     const auto assertRendering = [&]() {
-        // 纸面色是语义令牌：浅色/深色主题各取当前值，不在主题循环外缓存。
-        const QColor body(ColorTheme::spec(NoteColor::Yellow).body);
         const qreal dpr = note.devicePixelRatioF();
         const QImage image = renderWidgetToImage(&note);
         // 纸面中心：不透明的纸面色。
@@ -1741,6 +1741,52 @@ void DesktopNotesTest::paperRenderingCornersBorderShadowBothThemes()
     assertRendering();
     ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
     QApplication::processEvents();
+}
+
+void DesktopNotesTest::paperPaletteAndMarkupStayFixed()
+{
+    const QRgb papers[] = {ds::raw::L_NoteYellow, ds::raw::L_NoteBlue, ds::raw::L_NoteGreen,
+                           ds::raw::L_NotePink, ds::raw::L_NotePurple, ds::raw::White};
+    const auto verifyPalette = [&]() {
+        for (int i = 0; i < ColorCount; ++i) {
+            const auto spec = ColorTheme::spec(colorFromInt(i));
+            QCOMPARE(QColor(spec.body), QColor(papers[i]));
+            QCOMPARE(QColor(spec.text), QColor(ds::raw::L_Text));
+            QCOMPARE(QColor(spec.barText), QColor(ds::raw::L_TextSecondary));
+            QCOMPARE(QColor(spec.selection), QColor(ds::raw::PrimarySoft));
+        }
+    };
+    const QString source = QStringLiteral("`code`\n<mark data-color=\"blue\">mark</mark>\n> quote");
+    const QString id = seedProjectedTask(QStringLiteral("双色主题"), source, seedPaper(0));
+    QVERIFY(!id.isEmpty());
+    const auto verifyEditor = [](NoteWidget* note) {
+        auto* editor = note->findChild<MarkdownEditor*>();
+        QVERIFY(editor);
+        auto* body = editor->textEditor();
+        QCOMPARE(body->palette().color(QPalette::Text), QColor(ds::raw::L_Text));
+        QCOMPARE(body->palette().color(QPalette::Highlight), QColor(ds::raw::PrimarySoft));
+        for (const auto token : {ds::ColorToken::Field, ds::ColorToken::HighlightBlue}) {
+            const QString word = token == ds::ColorToken::Field ? QStringLiteral("code") : QStringLiteral("mark");
+            const auto fragment = body->document()->find(word);
+            QVERIFY(!fragment.isNull());
+            QCOMPARE(fragment.charFormat().background().color(), ds::color(token, ds::Theme::Light));
+        }
+    };
+    NoteManager notes(m_store.get());
+    NoteWidget* note = openProjection(notes, id);
+    QVERIFY(note);
+    verifyPalette();
+    verifyEditor(note);
+
+    ThemeManager::instance().setPreference(ThemeManager::Preference::Dark);
+    QApplication::processEvents();
+    verifyPalette();
+    verifyEditor(note);
+    const QString coldId = seedProjectedTask(QStringLiteral("深色主题中新建"), source, seedPaper(1));
+    NoteWidget* cold = openProjection(notes, coldId);
+    QVERIFY(cold);
+    verifyEditor(cold);
+    ThemeManager::instance().setPreference(ThemeManager::Preference::Light);
 }
 
 QTEST_MAIN(DesktopNotesTest)

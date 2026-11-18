@@ -2,6 +2,7 @@
 #define KYLINLIST_COLORTHEME_H
 
 #include "../Common.h"
+#include "design/DesignTokens.h"
 class QWidget;
 
 namespace kl {
@@ -13,6 +14,9 @@ public:
         const char* label;
         QString body, bar, border, text, barText, selection;
     };
+    // Paper colors have their own fixed palette, independent of application appearance.
+    static constexpr ds::Theme paperTheme() { return ds::Theme::Light; }
+    static QColor borderColor();
     static Spec spec(NoteColor color);
     static NoteColor next(NoteColor color);
     static NoteColor fromInt(int value);

@@ -1,6 +1,69 @@
 #include "AttachmentStore.h"
 
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QStandardPaths>
+
 namespace kl {
+
+#if defined(Q_OS_LINUX)
+namespace {
+
+// Keep the bundle's loader and plugin paths out of desktop viewers.
+void restorePreWrapperEnvironment(QProcessEnvironment *environment)
+{
+    const char *const variables[] = {
+        "LD_LIBRARY_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORM"
+    };
+    for (const char *name : variables) {
+        const QString variable = QString::fromLatin1(name);
+        const QString marker = QStringLiteral("KYLINLIST_PRE_") + variable;
+        const QString original = environment->value(marker);
+        if (original == QLatin1String("0")) environment->remove(variable);
+        else if (original.startsWith(QLatin1Char('1'))) environment->insert(variable, original.mid(1));
+        environment->remove(marker);
+    }
+}
+
+bool openerFail(const QString &message, QString *error)
+{
+    if (error) *error = message;
+    return false;
+}
+
+bool openWithSystemOpener(const QString &path, QString *error)
+{
+    QString program;
+    QStringList arguments;
+    const QString xdgOpen = QStandardPaths::findExecutable(QStringLiteral("xdg-open"));
+    if (!xdgOpen.isEmpty()) {
+        program = xdgOpen;
+    } else {
+        const QString gio = QStandardPaths::findExecutable(QStringLiteral("gio"));
+        if (gio.isEmpty()) return openerFail(QStringLiteral("未找到 xdg-open/gio 系统打开工具"), error);
+        program = gio;
+        arguments.append(QStringLiteral("open"));
+    }
+    arguments.append(path);
+    // argv 直传（无 shell 拼接）；子进程环境基于当前桌面 session，只精确还原 wrapper
+    // 注入的四个变量。实例版 startDetached() 遵循 setProcessEnvironment（Qt 5.12
+    // qprocess_unix.cpp：QProcessPrivate::startDetached 由 environment 生成 envp 后
+    // execve），并经双 fork + setsid 完全脱离本进程生命周期。
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    restorePreWrapperEnvironment(&environment);
+    QProcess opener;
+    opener.setProgram(program);
+    opener.setArguments(arguments);
+    opener.setProcessEnvironment(environment);
+    // detached 只能确认请求已交接给系统打开工具，不代表外部程序真的打开了文件。
+    if (!opener.startDetached())
+        return openerFail(QStringLiteral("无法调用系统默认程序打开附件"), error);
+    if (error) error->clear();
+    return true;
+}
+
+} // namespace
+#endif // Q_OS_LINUX
 
 AttachmentStore::AttachmentStore(const QString &dataDir)
     : m_root(dataDir.trimmed().isEmpty() ? QString() : QDir(dataDir).filePath(QStringLiteral("attachments"))) {}
@@ -89,10 +152,62 @@ bool AttachmentStore::removeFile(const QString &relativePath, QString *error) co
 bool AttachmentStore::openWithDefaultProgram(const Attachment &attachment, QString *error) const
 {
     QByteArray content;
-    if (!readContent(attachment, &content, error)) return false;
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(absolutePath(attachment.relativePath))))
+    if (!attachmentcodec::validateAttachment(attachment, error) || !readContent(attachment, &content, error))
+        return false;
+    QString copyPath;
+    if (!ensureOpenCopy(attachment, content, &copyPath, error)) return false;
+#if defined(Q_OS_LINUX)
+    return openWithSystemOpener(copyPath, error);
+#else
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(copyPath)))
         return fail(QStringLiteral("无法调用系统默认程序打开附件"), error);
     if (error) error->clear(); return true;
+#endif
+}
+QString AttachmentStore::openCopySuffix(const Attachment &attachment)
+{
+    // 后缀只能来自已校验的受管存储名（id_<ext>），不信任用户提供的原始文件名。
+    return attachmentcodec::safeAttachmentExtension(
+        attachment.relativePath.mid(attachment.id.size() + 1));
+}
+bool AttachmentStore::ensureOpenCopy(const Attachment &attachment, const QByteArray &content,
+                                     QString *path, QString *error) const
+{
+    if (!attachmentcodec::isSafeAttachmentRelativePath(attachment.relativePath))
+        return fail(QStringLiteral("附件存储路径不安全"), error);
+    if (m_openCopies.isNull()) {
+        m_openCopies.reset(new QTemporaryDir(
+            QDir::temp().filePath(QStringLiteral("kylinlist-open-XXXXXX"))));
+        if (!m_openCopies->isValid()) {
+            m_openCopies.reset();
+            return fail(QStringLiteral("无法创建附件临时打开目录"), error);
+        }
+    }
+    // 文件名 = 附件 id + 已验证 SHA 前缀 + 真实后缀：同一附件内容不变即命中复用，
+    // 且外部程序拿到的是带点分隔后缀的常规文件名；目录与文件名均与原始文件名无关。
+    const QString copyName = QStringLiteral("%1_%2.%3")
+        .arg(attachment.id, attachment.sha256.left(16), openCopySuffix(attachment));
+    const QString target = m_openCopies->filePath(copyName);
+    const QFileInfo existing(target);
+    bool current = false;
+    if (existing.isFile() && !existing.isSymLink() && existing.size() == content.size()) {
+        QFile copy(target);
+        current = copy.open(QIODevice::ReadOnly) && copy.read(content.size() + 1) == content;
+    }
+    if (!current) {
+        QSaveFile file(target); file.setDirectWriteFallback(false);
+        if (!file.open(QIODevice::WriteOnly))
+            return fail(QStringLiteral("创建附件打开副本失败: ") + file.errorString(), error);
+        if (file.write(content) != content.size()) {
+            file.cancelWriting();
+            return fail(QStringLiteral("写入附件打开副本失败"), error);
+        }
+        if (!file.commit())
+            return fail(QStringLiteral("提交附件打开副本失败: ") + file.errorString(), error);
+    }
+    *path = target;
+    if (error) error->clear();
+    return true;
 }
 bool AttachmentStore::copyTo(const Attachment &attachment, const QString &destinationPath, QString *error) const
 {

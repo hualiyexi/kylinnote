@@ -24,7 +24,7 @@
 #include "TaskDetailWidget.h"
 #include "TitleBar.h"
 #include "WindowChrome.h"
-#include "design/ThemeManager.h"
+#include "design/DesignTokens.h"
 #include "platform/SystemShadow.h"
 
 namespace kl {
@@ -44,9 +44,7 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        QColor color = ThemeManager::instance().color(ds::ColorToken::NoteBorder);
-        color.setAlpha(110);
-        painter.setPen(QPen(color, 1));
+        painter.setPen(QPen(ColorTheme::borderColor(), 1));
         painter.setBrush(Qt::NoBrush);
         painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
                                 kPaperRadius - 0.5, kPaperRadius - 0.5);
@@ -100,13 +98,6 @@ NoteWidget::NoteWidget(const Entity& task, QWidget* parent) : QWidget(parent), m
     syncChromeGeometry();
     m_observedGeometry = geometry();
     m_loading = false;
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ds::Theme) {
-        m_appliedColor = -1;
-        m_shadow = QImage();
-        updateView();
-        m_border->update();
-        update();
-    });
 }
 
 NoteWidget::~NoteWidget() {
@@ -117,7 +108,6 @@ NoteWidget::~NoteWidget() {
         m_menu->hide();
     }
     if (m_detail) disconnect(m_detail, nullptr, this, nullptr);
-    disconnect(&ThemeManager::instance(), nullptr, this, nullptr);
 }
 
 void NoteWidget::buildUi() {
@@ -197,7 +187,6 @@ void NoteWidget::updateView() {
     if (m_appliedColor != colorToInt(m_task.color)) {
         m_appliedColor = colorToInt(m_task.color);
         ColorTheme::apply(this, m_task.color);
-        m_titleBar->setColorIndicator(m_task.color);
     }
     m_titleBar->setPinned(m_task.layer == NoteLayer::OnTop);
     const QString title = m_detail ? m_detail->titleDraft() : m_task.title;
@@ -340,6 +329,7 @@ void NoteWidget::leaveEvent(QEvent* event) { setControlsHovered(false); QWidget:
 void NoteWidget::showColorMenu() {
     auto* menu = new PopupMenu(this);
     menu->setObjectName(QStringLiteral("NoteColorMenu"));
+    menu->setThemeOverride(ColorTheme::paperTheme());
     menu->setAttribute(Qt::WA_DeleteOnClose);
     for (int index = 0; index < ColorCount; ++index) {
         const NoteColor color = colorFromInt(index);
@@ -363,6 +353,7 @@ void NoteWidget::showMoreMenu() {
     if (!m_detail || !m_store || !finishEditing()) return;
     auto* menu = new PopupMenu(this);
     menu->setObjectName(QStringLiteral("NoteMoreMenu"));
+    menu->setThemeOverride(ColorTheme::paperTheme());
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->addAction(QStringLiteral("新建"), this, [this]() { emit newNoteRequested(); })
         ->setShortcut(QKeySequence(QStringLiteral("Ctrl+N")));
@@ -401,10 +392,9 @@ void NoteWidget::showMoreMenu() {
 
 void NoteWidget::paintEvent(QPaintEvent*) {
     const QRect paper = rect().adjusted(PopupShadowMargin, PopupShadowMargin, -PopupShadowMargin, -PopupShadowMargin);
-    const QColor shadow = ThemeManager::instance().color(ds::ColorToken::Shadow);
-    if (m_shadow.isNull() || m_shadowColor != shadow) {
+    if (m_shadow.isNull()) {
+        const QColor shadow = ds::color(ds::ColorToken::Shadow, ColorTheme::paperTheme());
         m_shadow = popupShadow(QSize(128, 128), QRectF(24, 24, 80, 80), kPaperRadius, shadow, 5);
-        m_shadowColor = shadow;
     }
     QPainter painter(this);
     const int source[] = {0, 52, 76, 128};

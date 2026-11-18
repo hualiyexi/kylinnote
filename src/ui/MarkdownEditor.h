@@ -50,6 +50,7 @@ public:
     void setFillAvailableHeight(bool enabled);
     bool fillAvailableHeight() const { return m_fillAvailableHeight; }
     void setBlockControlsEnabled(bool enabled);
+    void setThemeOverride(ds::Theme theme);
     bool blockControlsEnabled() const { return m_blockControlsEnabled; }
     int contentHeight() const { return m_contentHeight; }
     void setHighlightColor(const QString& color);
@@ -138,6 +139,7 @@ private:
     QHash<QString, Entity> m_targets;
     QString m_entityId;
     QStringList m_sourceLines;
+    ds::Theme m_themeOverride = ds::Theme::Count;
     QString m_highlightColor = QStringLiteral("yellow");
     LinkContext m_hoverLink;
     LinkContext m_editedLink;

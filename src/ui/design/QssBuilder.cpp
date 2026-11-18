@@ -175,17 +175,6 @@ QString buildStyleSheet(Theme theme) {
             "QToolButton#FooterFormat:checked{background:%4;}"
             "QLabel#AttachmentDropHint{background:%PRIMARY_SOFT%;color:%PRIMARY%;"
             "border:1px dashed %PRIMARY%;border-radius:8px;padding:12px;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"]{background:%ATTACHMENT_OTHER%;"
-            "border:1px solid transparent;border-radius:14px;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"document\"],"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"image\"]{background:%ATTACHMENT_DOCUMENT%;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"spreadsheet\"]{background:%ATTACHMENT_SPREADSHEET%;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"text\"]{background:%ATTACHMENT_TEXT%;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"pdf\"]{background:%ATTACHMENT_PDF%;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"presentation\"],"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"archive\"]{background:%ATTACHMENT_WARM%;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"]:focus{border-color:%FOCUS_RING%;}"
-            "QWidget#AttachmentRow[inlineAttachment=\"true\"] QLabel{background:transparent;border:0;padding:0;}"
             "QToolButton#AttachmentActions{min-width:24px;max-width:24px;"
             "min-height:24px;max-height:24px;padding:0;border:0;border-radius:6px;}"
             "QWidget#AttachmentRow[inlineAttachment=\"true\"] QToolButton#AttachmentActions{"
@@ -239,16 +228,32 @@ QString buildStyleSheet(Theme theme) {
             .replace(QStringLiteral("%RAILBG%"), railBg)
             .replace(QStringLiteral("%QUICKADDBG%"), quickAddBg)
             .replace(QStringLiteral("%FAINT%"), faint)
-            .replace(QStringLiteral("%FOCUS_RING%"), hex(ColorToken::FocusRing, theme))
-            .replace(QStringLiteral("%ATTACHMENT_DOCUMENT%"), hex(ColorToken::AttachmentDocumentBg, theme))
-            .replace(QStringLiteral("%ATTACHMENT_SPREADSHEET%"), hex(ColorToken::AttachmentSpreadsheetBg, theme))
-            .replace(QStringLiteral("%ATTACHMENT_TEXT%"), hex(ColorToken::AttachmentTextBg, theme))
-            .replace(QStringLiteral("%ATTACHMENT_OTHER%"), hex(ColorToken::AttachmentOtherBg, theme))
-            .replace(QStringLiteral("%ATTACHMENT_PDF%"), hex(ColorToken::DangerBg, theme))
-            .replace(QStringLiteral("%ATTACHMENT_WARM%"), hex(ColorToken::WarningBg, theme))
             .replace(QStringLiteral("%PRIMARY_SOFT%"), hex(ColorToken::PrimarySoft, theme))
             .replace(QStringLiteral("%PRIMARY%"), primary)
-            .replace(QStringLiteral("%INFO%"), hex(ColorToken::Info, theme));
+            .replace(QStringLiteral("%INFO%"), hex(ColorToken::Info, theme))
+        + buildAttachmentCardStyle(theme);
+}
+
+QString buildAttachmentCardStyle(Theme theme) {
+    return QStringLiteral(
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"]{background:%ATTACHMENT_OTHER%;"
+        "border:1px solid transparent;border-radius:14px;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"document\"],"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"image\"]{background:%ATTACHMENT_DOCUMENT%;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"spreadsheet\"]{background:%ATTACHMENT_SPREADSHEET%;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"text\"]{background:%ATTACHMENT_TEXT%;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"pdf\"]{background:%ATTACHMENT_PDF%;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"presentation\"],"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"][attachmentType=\"archive\"]{background:%ATTACHMENT_WARM%;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"]:focus{border-color:%FOCUS_RING%;}"
+        "QWidget#AttachmentRow[inlineAttachment=\"true\"] QLabel{background:transparent;border:0;padding:0;}")
+        .replace(QStringLiteral("%FOCUS_RING%"), hex(ColorToken::FocusRing, theme))
+        .replace(QStringLiteral("%ATTACHMENT_DOCUMENT%"), hex(ColorToken::AttachmentDocumentBg, theme))
+        .replace(QStringLiteral("%ATTACHMENT_SPREADSHEET%"), hex(ColorToken::AttachmentSpreadsheetBg, theme))
+        .replace(QStringLiteral("%ATTACHMENT_TEXT%"), hex(ColorToken::AttachmentTextBg, theme))
+        .replace(QStringLiteral("%ATTACHMENT_OTHER%"), hex(ColorToken::AttachmentOtherBg, theme))
+        .replace(QStringLiteral("%ATTACHMENT_PDF%"), hex(ColorToken::DangerBg, theme))
+        .replace(QStringLiteral("%ATTACHMENT_WARM%"), hex(ColorToken::WarningBg, theme));
 }
 
 QString buildPreviewCss(Theme theme) {

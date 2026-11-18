@@ -26,10 +26,14 @@ apt-get install -y --no-install-recommends \
     qtbase5-dev qtbase5-dev-tools qt5-qmake \
     libqt5sql5-sqlite libqt5svg5 libqt5svg5-dev \
     libx11-dev libxext-dev libxrender-dev libxi-dev libgl1-mesa-dev \
-    libxcb-xinerama0 libxkbcommon-x11-0
+    libxcb-xinerama0 libxkbcommon-x11-0 xvfb xauth
 
 # Each mode has its own cache/staging tree and writes directly to dist.
 mkdir -p dist
 bash packaging/build-deb.sh --arch "$PACKAGE_ARCH" --version "$CMAKE_VERSION" --build-dir "$PWD/build-deb-$PACKAGE_ARCH-system" --output-dir "$PWD/dist"
 bash packaging/build-deb.sh --arch "$PACKAGE_ARCH" --bundle-qt --version "$CMAKE_VERSION" --build-dir "$PWD/build-deb-$PACKAGE_ARCH-bundle" --output-dir "$PWD/dist"
+# Exercise QWidgetWindow's xcb drag delivery in addition to the offscreen CTest suite.
+QT_QPA_PLATFORM=xcb KYLINLIST_FONT_DIR="$PWD/src/resources/fonts" \
+    xvfb-run -a -s '-screen 0 1280x800x24' \
+    "$PWD/build-deb-$PACKAGE_ARCH-system/bin/test_detail" externalFileUrisDropThroughWindow
 find dist -maxdepth 1 -name '*.deb' -exec ls -lh {} \;

@@ -16,6 +16,18 @@ if [ ! -x "$LIBDIR/kylinlist" ]; then
     exit 127
 fi
 
+# 记录本机原始环境，供应用打开系统查看器时还原。0 表示未设置，1 后面跟原值。
+for _var in LD_LIBRARY_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QT_QPA_PLATFORM; do
+    _marker="KYLINLIST_PRE_$_var"
+    if eval "[ -n \"\${$_var+x}\" ]"; then
+        eval "$_marker=\"1\${$_var}\""
+    else
+        eval "$_marker=0"
+    fi
+    export "$_marker"
+done
+unset _var _marker
+
 # 随包库优先，系统库兜底
 export LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 

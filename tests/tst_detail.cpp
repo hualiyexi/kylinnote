@@ -46,6 +46,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidgetAction>
+#include <QWindow>
 #include <QtMath>
 #include <QtTest>
 
@@ -1622,6 +1623,54 @@ private slots:
         }
         TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
         QCOMPARE(reloaded.attachments(id).size(), initialCount + fileCount); QCOMPARE(reloaded.entity(id).body, pending);
+    }
+    void externalFileUrisDropThroughWindow_data() {
+        QTest::addColumn<QString>("format");
+        QTest::addColumn<bool>("xcbMove");
+        QTest::newRow("uri-list") << QStringLiteral("text/uri-list") << false;
+        QTest::newRow("peony-copy") << QStringLiteral("peony-qt/encoded-uris") << false;
+        if (QGuiApplication::platformName() == QLatin1String("xcb")) {
+            QTest::newRow("uri-list-xcb-move") << QStringLiteral("text/uri-list") << true;
+            QTest::newRow("peony-xcb-move") << QStringLiteral("peony-qt/encoded-uris") << true;
+        }
+    }
+    void externalFileUrisDropThroughWindow() {
+        QFETCH(QString, format); QFETCH(bool, xcbMove);
+        const QString id = m_store->createTask(QStringLiteral("外部文件拖入"));
+        TaskDetailWidget detail(m_store.get()); detail.resize(480, 680);
+        QVERIFY(detail.setTask(id));
+        detail.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&detail));
+        auto* window = detail.windowHandle();
+        auto* target = detailDropTarget(detail, QStringLiteral("body"));
+        QVERIFY(window && target && target->isVisible());
+        const QPoint pos = target->mapTo(&detail, QPoint(20, 12));
+
+        QMimeData mime;
+        mime.setData(format, QByteArray()); // 原生选择的格式先可见，数据直到落下才读取。
+        const Qt::DropAction offered = xcbMove ? Qt::MoveAction : Qt::CopyAction;
+        const Qt::DropAction result = xcbMove ? Qt::IgnoreAction : Qt::CopyAction;
+        QDragEnterEvent enter(pos, offered, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(window, &enter);
+        QVERIFY(enter.isAccepted()); QCOMPARE(enter.dropAction(), result);
+        QDragMoveEvent move(pos, offered, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(window, &move);
+        QVERIFY(move.isAccepted()); QCOMPARE(move.dropAction(), result);
+
+        const QString local = makeFile(m_dir->path(), QStringLiteral("中文 附件 #1.txt"), QByteArray("fixture"));
+        QVERIFY(!local.isEmpty());
+        const QByteArray uri = QUrl::fromLocalFile(local).toEncoded();
+        const QByteArray separator = format == QLatin1String("text/uri-list") ? QByteArray("\r\n") : QByteArray(" ");
+        mime.setData(format, uri + separator + uri + separator);
+        QDropEvent drop(pos, result, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(window, &drop);
+        QVERIFY(drop.isAccepted()); QCOMPARE(drop.dropAction(), result);
+        const auto attachments = m_store->attachments(id);
+        QCOMPARE(attachments.size(), 1);
+        QCOMPARE(attachments.first().originalName, QFileInfo(local).fileName());
+        QVERIFY(QFileInfo::exists(local));
+        QVERIFY(m_store->entity(id).body.isEmpty());
+        QVERIFY(!detail.findChild<QLabel*>(QStringLiteral("AttachmentDropHint"))->isVisible());
     }
     void failedPresaveAndDeletedDetailsRejectFileDrops_data() {
         QTest::addColumn<QString>("reason"); QTest::addColumn<QString>("targetName");
