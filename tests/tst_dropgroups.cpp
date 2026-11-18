@@ -770,9 +770,15 @@ void DropGroupTests::listDropCasFailureRollsBackHiddenDescendants()
     const QString visible = store.createSubtask(QStringLiteral("CAS 可见"), source);
     const QString hidden = store.createSubtask(QStringLiteral("CAS 隐藏终态"), visible);
     QVERIFY(store.setCompleted(hidden, true));
-    Entity value = store.entity(source); value.sortOrder = 0; QVERIFY(store.saveTask(value));
-    value = store.entity(visible); value.sortOrder = 10; QVERIFY(store.saveTask(value));
-    value = store.entity(hidden); value.sortOrder = 20; QVERIFY(store.saveTask(value));
+    const QStringList ids{source, visible, hidden};
+    const QDateTime created(QDate(2026, 1, 1), QTime(0, 0), Qt::UTC);
+    // 仓储按创建时刻／ID 写入，不按 sortOrder；同一毫秒创建时不能依赖 UUID 顺序。
+    for (int index = 0; index < ids.size(); ++index) {
+        Entity value = store.entity(ids.at(index)); value.sortOrder = index * 10; QVERIFY(store.saveTask(value));
+        QVERIFY(execute(QStringLiteral("UPDATE entities SET created_at_utc_ms=%1 WHERE id='%2'")
+            .arg(utcMs(created.addSecs(index))).arg(value.id)));
+    }
+    QVERIFY(store.load());
     // 在第一行保存后推进隐藏后代 revision，精确制造第二阶段 CAS 失败；触发器写也必须回滚。
     QVERIFY(execute(QStringLiteral("CREATE TRIGGER invalidate_hidden_drop_revision AFTER UPDATE ON entities WHEN NEW.id='%1' "
         "BEGIN UPDATE entities SET revision=revision+1 WHERE id='%2'; END").arg(source, hidden)));
