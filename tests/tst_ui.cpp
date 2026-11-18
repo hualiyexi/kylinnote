@@ -6175,15 +6175,17 @@ private slots:
         QCOMPARE(m_store->entity(id).body, unchecked);
         body->setFocus(); QApplication::processEvents(); body->setPlainText(checked);
         QVERIFY(detail.finishEditing()); QCOMPARE(m_store->entity(id).body, checked);
-        QVector<EntityEvent> edits;
+        QStringList snapshots;
         for (const EntityEvent& event : m_store->events(id)) {
             QVERIFY(!event.field.startsWith(QStringLiteral("checklist.")));
-            if (event.field == QStringLiteral("body")) edits.append(event);
+            if (event.field != QStringLiteral("body")) continue;
+            const QString snapshot = event.newValue.toString();
+            if (snapshot == checked) QVERIFY(!event.oldValue.isValid());
+            snapshots.append(snapshot);
         }
-        QCOMPARE(edits.size(), 2);
-        QCOMPARE(edits.first().newValue.toString(), unchecked);
-        QCOMPARE(edits.last().newValue.toString(), checked);
-        QVERIFY(!edits.last().oldValue.isValid());
+        QCOMPARE(snapshots.size(), 2);
+        QVERIFY(snapshots.contains(unchecked));
+        QVERIFY(snapshots.contains(checked));
         QVERIFY(detail.setTask(QString())); QVERIFY(detail.setTask(id));
         QCOMPARE(editor->content(), checked);
         TaskStore reloaded(Database::instance().connection()); QVERIFY(reloaded.load());
@@ -6275,13 +6277,20 @@ private slots:
         QCOMPARE(bodyEvents(id).size(), 0);
         QVERIFY(notes.flushAll()); QVector<EntityEvent> events = bodyEvents(id); QCOMPARE(events.size(), 1);
         QCOMPARE(events.first().newValue.toString(), autosaved); QVERIFY(!events.first().oldValue.isValid());
+        const QString autosaveEventId = events.first().id;
         QVERIFY(m_store->desktopNote(id).open); QCOMPARE(notes.count(), 1);
 
         QLineEdit focusSink; focusSink.show(); focusSink.setFocus(); QApplication::processEvents(); note->focusEditor(); QApplication::processEvents();
         const QString finalText = QStringLiteral("关闭便签前的最后一条全文"); editor->textEditor()->setPlainText(finalText);
         auto* close = note->findChild<QToolButton*>(QStringLiteral("CloseButton")); QVERIFY(close);
         QTest::mouseClick(close, Qt::LeftButton); QApplication::processEvents();
-        events = bodyEvents(id); QCOMPARE(events.size(), 2); QCOMPARE(events.last().newValue.toString(), finalText);
+        events = bodyEvents(id);
+        QCOMPARE(events.size(), 2);
+        // 同一毫秒内按 ID 排序，关闭时新增的记录可能排在前面。
+        const bool firstIsAutosave = events.first().id == autosaveEventId;
+        QVERIFY(firstIsAutosave || events.last().id == autosaveEventId);
+        const EntityEvent& closeEvent = firstIsAutosave ? events.last() : events.first();
+        QCOMPARE(closeEvent.newValue.toString(), finalText);
         QCOMPARE(m_store->entity(id).body, finalText); QVERIFY(!m_store->desktopNote(id).open); // 关闭路径 flush 后结束会话，不丢最后修改
     }
 
